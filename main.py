@@ -58,6 +58,13 @@ class ContentAnalysisRequest(BaseModel):
     keywords: List[str] = Field(default_factory=list, max_items=20, description="Keywords to analyze for")
 
 
+class KeywordAnalysisRequest(BaseModel):
+    """Request model for keyword analysis."""
+    keywords: List[str] = Field(..., max_items=50, description="Keywords to analyze")
+    location: Optional[str] = Field("United States", description="Location for keyword analysis")
+    language: Optional[str] = Field("en", description="Language code for analysis")
+
+
 class HealthResponse(BaseModel):
     """Health check response model."""
     status: str
@@ -314,7 +321,7 @@ async def analyze_content(
 # Keyword analysis endpoint
 @app.post("/api/v1/keywords/analyze")
 async def analyze_keywords(
-    keywords: List[str] = Field(..., max_items=50, description="Keywords to analyze"),
+    request: KeywordAnalysisRequest,
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
@@ -327,11 +334,11 @@ async def analyze_keywords(
     - Recommendations
     """
     try:
-        if not keywords:
+        if not request.keywords:
             raise HTTPException(status_code=400, detail="No keywords provided")
         
         results = {}
-        for keyword in keywords:
+        for keyword in request.keywords:
             analysis = await writer.keyword_analyzer.analyze_keyword(keyword)
             results[keyword] = analysis
         
