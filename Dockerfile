@@ -18,8 +18,8 @@ RUN apt-get update \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY pyproject.toml ./
+# Copy requirements and README first for better caching
+COPY pyproject.toml README.md ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
