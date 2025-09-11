@@ -49,6 +49,9 @@ dependencies = [
     # Additional utilities for AI
     "asyncio-throttle>=1.0.2",
     "tenacity>=8.2.0",
+    # LiteLLM for AI provider routing
+    "litellm>=1.77.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.optional-dependencies]

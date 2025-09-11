@@ -7,6 +7,7 @@ enabling web-based access to all blog generation and optimization features.
 
 import os
 import time
+import logging
 from typing import List, Optional
 from contextlib import asynccontextmanager
 
@@ -25,6 +26,7 @@ from src.blog_writer_sdk.models.blog_models import (
 )
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
+from src.blog_writer_sdk.ai.litellm_router import LiteLLMRouterProvider, TaskType, TaskComplexity
 
 
 # API Request/Response Models
@@ -204,9 +206,42 @@ def create_ai_content_generator() -> Optional[AIContentGenerator]:
     
     return None
 
-# Global blog writer instance
+
+def create_litellm_router() -> Optional[LiteLLMRouterProvider]:
+    """Create LiteLLM router for intelligent AI provider routing."""
+    try:
+        # Check if any AI provider is configured
+        openai_key = os.getenv("OPENAI_API_KEY")
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        
+        if not any([openai_key, deepseek_key, anthropic_key]):
+            logging.info("No AI provider keys found, LiteLLM router disabled")
+            return None
+        
+        # Get config path
+        config_path = os.getenv("LITELLM_CONFIG_PATH", "litellm_config.yaml")
+        
+        # Create LiteLLM router
+        router = LiteLLMRouterProvider(
+            config_path=config_path,
+            enable_cost_tracking=True,
+            enable_caching=True,
+            debug=os.getenv("DEBUG", "false").lower() == "true"
+        )
+        
+        logging.info(f"✅ LiteLLM Router initialized with config: {config_path}")
+        return router
+        
+    except Exception as e:
+        logging.error(f"❌ Failed to initialize LiteLLM Router: {e}")
+        return None
+
+
+# Global instances
 enhanced_analyzer = create_enhanced_keyword_analyzer()
 ai_generator = create_ai_content_generator()
+litellm_router = create_litellm_router()
 blog_writer = BlogWriter(
     enable_seo_optimization=True,
     enable_quality_analysis=True,
@@ -548,6 +583,20 @@ async def get_config():
         except Exception as e:
             config["ai_providers_error"] = str(e)
     
+    # Add LiteLLM router information if available
+    if litellm_router:
+        try:
+            config["litellm_router"] = {
+                "enabled": True,
+                "available_models": litellm_router.get_available_models(),
+                "cost_tracking": litellm_router.enable_cost_tracking,
+                "cost_summary": litellm_router.get_cost_summary()
+            }
+        except Exception as e:
+            config["litellm_router_error"] = str(e)
+    else:
+        config["litellm_router"] = {"enabled": False}
+    
     return config
 
 
@@ -574,6 +623,132 @@ async def ai_health_check():
             "error": str(e),
             "message": "Failed to check AI provider health"
         }
+
+
+# LiteLLM Router Endpoints
+@app.get("/api/v1/litellm/health")
+async def litellm_health_check():
+    """Check health of all LiteLLM router providers."""
+    if not litellm_router:
+        return {
+            "status": "disabled",
+            "message": "LiteLLM router not initialized"
+        }
+    
+    try:
+        health_status = await litellm_router.health_check()
+        return health_status
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to check LiteLLM router health"
+        }
+
+
+@app.get("/api/v1/litellm/models")
+async def get_available_models():
+    """Get list of available models in LiteLLM router."""
+    if not litellm_router:
+        return {
+            "models": [],
+            "message": "LiteLLM router not initialized"
+        }
+    
+    try:
+        models = litellm_router.get_available_models()
+        return {
+            "models": models,
+            "count": len(models)
+        }
+    except Exception as e:
+        return {
+            "models": [],
+            "error": str(e),
+            "message": "Failed to get available models"
+        }
+
+
+@app.get("/api/v1/litellm/costs")
+async def get_cost_summary():
+    """Get cost tracking summary from LiteLLM router."""
+    if not litellm_router:
+        return {
+            "cost_summary": {},
+            "message": "LiteLLM router not initialized"
+        }
+    
+    try:
+        cost_summary = litellm_router.get_cost_summary()
+        return cost_summary
+    except Exception as e:
+        return {
+            "cost_summary": {},
+            "error": str(e),
+            "message": "Failed to get cost summary"
+        }
+
+
+class LiteLLMGenerationRequest(BaseModel):
+    """Request model for LiteLLM content generation."""
+    prompt: str = Field(..., min_length=10, description="Content generation prompt")
+    task_type: str = Field(default="simple_completion", description="Task type for optimal routing")
+    complexity: str = Field(default="medium", description="Task complexity level")
+    max_tokens: Optional[int] = Field(default=4096, ge=1, le=8192, description="Maximum tokens to generate")
+    temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+
+
+@app.post("/api/v1/litellm/generate")
+async def generate_with_litellm(request: LiteLLMGenerationRequest):
+    """Generate content using LiteLLM router with intelligent model selection."""
+    if not litellm_router:
+        raise HTTPException(
+            status_code=503,
+            detail="LiteLLM router not available"
+        )
+    
+    try:
+        # Map string values to enums
+        task_type_map = {
+            "blog_generation": TaskType.BLOG_GENERATION,
+            "seo_analysis": TaskType.SEO_ANALYSIS,
+            "keyword_extraction": TaskType.KEYWORD_EXTRACTION,
+            "content_formatting": TaskType.CONTENT_FORMATTING,
+            "image_analysis": TaskType.IMAGE_ANALYSIS,
+            "simple_completion": TaskType.SIMPLE_COMPLETION
+        }
+        
+        complexity_map = {
+            "low": TaskComplexity.LOW,
+            "medium": TaskComplexity.MEDIUM,
+            "high": TaskComplexity.HIGH
+        }
+        
+        task_type = task_type_map.get(request.task_type, TaskType.SIMPLE_COMPLETION)
+        complexity = complexity_map.get(request.complexity, TaskComplexity.MEDIUM)
+        
+        # Generate content using LiteLLM router
+        response = await litellm_router.generate_content(
+            prompt=request.prompt,
+            task_type=task_type,
+            complexity=complexity,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature
+        )
+        
+        return {
+            "success": True,
+            "content": response.content,
+            "model_used": response.model,
+            "usage": response.usage,
+            "metadata": response.metadata
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Content generation failed: {str(e)}"
+        )
 
 
 if __name__ == "__main__":
