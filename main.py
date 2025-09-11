@@ -24,7 +24,6 @@ from src.blog_writer_sdk.models.blog_models import (
     ContentFormat,
 )
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
-from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOIntegration
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
 
 
@@ -117,13 +116,8 @@ def create_enhanced_keyword_analyzer() -> Optional[EnhancedKeywordAnalyzer]:
     
     if dataforseo_api_key and dataforseo_api_secret:
         try:
-            # Note: This assumes MCP client is available
-            # You may need to adjust this based on your MCP setup
-            dataforseo_integration = DataForSEOIntegration(
-                api_key=dataforseo_api_key,
-                api_secret=dataforseo_api_secret
-            )
-            return EnhancedKeywordAnalyzer(dataforseo_client=dataforseo_integration)
+            # Use the enhanced keyword analyzer with DataForSEO integration
+            return EnhancedKeywordAnalyzer(use_dataforseo=True, location="United States")
         except Exception as e:
             print(f"⚠️ Failed to initialize DataForSEO integration: {e}")
             print("📝 Falling back to built-in keyword analysis")
