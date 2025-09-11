@@ -65,6 +65,12 @@ class KeywordAnalysisRequest(BaseModel):
     language: Optional[str] = Field("en", description="Language code for analysis")
 
 
+class KeywordExtractionRequest(BaseModel):
+    """Request model for keyword extraction API."""
+    content: str = Field(..., min_length=100, description="Content to extract keywords from")
+    max_keywords: int = Field(default=20, ge=5, le=50, description="Maximum keywords to extract")
+
+
 class HealthResponse(BaseModel):
     """Health check response model."""
     status: str
@@ -354,8 +360,7 @@ async def analyze_keywords(
 # Extract keywords from content endpoint
 @app.post("/api/v1/keywords/extract")
 async def extract_keywords(
-    content: str = Field(..., min_length=100, description="Content to extract keywords from"),
-    max_keywords: int = Field(default=20, ge=5, le=50, description="Maximum keywords to extract"),
+    request: KeywordExtractionRequest,
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
@@ -368,8 +373,8 @@ async def extract_keywords(
     """
     try:
         keywords = await writer.keyword_analyzer.extract_keywords_from_content(
-            content=content,
-            max_keywords=max_keywords
+            content=request.content,
+            max_keywords=request.max_keywords
         )
         
         return {"extracted_keywords": keywords}
