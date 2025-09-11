@@ -1,1 +1,1 @@
-# Test package for Blog Writer SDK
+# Tests package
