@@ -456,7 +456,7 @@ class BlogWriter:
             # Create a basic blog post for analysis
             meta_tags = MetaTags(
                 title=title or "Untitled",
-                description="",
+                description="Analysis of existing content for SEO and quality metrics evaluation",
                 keywords=[],
             )
             

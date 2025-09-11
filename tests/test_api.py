@@ -62,9 +62,12 @@ def test_blog_generation_endpoint():
     assert response.status_code == 200
     
     data = response.json()
+    assert data["success"] is True
     assert "blog_post" in data
-    assert "seo_analysis" in data
-    assert "generation_metadata" in data
+    assert "seo_score" in data
+    assert "readability_score" in data
+    assert "generation_time_seconds" in data
+    assert "word_count" in data
 
 
 def test_blog_generation_invalid_data():
