@@ -210,7 +210,7 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=time.time(),
-        version="0.1.0"
+        version="0.1.0-railway-deploy"
     )
 
 
