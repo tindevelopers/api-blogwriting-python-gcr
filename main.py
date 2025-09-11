@@ -7,12 +7,13 @@ enabling web-based access to all blog generation and optimization features.
 
 import os
 import time
-from typing import List, Optional
+import logging
+from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.blog_writer_sdk import BlogWriter
@@ -25,6 +26,11 @@ from src.blog_writer_sdk.models.blog_models import (
 )
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
+from src.blog_writer_sdk.ai.litellm_router import LiteLLMRouterProvider, TaskType, TaskComplexity
+from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
+from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
+from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
+from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 
 
 # API Request/Response Models
@@ -103,16 +109,52 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan."""
     # Startup
     print("🚀 Blog Writer SDK API starting up...")
+    
+    # Initialize cache manager
+    redis_url = os.getenv("REDIS_URL")
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+    redis_password = os.getenv("REDIS_PASSWORD")
+    
+    cache_manager = initialize_cache(
+        redis_url=redis_url,
+        redis_host=redis_host,
+        redis_port=redis_port,
+        redis_password=redis_password
+    )
+    print(f"✅ Cache manager initialized: {cache_manager}")
+    
+    # Initialize metrics collector
+    metrics_collector = initialize_metrics(retention_hours=24)
+    print(f"✅ Metrics collector initialized: {metrics_collector}")
+    
+    # Initialize batch processor
+    global batch_processor
+    blog_writer = get_blog_writer()
+    batch_processor = BatchProcessor(
+        blog_writer=blog_writer,
+        max_concurrent=int(os.getenv("BATCH_MAX_CONCURRENT", "5")),
+        max_retries=int(os.getenv("BATCH_MAX_RETRIES", "2"))
+    )
+    print("✅ Batch processor initialized")
+    
     yield
+    
     # Shutdown
     print("📝 Blog Writer SDK API shutting down...")
+    
+    # Cleanup tasks
+    if hasattr(metrics_collector, '_cleanup_task') and metrics_collector._cleanup_task:
+        metrics_collector._cleanup_task.cancel()
+    
+    print("✅ Cleanup completed")
 
 
 # Create FastAPI application
 app = FastAPI(
     title="Blog Writer SDK API",
-    description="A powerful REST API for AI-driven blog writing with advanced SEO optimization",
-    version="0.1.0",
+    description="A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features",
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -132,6 +174,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Add rate limiting middleware
+app.middleware("http")(rate_limit_middleware)
+
+# Global variables
+batch_processor: Optional[BatchProcessor] = None
 
 # Initialize enhanced keyword analyzer if DataForSEO credentials are available
 def create_enhanced_keyword_analyzer() -> Optional[EnhancedKeywordAnalyzer]:
@@ -204,9 +252,42 @@ def create_ai_content_generator() -> Optional[AIContentGenerator]:
     
     return None
 
-# Global blog writer instance
+
+def create_litellm_router() -> Optional[LiteLLMRouterProvider]:
+    """Create LiteLLM router for intelligent AI provider routing."""
+    try:
+        # Check if any AI provider is configured
+        openai_key = os.getenv("OPENAI_API_KEY")
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        
+        if not any([openai_key, deepseek_key, anthropic_key]):
+            logging.info("No AI provider keys found, LiteLLM router disabled")
+            return None
+        
+        # Get config path
+        config_path = os.getenv("LITELLM_CONFIG_PATH", "litellm_config.yaml")
+        
+        # Create LiteLLM router
+        router = LiteLLMRouterProvider(
+            config_path=config_path,
+            enable_cost_tracking=True,
+            enable_caching=True,
+            debug=os.getenv("DEBUG", "false").lower() == "true"
+        )
+        
+        logging.info(f"✅ LiteLLM Router initialized with config: {config_path}")
+        return router
+        
+    except Exception as e:
+        logging.error(f"❌ Failed to initialize LiteLLM Router: {e}")
+        return None
+
+
+# Global instances
 enhanced_analyzer = create_enhanced_keyword_analyzer()
 ai_generator = create_ai_content_generator()
+litellm_router = create_litellm_router()
 blog_writer = BlogWriter(
     enable_seo_optimization=True,
     enable_quality_analysis=True,
@@ -548,6 +629,20 @@ async def get_config():
         except Exception as e:
             config["ai_providers_error"] = str(e)
     
+    # Add LiteLLM router information if available
+    if litellm_router:
+        try:
+            config["litellm_router"] = {
+                "enabled": True,
+                "available_models": litellm_router.get_available_models(),
+                "cost_tracking": litellm_router.enable_cost_tracking,
+                "cost_summary": litellm_router.get_cost_summary()
+            }
+        except Exception as e:
+            config["litellm_router_error"] = str(e)
+    else:
+        config["litellm_router"] = {"enabled": False}
+    
     return config
 
 
@@ -574,6 +669,292 @@ async def ai_health_check():
             "error": str(e),
             "message": "Failed to check AI provider health"
         }
+
+
+# LiteLLM Router Endpoints
+@app.get("/api/v1/litellm/health")
+async def litellm_health_check():
+    """Check health of all LiteLLM router providers."""
+    if not litellm_router:
+        return {
+            "status": "disabled",
+            "message": "LiteLLM router not initialized"
+        }
+    
+    try:
+        health_status = await litellm_router.health_check()
+        return health_status
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to check LiteLLM router health"
+        }
+
+
+@app.get("/api/v1/litellm/models")
+async def get_available_models():
+    """Get list of available models in LiteLLM router."""
+    if not litellm_router:
+        return {
+            "models": [],
+            "message": "LiteLLM router not initialized"
+        }
+    
+    try:
+        models = litellm_router.get_available_models()
+        return {
+            "models": models,
+            "count": len(models)
+        }
+    except Exception as e:
+        return {
+            "models": [],
+            "error": str(e),
+            "message": "Failed to get available models"
+        }
+
+
+@app.get("/api/v1/litellm/costs")
+async def get_cost_summary():
+    """Get cost tracking summary from LiteLLM router."""
+    if not litellm_router:
+        return {
+            "cost_summary": {},
+            "message": "LiteLLM router not initialized"
+        }
+    
+    try:
+        cost_summary = litellm_router.get_cost_summary()
+        return cost_summary
+    except Exception as e:
+        return {
+            "cost_summary": {},
+            "error": str(e),
+            "message": "Failed to get cost summary"
+        }
+
+
+class LiteLLMGenerationRequest(BaseModel):
+    """Request model for LiteLLM content generation."""
+    prompt: str = Field(..., min_length=10, description="Content generation prompt")
+    task_type: str = Field(default="simple_completion", description="Task type for optimal routing")
+    complexity: str = Field(default="medium", description="Task complexity level")
+    max_tokens: Optional[int] = Field(default=4096, ge=1, le=8192, description="Maximum tokens to generate")
+    temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+
+
+class BatchGenerationRequest(BaseModel):
+    """Request model for batch blog generation."""
+    requests: List[BlogGenerationRequest] = Field(..., min_length=1, max_length=100, description="List of blog generation requests")
+    job_id: Optional[str] = Field(None, description="Optional custom job ID")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Optional job metadata")
+
+
+@app.post("/api/v1/litellm/generate")
+async def generate_with_litellm(request: LiteLLMGenerationRequest):
+    """Generate content using LiteLLM router with intelligent model selection."""
+    if not litellm_router:
+        raise HTTPException(
+            status_code=503,
+            detail="LiteLLM router not available"
+        )
+    
+    try:
+        # Map string values to enums
+        task_type_map = {
+            "blog_generation": TaskType.BLOG_GENERATION,
+            "seo_analysis": TaskType.SEO_ANALYSIS,
+            "keyword_extraction": TaskType.KEYWORD_EXTRACTION,
+            "content_formatting": TaskType.CONTENT_FORMATTING,
+            "image_analysis": TaskType.IMAGE_ANALYSIS,
+            "simple_completion": TaskType.SIMPLE_COMPLETION
+        }
+        
+        complexity_map = {
+            "low": TaskComplexity.LOW,
+            "medium": TaskComplexity.MEDIUM,
+            "high": TaskComplexity.HIGH
+        }
+        
+        task_type = task_type_map.get(request.task_type, TaskType.SIMPLE_COMPLETION)
+        complexity = complexity_map.get(request.complexity, TaskComplexity.MEDIUM)
+        
+        # Generate content using LiteLLM router
+        response = await litellm_router.generate_content(
+            prompt=request.prompt,
+            task_type=task_type,
+            complexity=complexity,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature
+        )
+        
+        return {
+            "success": True,
+            "content": response.content,
+            "model_used": response.model,
+            "usage": response.usage,
+            "metadata": response.metadata
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Content generation failed: {str(e)}"
+        )
+
+
+# ===== NEW V1.0 ENDPOINTS =====
+
+# Batch Processing Endpoints
+@app.post("/api/v1/batch/generate")
+async def create_batch_generation(request: BatchGenerationRequest):
+    """Create a batch blog generation job."""
+    if not batch_processor:
+        raise HTTPException(status_code=503, detail="Batch processor not available")
+    
+    try:
+        # Convert requests to BlogRequest objects
+        blog_requests = []
+        for req in request.requests:
+            blog_request = BlogRequest(
+                topic=req.topic,
+                keywords=req.keywords,
+                tone=req.tone,
+                length=req.length,
+                format=req.format,
+                target_audience=req.target_audience,
+                focus_keyword=req.focus_keyword,
+                include_introduction=req.include_introduction,
+                include_conclusion=req.include_conclusion,
+                include_faq=req.include_faq,
+                include_toc=req.include_toc,
+                word_count_target=req.word_count_target,
+                custom_instructions=req.custom_instructions
+            )
+            blog_requests.append(blog_request)
+        
+        # Create batch job
+        job = batch_processor.create_batch_job(
+            requests=blog_requests,
+            job_id=request.job_id,
+            metadata=request.metadata
+        )
+        
+        # Start processing in background
+        asyncio.create_task(batch_processor.process_batch(job.id))
+        
+        return {
+            "success": True,
+            "job_id": job.id,
+            "total_items": job.total_items,
+            "status": job.status.value,
+            "message": f"Batch job created with {job.total_items} items"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create batch job: {str(e)}")
+
+
+@app.get("/api/v1/batch/{job_id}/status")
+async def get_batch_status(job_id: str):
+    """Get status of a batch job."""
+    if not batch_processor:
+        raise HTTPException(status_code=503, detail="Batch processor not available")
+    
+    status = batch_processor.get_batch_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Batch job not found")
+    
+    return status
+
+
+@app.get("/api/v1/batch/{job_id}/stream")
+async def stream_batch_results(job_id: str):
+    """Stream batch results as they complete."""
+    if not batch_processor:
+        raise HTTPException(status_code=503, detail="Batch processor not available")
+    
+    async def generate_stream():
+        try:
+            async for item in batch_processor.process_batch_stream(job_id):
+                yield f"data: {item.to_dict()}\n\n"
+        except Exception as e:
+            yield f"data: {{'error': '{str(e)}'}}\n\n"
+    
+    return StreamingResponse(generate_stream(), media_type="text/plain")
+
+
+@app.get("/api/v1/batch")
+async def list_batch_jobs():
+    """List all batch jobs."""
+    if not batch_processor:
+        raise HTTPException(status_code=503, detail="Batch processor not available")
+    
+    return {
+        "jobs": batch_processor.list_batch_jobs(),
+        "statistics": batch_processor.get_batch_statistics()
+    }
+
+
+@app.delete("/api/v1/batch/{job_id}")
+async def delete_batch_job(job_id: str):
+    """Delete a batch job."""
+    if not batch_processor:
+        raise HTTPException(status_code=503, detail="Batch processor not available")
+    
+    success = batch_processor.delete_batch_job(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Batch job not found")
+    
+    return {"success": True, "message": "Batch job deleted"}
+
+
+# Monitoring and Metrics Endpoints
+@app.get("/api/v1/metrics")
+async def get_metrics():
+    """Get comprehensive system metrics."""
+    metrics_collector = get_metrics_collector()
+    if not metrics_collector:
+        raise HTTPException(status_code=503, detail="Metrics collector not available")
+    
+    return metrics_collector.get_metrics_summary()
+
+
+@app.get("/api/v1/health/detailed")
+async def get_detailed_health():
+    """Get detailed health status with system metrics."""
+    metrics_collector = get_metrics_collector()
+    if not metrics_collector:
+        return {"status": "unknown", "message": "Metrics collector not available"}
+    
+    return metrics_collector.get_health_status()
+
+
+@app.get("/api/v1/cache/stats")
+async def get_cache_stats():
+    """Get cache statistics."""
+    cache_manager = get_cache_manager()
+    if not cache_manager:
+        return {"status": "unavailable", "message": "Cache manager not initialized"}
+    
+    return await cache_manager.get_stats()
+
+
+@app.delete("/api/v1/cache/clear")
+async def clear_cache(pattern: Optional[str] = None):
+    """Clear cache entries."""
+    cache_manager = get_cache_manager()
+    if not cache_manager:
+        raise HTTPException(status_code=503, detail="Cache manager not available")
+    
+    if pattern:
+        count = await cache_manager.clear_pattern(pattern)
+        return {"success": True, "cleared_items": count, "pattern": pattern}
+    else:
+        # Clear all cache
+        count = await cache_manager.clear_pattern("blogwriter:*")
+        return {"success": True, "cleared_items": count, "message": "All cache cleared"}
 
 
 if __name__ == "__main__":
