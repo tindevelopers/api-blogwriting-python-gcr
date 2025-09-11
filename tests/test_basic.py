@@ -14,7 +14,7 @@ def test_blog_request_creation():
     )
     
     assert request.topic == "How to Build APIs"
-    assert request.keywords == ["Python", "FastAPI", "REST"]
+    assert request.keywords == ["python", "fastapi", "rest"]  # Keywords are normalized to lowercase
     assert request.tone == ContentTone.PROFESSIONAL
     assert request.length == ContentLength.MEDIUM
 

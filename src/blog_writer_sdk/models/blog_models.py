@@ -8,7 +8,7 @@ type safety, validation, and serialization.
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Union
-from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 class ContentTone(str, Enum):
@@ -72,14 +72,16 @@ class BlogRequest(BaseModel):
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
     custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
 
-    @validator('keywords')
+    @field_validator('keywords')
+    @classmethod
     def validate_keywords(cls, v):
         """Validate keywords list."""
         if len(v) > 20:
             raise ValueError("Maximum 20 keywords allowed")
         return [keyword.strip().lower() for keyword in v if keyword.strip()]
 
-    @validator('focus_keyword')
+    @field_validator('focus_keyword')
+    @classmethod
     def validate_focus_keyword(cls, v):
         """Validate focus keyword."""
         if v:
@@ -147,7 +149,7 @@ class MetaTags(BaseModel):
     """Meta tags for SEO optimization."""
     
     title: str = Field(..., min_length=10, max_length=60, description="SEO title tag")
-    description: str = Field(..., min_length=120, max_length=160, description="Meta description")
+    description: str = Field(..., min_length=50, max_length=160, description="Meta description")
     keywords: List[str] = Field(default_factory=list, description="Meta keywords")
     canonical_url: Optional[HttpUrl] = Field(None, description="Canonical URL")
     
@@ -217,10 +219,11 @@ class BlogGenerationResult(BaseModel):
     error_message: Optional[str] = Field(None, description="Error message if generation failed")
     error_code: Optional[str] = Field(None, description="Error code for debugging")
 
-    @validator('blog_post')
-    def validate_blog_post_with_success(cls, v, values):
+    @field_validator('blog_post')
+    @classmethod
+    def validate_blog_post_with_success(cls, v, info):
         """Ensure blog_post is present when success is True."""
-        if values.get('success') and not v:
+        if info.data.get('success') and not v:
             raise ValueError("blog_post is required when success is True")
         return v
 

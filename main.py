@@ -55,12 +55,12 @@ class ContentAnalysisRequest(BaseModel):
     """Request model for content analysis API."""
     content: str = Field(..., min_length=50, description="Content to analyze")
     title: Optional[str] = Field(None, max_length=200, description="Content title")
-    keywords: List[str] = Field(default_factory=list, max_items=20, description="Keywords to analyze for")
+    keywords: List[str] = Field(default_factory=list, max_length=20, description="Keywords to analyze for")
 
 
 class KeywordAnalysisRequest(BaseModel):
     """Request model for keyword analysis."""
-    keywords: List[str] = Field(..., max_items=50, description="Keywords to analyze")
+    keywords: List[str] = Field(..., max_length=50, description="Keywords to analyze")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
 
@@ -69,6 +69,18 @@ class KeywordExtractionRequest(BaseModel):
     """Request model for keyword extraction API."""
     content: str = Field(..., min_length=100, description="Content to extract keywords from")
     max_keywords: int = Field(default=20, ge=5, le=50, description="Maximum keywords to extract")
+
+
+class KeywordSuggestionRequest(BaseModel):
+    """Request model for keyword suggestions."""
+    keyword: str = Field(..., min_length=2, max_length=100, description="Base keyword for suggestions")
+
+
+class ContentOptimizationRequest(BaseModel):
+    """Request model for content optimization."""
+    content: str = Field(..., min_length=100, description="Content to optimize")
+    keywords: List[str] = Field(default_factory=list, max_length=20, description="Target keywords")
+    focus_keyword: Optional[str] = Field(None, description="Primary focus keyword")
 
 
 class HealthResponse(BaseModel):
@@ -238,7 +250,25 @@ async def root():
     }
 
 
-# Blog generation endpoint
+# Blog generation endpoints
+@app.post("/api/v1/blog/generate", response_model=BlogGenerationResult)
+async def generate_blog_v2(
+    request: BlogGenerationRequest,
+    background_tasks: BackgroundTasks,
+    writer: BlogWriter = Depends(get_blog_writer)
+):
+    """
+    Generate a complete blog post with SEO optimization (v2 endpoint).
+    
+    This endpoint creates a full blog post including:
+    - SEO-optimized content structure
+    - Meta tags and descriptions
+    - Keyword optimization
+    - Quality analysis and suggestions
+    """
+    return await generate_blog(request, background_tasks, writer)
+
+
 @app.post("/api/v1/generate", response_model=BlogGenerationResult)
 async def generate_blog(
     request: BlogGenerationRequest,
@@ -389,7 +419,7 @@ async def extract_keywords(
 # Keyword suggestions endpoint
 @app.post("/api/v1/keywords/suggest")
 async def suggest_keywords(
-    keyword: str = Field(..., min_length=2, max_length=100, description="Base keyword for suggestions"),
+    request: KeywordSuggestionRequest,
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
@@ -402,7 +432,7 @@ async def suggest_keywords(
     - Semantic variations
     """
     try:
-        suggestions = await writer.keyword_analyzer.suggest_keyword_variations(keyword)
+        suggestions = await writer.keyword_analyzer.suggest_keyword_variations(request.keyword)
         
         return {"keyword_suggestions": suggestions}
         
@@ -416,9 +446,7 @@ async def suggest_keywords(
 # Content optimization endpoint
 @app.post("/api/v1/optimize")
 async def optimize_content(
-    content: str = Field(..., min_length=100, description="Content to optimize"),
-    keywords: List[str] = Field(default_factory=list, max_items=20, description="Target keywords"),
-    focus_keyword: Optional[str] = Field(None, description="Primary focus keyword"),
+    request: ContentOptimizationRequest,
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
@@ -433,9 +461,9 @@ async def optimize_content(
     try:
         # Optimize keyword distribution
         optimized_content = await writer.seo_optimizer.optimize_keyword_distribution(
-            content=content,
-            keywords=keywords,
-            focus_keyword=focus_keyword
+            content=request.content,
+            keywords=request.keywords,
+            focus_keyword=request.focus_keyword
         )
         
         # Optimize heading structure
