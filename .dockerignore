@@ -151,8 +151,10 @@ Thumbs.db
 tests/
 examples/
 docs/
-*.md
-!README.md
 .git/
 .gitignore
 .github/
+# Exclude other markdown files but keep README.md
+DEPLOYMENT.md
+GITHUB_RAILWAY_SETUP.md
+RAILWAY_DEPLOYMENT.md
