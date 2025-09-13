@@ -1,0 +1,226 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+    types: [ closed ]
+
+env:
+  PROJECT_ID: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+  REGION: us-central1
+  SERVICE_NAME: blog-writer-sdk
+
+jobs:
+  deploy:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
+        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+    - name: Configure Docker to use gcloud as a credential helper
+      run: |
+        gcloud auth configure-docker
+
+    - name: Verify secrets exist
+      run: |
+        echo "Checking if required secrets exist..."
+        gcloud secrets describe blog-writer-env --project=$PROJECT_ID || {
+          echo "❌ Secret 'blog-writer-env' not found. Please run setup-secrets.sh first."
+          exit 1
+        }
+
+    - name: Build and Deploy to Cloud Run
+      run: |
+        gcloud builds submit \
+          --config cloudbuild.yaml \
+          --substitutions _REGION=$REGION \
+          --project=$PROJECT_ID
+
+    - name: Get service URL
+      id: get-url
+      run: |
+        SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
+          --region=$REGION \
+          --project=$PROJECT_ID \
+          --format="value(status.url)")
+        echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
+        echo "Service deployed at: $SERVICE_URL"
+
+    - name: Test deployment
+      run: |
+        echo "Testing health endpoint..."
+        curl -f ${{ steps.get-url.outputs.SERVICE_URL }}/health || {
+          echo "❌ Health check failed"
+          exit 1
+        }
+        echo "✅ Health check passed"
+
+    - name: Run API tests
+      run: |
+        echo "Testing API configuration endpoint..."
+        curl -f ${{ steps.get-url.outputs.SERVICE_URL }}/api/v1/config || {
+          echo "❌ API config test failed"
+          exit 1
+        }
+        echo "✅ API config test passed"
+
+    - name: Comment PR with deployment info
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `🚀 **Deployment Successful!**
+            
+            Your Blog Writer SDK has been deployed to Google Cloud Run:
+            - **Service URL**: ${{ steps.get-url.outputs.SERVICE_URL }}
+            - **API Docs**: ${{ steps.get-url.outputs.SERVICE_URL }}/docs
+            - **Health Check**: ${{ steps.get-url.outputs.SERVICE_URL }}/health
+            
+            The service is now ready to accept requests!`
+          })
+
+  # Optional: Deploy to staging environment on feature branches
+  deploy-staging:
+    if: github.event_name == 'pull_request' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
+        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+    - name: Configure Docker to use gcloud as a credential helper
+      run: |
+        gcloud auth configure-docker
+
+    - name: Deploy to staging
+      run: |
+        # Create a staging service name based on PR number
+        STAGING_SERVICE_NAME="blog-writer-sdk-pr-${{ github.event.number }}"
+        
+        # Build the image
+        gcloud builds submit \
+          --tag gcr.io/$PROJECT_ID/$STAGING_SERVICE_NAME:${{ github.sha }} \
+          --project=$PROJECT_ID
+        
+        # Deploy to staging
+        gcloud run deploy $STAGING_SERVICE_NAME \
+          --image gcr.io/$PROJECT_ID/$STAGING_SERVICE_NAME:${{ github.sha }} \
+          --region=$REGION \
+          --platform managed \
+          --allow-unauthenticated \
+          --port 8000 \
+          --memory 2Gi \
+          --cpu 2 \
+          --min-instances 0 \
+          --max-instances 10 \
+          --concurrency 80 \
+          --timeout 900 \
+          --set-env-vars PORT=8000,PYTHONUNBUFFERED=1 \
+          --set-secrets /secrets/env=blog-writer-env:latest \
+          --project=$PROJECT_ID
+        
+        # Get staging URL
+        STAGING_URL=$(gcloud run services describe $STAGING_SERVICE_NAME \
+          --region=$REGION \
+          --project=$PROJECT_ID \
+          --format="value(status.url)")
+        
+        echo "STAGING_URL=$STAGING_URL" >> $GITHUB_ENV
+
+    - name: Comment PR with staging info
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `🧪 **Staging Deployment Ready!**
+            
+            Your PR has been deployed to a staging environment:
+            - **Staging URL**: ${{ env.STAGING_URL }}
+            - **API Docs**: ${{ env.STAGING_URL }}/docs
+            - **Health Check**: ${{ env.STAGING_URL }}/health
+            
+            Test your changes before merging!
+            
+            > ⚠️ This staging environment will be automatically deleted when the PR is closed.`
+          })
+
+  # Cleanup staging environment when PR is closed
+  cleanup-staging:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
+        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+    - name: Delete staging service
+      run: |
+        STAGING_SERVICE_NAME="blog-writer-sdk-pr-${{ github.event.number }}"
+        
+        # Delete the Cloud Run service
+        gcloud run services delete $STAGING_SERVICE_NAME \
+          --region=$REGION \
+          --project=$PROJECT_ID \
+          --quiet || echo "Service may not exist"
+        
+        # Delete the container image
+        gcloud container images delete gcr.io/$PROJECT_ID/$STAGING_SERVICE_NAME:${{ github.event.pull_request.head.sha }} \
+          --project=$PROJECT_ID \
+          --quiet || echo "Image may not exist"
+        
+        echo "✅ Staging environment cleaned up"
+

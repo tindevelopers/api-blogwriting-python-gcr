@@ -351,7 +351,28 @@ CREATE TABLE generation_analytics (
 
 ## 🚀 Deployment
 
-### Railway Deployment (Recommended)
+### Google Cloud Run Deployment (Recommended)
+
+Deploy to Google Cloud Run for enterprise-grade scalability and reliability:
+
+```bash
+# Quick deployment
+./scripts/setup-secrets.sh  # Setup secrets in Google Secret Manager
+./scripts/deploy.sh          # Deploy to Cloud Run
+
+# Your service will be available at:
+# https://blog-writer-sdk-xxx-uc.a.run.app
+```
+
+**Benefits of Cloud Run:**
+- **Serverless & Auto-scaling**: Pay only when generating content
+- **Global availability**: Serve applications worldwide  
+- **Enterprise-ready**: Built-in monitoring, logging, and security
+- **Cost-effective**: Perfect for variable AI workloads
+
+See [CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md) for detailed instructions.
+
+### Railway Deployment (Alternative)
 
 1. **Connect Repository**: Link your GitHub repo to Railway
 2. **Environment Variables**: Set up your environment variables in Railway dashboard

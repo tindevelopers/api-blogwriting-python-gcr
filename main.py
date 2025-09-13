@@ -8,8 +8,12 @@ enabling web-based access to all blog generation and optimization features.
 import os
 import time
 import logging
+import asyncio
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
+
+# Track startup time for uptime calculation
+startup_time = time.time()
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -303,15 +307,94 @@ def get_blog_writer() -> BlogWriter:
     return blog_writer
 
 
-# Health check endpoint
+# Health check endpoint - optimized for Cloud Run
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Health check endpoint."""
+    """
+    Health check endpoint optimized for Cloud Run.
+    
+    This endpoint is used by Cloud Run for:
+    - Liveness probes
+    - Readiness probes  
+    - Startup probes
+    """
     return HealthResponse(
         status="healthy",
         timestamp=time.time(),
-        version="0.1.0-railway-deploy"
+        version="1.0.0-cloudrun"
     )
+
+
+# Readiness probe endpoint
+@app.get("/ready")
+async def readiness_check():
+    """
+    Readiness probe endpoint for Cloud Run.
+    
+    Checks if the service is ready to accept traffic by verifying:
+    - Database connectivity (if applicable)
+    - AI provider availability
+    - Essential services status
+    """
+    try:
+        # Check if blog writer is initialized
+        if not blog_writer:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "reason": "Blog writer not initialized"}
+            )
+        
+        # Check AI providers if enabled
+        if blog_writer.enable_ai_enhancement and blog_writer.ai_generator:
+            try:
+                # Quick health check of AI providers
+                provider_status = blog_writer.ai_generator.provider_manager.get_provider_status()
+                active_providers = [p for p, status in provider_status.items() if status.get('available', False)]
+                if not active_providers:
+                    return JSONResponse(
+                        status_code=503,
+                        content={"status": "not_ready", "reason": "No AI providers available"}
+                    )
+            except Exception as e:
+                # AI providers not critical for readiness, log but don't fail
+                print(f"Warning: AI provider check failed: {e}")
+        
+        return {
+            "status": "ready",
+            "timestamp": time.time(),
+            "services": {
+                "blog_writer": "available",
+                "seo_optimizer": "available",
+                "keyword_analyzer": "available",
+                "ai_enhancement": blog_writer.enable_ai_enhancement
+            }
+        }
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "reason": str(e),
+                "timestamp": time.time()
+            }
+        )
+
+
+# Liveness probe endpoint
+@app.get("/live")
+async def liveness_check():
+    """
+    Liveness probe endpoint for Cloud Run.
+    
+    Simple check to verify the application is running and responsive.
+    Should only fail if the application needs to be restarted.
+    """
+    return {
+        "status": "alive",
+        "timestamp": time.time(),
+        "uptime": time.time() - startup_time if 'startup_time' in globals() else 0
+    }
 
 
 # Root endpoint
@@ -320,13 +403,18 @@ async def root():
     """Root endpoint with API information."""
     return {
         "message": "Blog Writer SDK API",
-        "version": "0.1.0",
+        "version": "1.0.0",
+        "environment": "cloud-run",
         "docs": "/docs",
         "health": "/health",
+        "ready": "/ready",
+        "live": "/live",
         "endpoints": {
             "generate": "/api/v1/generate",
             "analyze": "/api/v1/analyze",
             "keywords": "/api/v1/keywords",
+            "batch": "/api/v1/batch",
+            "metrics": "/api/v1/metrics"
         }
     }
 
@@ -955,6 +1043,87 @@ async def clear_cache(pattern: Optional[str] = None):
         # Clear all cache
         count = await cache_manager.clear_pattern("blogwriter:*")
         return {"success": True, "cleared_items": count, "message": "All cache cleared"}
+
+
+# Cloud Run specific monitoring endpoint
+@app.get("/api/v1/cloudrun/status")
+async def cloudrun_status():
+    """
+    Cloud Run specific status endpoint.
+    
+    Provides detailed information about the Cloud Run instance including:
+    - Container metadata
+    - Resource usage
+    - Environment information
+    - Service configuration
+    """
+    import psutil
+    
+    try:
+        # Get system information
+        memory_info = psutil.virtual_memory()
+        cpu_percent = psutil.cpu_percent(interval=1)
+        disk_usage = psutil.disk_usage('/')
+        
+        # Get Cloud Run specific environment variables
+        cloud_run_env = {
+            "service": os.getenv("K_SERVICE", "unknown"),
+            "revision": os.getenv("K_REVISION", "unknown"),
+            "configuration": os.getenv("K_CONFIGURATION", "unknown"),
+            "port": os.getenv("PORT", "8000"),
+            "project_id": os.getenv("GOOGLE_CLOUD_PROJECT", "unknown"),
+            "region": os.getenv("GOOGLE_CLOUD_REGION", "unknown")
+        }
+        
+        # Get application status
+        app_status = {
+            "uptime_seconds": time.time() - startup_time,
+            "version": "1.0.0-cloudrun",
+            "python_version": os.sys.version,
+            "environment": "production" if not os.getenv("DEBUG", "false").lower() == "true" else "development"
+        }
+        
+        # Get service capabilities
+        capabilities = {
+            "ai_enhancement": blog_writer.enable_ai_enhancement if blog_writer else False,
+            "seo_optimization": blog_writer.enable_seo_optimization if blog_writer else False,
+            "quality_analysis": blog_writer.enable_quality_analysis if blog_writer else False,
+            "enhanced_keyword_analysis": isinstance(blog_writer.keyword_analyzer, EnhancedKeywordAnalyzer) if blog_writer else False,
+            "batch_processing": batch_processor is not None,
+            "caching": get_cache_manager() is not None,
+            "metrics": get_metrics_collector() is not None
+        }
+        
+        return {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "cloud_run": cloud_run_env,
+            "application": app_status,
+            "system": {
+                "cpu_percent": cpu_percent,
+                "memory": {
+                    "total_gb": round(memory_info.total / (1024**3), 2),
+                    "available_gb": round(memory_info.available / (1024**3), 2),
+                    "used_percent": memory_info.percent
+                },
+                "disk": {
+                    "total_gb": round(disk_usage.total / (1024**3), 2),
+                    "free_gb": round(disk_usage.free / (1024**3), 2),
+                    "used_percent": round((disk_usage.used / disk_usage.total) * 100, 1)
+                }
+            },
+            "capabilities": capabilities
+        }
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": str(e),
+                "timestamp": time.time()
+            }
+        )
 
 
 if __name__ == "__main__":

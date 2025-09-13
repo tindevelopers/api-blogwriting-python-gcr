@@ -1,0 +1,56 @@
+# Google Cloud Build configuration for Blog Writer SDK
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA',
+      '-t', 'gcr.io/$PROJECT_ID/blog-writer-sdk:latest',
+      '.'
+    ]
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/blog-writer-sdk:latest']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: [
+      'run', 'deploy', 'blog-writer-sdk',
+      '--image', 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA',
+      '--region', '$_REGION',
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--port', '8000',
+      '--memory', '2Gi',
+      '--cpu', '2',
+      '--min-instances', '0',
+      '--max-instances', '100',
+      '--concurrency', '80',
+      '--timeout', '900',
+      '--set-env-vars', 'PORT=8000,PYTHONUNBUFFERED=1',
+      '--set-secrets', '/secrets/env=blog-writer-env:latest'
+    ]
+
+# Store images in Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/blog-writer-sdk:latest'
+
+# Substitution variables
+substitutions:
+  _REGION: 'us-central1'
+
+# Build options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: '100'
+
+# Build timeout
+timeout: '1200s'
+

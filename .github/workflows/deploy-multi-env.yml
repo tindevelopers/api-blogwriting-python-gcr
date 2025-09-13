@@ -1,0 +1,219 @@
+name: Multi-Environment Deployment to Google Cloud Run
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+    types: [ closed ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+env:
+  PROJECT_ID: sdk-ai-blog-writer
+  REGION: us-central1
+
+jobs:
+  # Determine which environments to deploy to
+  determine-environments:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.set-environments.outputs.environments }}
+    steps:
+    - name: Determine environments to deploy
+      id: set-environments
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # Manual deployment to specific environment
+          echo "environments=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
+        elif [ "${{ github.ref }}" = "refs/heads/main" ] || [ "${{ github.ref }}" = "refs/heads/master" ]; then
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Push to main: deploy to dev and staging
+            echo "environments=[\"dev\", \"staging\"]" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            # Merged PR: deploy to production
+            echo "environments=[\"prod\"]" >> $GITHUB_OUTPUT
+          fi
+        else
+          # Other branches: deploy to dev only
+          echo "environments=[\"dev\"]" >> $GITHUB_OUTPUT
+        fi
+
+  # Deploy to each determined environment
+  deploy:
+    needs: determine-environments
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.determine-environments.outputs.environments) }}
+    
+    environment:
+      name: ${{ matrix.environment }}
+      url: ${{ steps.deploy.outputs.service-url }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
+        project_id: ${{ env.PROJECT_ID }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+
+    - name: Configure Docker for Artifact Registry
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+    - name: Set environment-specific variables
+      id: env-config
+      run: |
+        case "${{ matrix.environment }}" in
+          "dev")
+            echo "memory=1Gi" >> $GITHUB_OUTPUT
+            echo "cpu=1" >> $GITHUB_OUTPUT
+            echo "min-instances=0" >> $GITHUB_OUTPUT
+            echo "max-instances=5" >> $GITHUB_OUTPUT
+            echo "concurrency=10" >> $GITHUB_OUTPUT
+            ;;
+          "staging")
+            echo "memory=2Gi" >> $GITHUB_OUTPUT
+            echo "cpu=2" >> $GITHUB_OUTPUT
+            echo "min-instances=0" >> $GITHUB_OUTPUT
+            echo "max-instances=10" >> $GITHUB_OUTPUT
+            echo "concurrency=80" >> $GITHUB_OUTPUT
+            ;;
+          "prod")
+            echo "memory=2Gi" >> $GITHUB_OUTPUT
+            echo "cpu=2" >> $GITHUB_OUTPUT
+            echo "min-instances=1" >> $GITHUB_OUTPUT
+            echo "max-instances=100" >> $GITHUB_OUTPUT
+            echo "concurrency=80" >> $GITHUB_OUTPUT
+            ;;
+        esac
+
+    - name: Build and push Docker image
+      run: |
+        IMAGE_TAG="${{ matrix.environment }}-${{ github.sha }}"
+        IMAGE_NAME="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/blog-writer-sdk/blog-writer-sdk:$IMAGE_TAG"
+        
+        echo "Building image: $IMAGE_NAME"
+        docker build -t "$IMAGE_NAME" .
+        
+        echo "Pushing image to Artifact Registry"
+        docker push "$IMAGE_NAME"
+        
+        echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+    - name: Deploy to Cloud Run
+      id: deploy
+      run: |
+        SERVICE_NAME="blog-writer-sdk-${{ matrix.environment }}"
+        
+        gcloud run deploy $SERVICE_NAME \
+          --image="${{ env.IMAGE_NAME }}" \
+          --region="${{ env.REGION }}" \
+          --platform="managed" \
+          --allow-unauthenticated \
+          --port="8000" \
+          --memory="${{ steps.env-config.outputs.memory }}" \
+          --cpu="${{ steps.env-config.outputs.cpu }}" \
+          --min-instances="${{ steps.env-config.outputs.min-instances }}" \
+          --max-instances="${{ steps.env-config.outputs.max-instances }}" \
+          --concurrency="${{ steps.env-config.outputs.concurrency }}" \
+          --timeout="900" \
+          --service-account="blog-writer-${{ matrix.environment }}@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+          --set-env-vars="PORT=8000,PYTHONUNBUFFERED=1,ENVIRONMENT=${{ matrix.environment }}" \
+          --set-secrets="/secrets/env=blog-writer-env-${{ matrix.environment }}:latest" \
+          --project="${{ env.PROJECT_ID }}"
+        
+        # Get service URL
+        SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
+          --region="${{ env.REGION }}" \
+          --project="${{ env.PROJECT_ID }}" \
+          --format="value(status.url)")
+        
+        echo "service-url=$SERVICE_URL" >> $GITHUB_OUTPUT
+        echo "Service deployed at: $SERVICE_URL"
+
+    - name: Test deployment
+      run: |
+        SERVICE_URL="${{ steps.deploy.outputs.service-url }}"
+        
+        # Wait for service to be ready
+        sleep 30
+        
+        # Test health endpoint
+        echo "Testing health endpoint..."
+        if curl -f "$SERVICE_URL/health" > /dev/null 2>&1; then
+          echo "✅ Health check passed"
+        else
+          echo "⚠️ Health check failed"
+        fi
+        
+        # Test API root
+        echo "Testing API root..."
+        if curl -f "$SERVICE_URL/" > /dev/null 2>&1; then
+          echo "✅ API root accessible"
+        else
+          echo "⚠️ API root failed"
+        fi
+
+    - name: Create deployment summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🚀 Deployment Summary - ${{ matrix.environment }}
+        
+        **Environment:** ${{ matrix.environment }}
+        **Service URL:** ${{ steps.deploy.outputs.service-url }}
+        **Image:** ${{ env.IMAGE_NAME }}
+        **Region:** ${{ env.REGION }}
+        
+        ### 🔗 Quick Links
+        - [API Documentation](${{ steps.deploy.outputs.service-url }}/docs)
+        - [Health Check](${{ steps.deploy.outputs.service-url }}/health)
+        - [API Configuration](${{ steps.deploy.outputs.service-url }}/api/v1/config)
+        
+        ### 📊 Configuration
+        - **Memory:** ${{ steps.env-config.outputs.memory }}
+        - **CPU:** ${{ steps.env-config.outputs.cpu }}
+        - **Min Instances:** ${{ steps.env-config.outputs.min-instances }}
+        - **Max Instances:** ${{ steps.env-config.outputs.max-instances }}
+        - **Concurrency:** ${{ steps.env-config.outputs.concurrency }}
+        EOF
+
+  # Notify deployment completion
+  notify:
+    needs: [determine-environments, deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Deployment notification
+      run: |
+        if [ "${{ needs.deploy.result }}" = "success" ]; then
+          echo "🎉 All deployments completed successfully!"
+        else
+          echo "❌ Some deployments failed. Check the logs above."
+          exit 1
+        fi
+
+
+
+

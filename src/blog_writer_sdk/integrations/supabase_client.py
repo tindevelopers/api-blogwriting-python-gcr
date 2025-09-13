@@ -1,11 +1,13 @@
 """
-Supabase integration for the Blog Writer SDK.
+Supabase integration for the Blog Writer SDK with multi-environment support.
 
 This module provides database operations for storing and managing
-blog posts, analytics, and user data using Supabase.
+blog posts, analytics, and user data using Supabase with environment-specific
+table isolation (dev/staging/prod).
 """
 
 import os
+import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import json
@@ -21,34 +23,55 @@ from ..models.blog_models import BlogPost, BlogGenerationResult
 
 class SupabaseClient:
     """
-    Supabase client for blog writer operations.
+    Supabase client for blog writer operations with multi-environment support.
     
     Handles database operations for blog posts, analytics,
-    and content management using Supabase.
+    and content management using Supabase with environment-specific table isolation.
     """
     
     def __init__(
         self,
         supabase_url: Optional[str] = None,
         supabase_key: Optional[str] = None,
+        environment: Optional[str] = None,
     ):
         """
-        Initialize Supabase client.
+        Initialize Supabase client with environment support.
         
         Args:
             supabase_url: Supabase project URL
             supabase_key: Supabase service role key
+            environment: Environment name (dev/staging/prod)
         """
         if not create_client:
             raise ImportError("supabase package is required for database integration")
         
         self.supabase_url = supabase_url or os.getenv("SUPABASE_URL")
         self.supabase_key = supabase_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        self.environment = environment or os.getenv("DATABASE_ENVIRONMENT", "dev")
         
         if not self.supabase_url or not self.supabase_key:
             raise ValueError("Supabase URL and service role key are required")
         
+        # Validate environment
+        if self.environment not in ["dev", "staging", "prod"]:
+            raise ValueError(f"Invalid environment: {self.environment}. Must be dev, staging, or prod.")
+        
         self.client: Client = create_client(self.supabase_url, self.supabase_key)
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Initialized Supabase client for environment: {self.environment}")
+    
+    def _get_table_name(self, base_name: str) -> str:
+        """
+        Get environment-specific table name.
+        
+        Args:
+            base_name: Base table name (e.g., 'blog_posts')
+            
+        Returns:
+            Environment-specific table name (e.g., 'blog_posts_prod')
+        """
+        return f"{base_name}_{self.environment}"
     
     async def save_blog_post(self, blog_post: BlogPost, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -105,8 +128,9 @@ class SupabaseClient:
                 blog_data["flesch_reading_ease"] = blog_post.content_quality.flesch_reading_ease
                 blog_data["flesch_kincaid_grade"] = blog_post.content_quality.flesch_kincaid_grade
             
-            # Insert into database
-            result = self.client.table("blog_posts").insert(blog_data).execute()
+            # Insert into environment-specific table
+            table_name = self._get_table_name("blog_posts")
+            result = self.client.table(table_name).insert(blog_data).execute()
             
             if result.data:
                 return result.data[0]
@@ -128,7 +152,8 @@ class SupabaseClient:
             Blog post data or None if not found
         """
         try:
-            query = self.client.table("blog_posts").select("*").eq("id", post_id)
+            table_name = self._get_table_name("blog_posts")
+            query = self.client.table(table_name).select("*").eq("id", post_id)
             
             if user_id:
                 query = query.eq("user_id", user_id)
@@ -162,7 +187,8 @@ class SupabaseClient:
             List of blog post data
         """
         try:
-            query = self.client.table("blog_posts").select("*")
+            table_name = self._get_table_name("blog_posts")
+            query = self.client.table(table_name).select("*")
             
             if user_id:
                 query = query.eq("user_id", user_id)
@@ -199,7 +225,8 @@ class SupabaseClient:
             # Add updated timestamp
             updates["updated_at"] = datetime.utcnow().isoformat()
             
-            query = self.client.table("blog_posts").update(updates).eq("id", post_id)
+            table_name = self._get_table_name("blog_posts")
+            query = self.client.table(table_name).update(updates).eq("id", post_id)
             
             if user_id:
                 query = query.eq("user_id", user_id)
@@ -226,7 +253,8 @@ class SupabaseClient:
             True if deleted successfully
         """
         try:
-            query = self.client.table("blog_posts").delete().eq("id", post_id)
+            table_name = self._get_table_name("blog_posts")
+            query = self.client.table(table_name).delete().eq("id", post_id)
             
             if user_id:
                 query = query.eq("user_id", user_id)
@@ -274,7 +302,8 @@ class SupabaseClient:
                 "created_at": datetime.utcnow().isoformat(),
             }
             
-            result = self.client.table("generation_analytics").insert(analytics_data).execute()
+            table_name = self._get_table_name("generation_analytics")
+            result = self.client.table(table_name).insert(analytics_data).execute()
             
             if result.data:
                 return result.data[0]
@@ -304,7 +333,8 @@ class SupabaseClient:
             from datetime import timedelta
             threshold_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
             
-            query = self.client.table("generation_analytics").select("*").gte("created_at", threshold_date)
+            table_name = self._get_table_name("generation_analytics")
+            query = self.client.table(table_name).select("*").gte("created_at", threshold_date)
             
             if user_id:
                 query = query.eq("user_id", user_id)
@@ -352,7 +382,8 @@ class SupabaseClient:
         """
         try:
             # Use Supabase full-text search if available
-            search_query = self.client.table("blog_posts").select("*")
+            table_name = self._get_table_name("blog_posts")
+            search_query = self.client.table(table_name).select("*")
             
             if user_id:
                 search_query = search_query.eq("user_id", user_id)
@@ -367,16 +398,24 @@ class SupabaseClient:
         except Exception as e:
             raise Exception(f"Error searching blog posts: {str(e)}")
     
-    def create_database_schema(self) -> str:
+    def create_database_schema(self, create_all_environments: bool = True) -> str:
         """
         Generate SQL schema for the required database tables.
         
+        Args:
+            create_all_environments: If True, creates tables for all environments
+            
         Returns:
             SQL schema as string
         """
-        return """
--- Blog posts table
-CREATE TABLE IF NOT EXISTS blog_posts (
+        environments = ["dev", "staging", "prod"] if create_all_environments else [self.environment]
+        
+        schema_parts = []
+        
+        for env in environments:
+            schema_parts.append(f"""
+-- Blog posts table for {env} environment
+CREATE TABLE IF NOT EXISTS blog_posts_{env} (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -422,8 +461,8 @@ CREATE TABLE IF NOT EXISTS blog_posts (
     UNIQUE(slug)
 );
 
--- Generation analytics table
-CREATE TABLE IF NOT EXISTS generation_analytics (
+-- Generation analytics table for {env} environment
+CREATE TABLE IF NOT EXISTS generation_analytics_{env} (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     topic TEXT NOT NULL,
     success BOOLEAN NOT NULL,
@@ -435,39 +474,41 @@ CREATE TABLE IF NOT EXISTS generation_analytics (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_blog_posts_user_id ON blog_posts(user_id);
-CREATE INDEX IF NOT EXISTS idx_blog_posts_status ON blog_posts(status);
-CREATE INDEX IF NOT EXISTS idx_blog_posts_created_at ON blog_posts(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_blog_posts_slug ON blog_posts(slug);
-CREATE INDEX IF NOT EXISTS idx_generation_analytics_user_id ON generation_analytics(user_id);
-CREATE INDEX IF NOT EXISTS idx_generation_analytics_created_at ON generation_analytics(created_at DESC);
+-- Indexes for performance ({env} environment)
+CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_user_id ON blog_posts_{env}(user_id);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_status ON blog_posts_{env}(status);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_created_at ON blog_posts_{env}(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_slug ON blog_posts_{env}(slug);
+CREATE INDEX IF NOT EXISTS idx_generation_analytics_{env}_user_id ON generation_analytics_{env}(user_id);
+CREATE INDEX IF NOT EXISTS idx_generation_analytics_{env}_created_at ON generation_analytics_{env}(created_at DESC);
 
--- Full-text search indexes
-CREATE INDEX IF NOT EXISTS idx_blog_posts_title_search ON blog_posts USING gin(to_tsvector('english', title));
-CREATE INDEX IF NOT EXISTS idx_blog_posts_content_search ON blog_posts USING gin(to_tsvector('english', content));
+-- Full-text search indexes ({env} environment)
+CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_title_search ON blog_posts_{env} USING gin(to_tsvector('english', title));
+CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_content_search ON blog_posts_{env} USING gin(to_tsvector('english', content));
 
--- Row Level Security (RLS) policies
-ALTER TABLE blog_posts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE generation_analytics ENABLE ROW LEVEL SECURITY;
+-- Row Level Security (RLS) policies ({env} environment)
+ALTER TABLE blog_posts_{env} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE generation_analytics_{env} ENABLE ROW LEVEL SECURITY;
 
--- Policies for blog_posts (users can only access their own posts)
-CREATE POLICY "Users can view their own blog posts" ON blog_posts
+-- Policies for blog_posts_{env} (users can only access their own posts)
+CREATE POLICY "Users can view their own blog posts {env}" ON blog_posts_{env}
     FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert their own blog posts" ON blog_posts
+CREATE POLICY "Users can insert their own blog posts {env}" ON blog_posts_{env}
     FOR INSERT WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update their own blog posts" ON blog_posts
+CREATE POLICY "Users can update their own blog posts {env}" ON blog_posts_{env}
     FOR UPDATE USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete their own blog posts" ON blog_posts
+CREATE POLICY "Users can delete their own blog posts {env}" ON blog_posts_{env}
     FOR DELETE USING (auth.uid() = user_id);
 
--- Policies for generation_analytics
-CREATE POLICY "Users can view their own analytics" ON generation_analytics
+-- Policies for generation_analytics_{env}
+CREATE POLICY "Users can view their own analytics {env}" ON generation_analytics_{env}
     FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert their own analytics" ON generation_analytics
+CREATE POLICY "Users can insert their own analytics {env}" ON generation_analytics_{env}
     FOR INSERT WITH CHECK (auth.uid() = user_id);
-"""
+""")
+        
+        return "\n".join(schema_parts)

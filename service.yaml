@@ -1,0 +1,113 @@
+# Cloud Run service configuration for Blog Writer SDK
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: blog-writer-sdk
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Auto-scaling configuration
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "100"
+        
+        # Resource allocation
+        run.googleapis.com/memory: "2Gi"
+        run.googleapis.com/cpu: "2"
+        
+        # Networking
+        run.googleapis.com/execution-environment: gen2
+        
+        # Timeout and concurrency
+        run.googleapis.com/timeout: "900"
+        run.googleapis.com/cpu-throttling: "false"
+        
+        # VPC connector (optional - uncomment if needed)
+        # run.googleapis.com/vpc-access-connector: projects/PROJECT_ID/locations/REGION/connectors/CONNECTOR_NAME
+        # run.googleapis.com/vpc-access-egress: private-ranges-only
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 900
+      serviceAccountName: blog-writer-service-account@PROJECT_ID.iam.gserviceaccount.com
+      containers:
+      - image: gcr.io/PROJECT_ID/blog-writer-sdk:latest
+        ports:
+        - name: http1
+          containerPort: 8000
+        env:
+        - name: PORT
+          value: "8000"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: HOST
+          value: "0.0.0.0"
+        # Environment variables from Secret Manager
+        - name: SUPABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: SUPABASE_URL
+        - name: SUPABASE_SERVICE_ROLE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: SUPABASE_SERVICE_ROLE_KEY
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: OPENAI_API_KEY
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: ANTHROPIC_API_KEY
+        - name: DATAFORSEO_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: DATAFORSEO_API_KEY
+        - name: DATAFORSEO_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: DATAFORSEO_API_SECRET
+        resources:
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+          requests:
+            cpu: "1000m"
+            memory: "1Gi"
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 30
+  traffic:
+  - percent: 100
+    latestRevision: true
+
