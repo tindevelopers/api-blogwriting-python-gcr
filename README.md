@@ -10,7 +10,7 @@ A comprehensive Python SDK for AI-driven blog writing with advanced SEO optimiza
 
 ### Core Capabilities
 - **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic, Azure OpenAI) with intelligent fallback
-- **🚀 LiteLLM Router Integration**: Intelligent AI provider routing with cost optimization and automatic failover
+- **🚀 Direct AI Provider Integration**: Direct integration with OpenAI, Anthropic, and other AI providers
 - **📊 SEO-First Architecture**: Built-in SEO optimization and analysis
 - **🔍 Enhanced Keyword Analysis**: Optional DataForSEO integration for real search volume, competition, and trends data
 - **📝 Content Templates**: Pre-built templates for how-to guides, listicles, reviews, comparisons, and more
@@ -489,7 +489,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📚 Documentation
 
-- **[LiteLLM Integration](LITELLM_INTEGRATION.md)**: AI provider routing and cost optimization
+- **[AI Provider Integration](src/blog_writer_sdk/ai/)**: Direct AI provider integrations
 - **[UI Examples](examples/ui-examples/README.md)**: React and Next.js dashboard templates
 - **[Deployment Guide](RAILWAY_DEPLOYMENT.md)**: Deploy to Railway
 - **[GitHub Actions Setup](GITHUB_RAILWAY_SETUP.md)**: CI/CD with Railway

@@ -68,11 +68,6 @@ class RateLimiter:
                 'hour': 100,
                 'day': 500
             },
-            '/api/v1/litellm/generate': {
-                'minute': 20,
-                'hour': 200,
-                'day': 1000
-            },
             '/api/v1/keywords/analyze': {
                 'minute': 30,
                 'hour': 300,

@@ -71,9 +71,9 @@ GET  /api/v1/batch                    # List all jobs
 
 ### 🤖 **Enhanced AI Integration**
 
-#### **LiteLLM Router Integration**
-- **Intelligent Model Selection**: Automatic model selection based on task complexity
-- **Cost Optimization**: Route simple tasks to cheaper models, complex to premium
+#### **Direct AI Provider Integration**
+- **Multi-Provider Support**: Direct integration with OpenAI, Anthropic, and other providers
+- **Intelligent Fallback**: Automatic fallback between AI providers for reliability
 - **Multi-Provider Support**: OpenAI, DeepSeek, Anthropic with automatic failover
 - **Real-Time Cost Tracking**: Monitor and optimize AI spending
 - **Task-Based Routing**: Different models for different types of content generation
@@ -122,11 +122,8 @@ GET /api/v1/health/detailed
 GET /api/v1/cache/stats
 DELETE /api/v1/cache/clear
 
-# LiteLLM Integration
-POST /api/v1/litellm/generate
-GET  /api/v1/litellm/health
-GET  /api/v1/litellm/models
-GET  /api/v1/litellm/costs
+# LiteLLM Integration (Removed)
+# LiteLLM endpoints have been removed in favor of direct AI provider integrations
 ```
 
 ### **Enhanced Existing Endpoints**
@@ -267,9 +264,9 @@ METRICS_RETENTION_HOURS=24
 ## 🙏 **Acknowledgments**
 
 Special thanks to:
-- **LiteLLM Team**: For the excellent AI provider routing library
 - **TailAdmin**: For the beautiful dashboard templates
 - **FastAPI Community**: For the robust web framework
+- **OpenAI & Anthropic**: For excellent AI APIs
 - **Redis Team**: For the high-performance caching solution
 
 ## 📞 **Support & Resources**
