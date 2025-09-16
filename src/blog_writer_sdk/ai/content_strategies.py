@@ -70,7 +70,7 @@ class ContentGenerationStrategy(ABC):
         pass
 
 
-class SEOOptimizedStrategy(ContentGenerationStrategy):
+class SEOContentStrategy(ContentGenerationStrategy):
     """SEO-optimized content generation strategy."""
     
     async def generate_content_structure(
@@ -232,7 +232,7 @@ Focus on questions that real readers would actually ask about this topic."""
         return targets.get(length, 1500)
 
 
-class EngagementFocusedStrategy(ContentGenerationStrategy):
+class EngagementContentStrategy(ContentGenerationStrategy):
     """Engagement-focused content generation strategy."""
     
     async def generate_content_structure(
@@ -417,7 +417,7 @@ Make readers excited to take the next step."""
         return targets.get(length, 1200)
 
 
-class ConversionOptimizedStrategy(ContentGenerationStrategy):
+class ConversionContentStrategy(ContentGenerationStrategy):
     """Conversion-optimized content generation strategy."""
     
     async def generate_content_structure(

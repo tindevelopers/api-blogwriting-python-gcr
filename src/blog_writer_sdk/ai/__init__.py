@@ -42,9 +42,9 @@ from .blog_writer_factory import (
 )
 from .content_strategies import (
     ContentGenerationStrategy,
-    SEOOptimizedStrategy,
-    EngagementFocusedStrategy,
-    ConversionOptimizedStrategy,
+    SEOContentStrategy,
+    EngagementContentStrategy,
+    ConversionContentStrategy,
     StrategyFactory,
     ContentStructure
 )
@@ -96,9 +96,9 @@ __all__ = [
     
     # Content Generation Strategies
     'ContentGenerationStrategy',
-    'SEOOptimizedStrategy',
-    'EngagementFocusedStrategy',
-    'ConversionOptimizedStrategy',
+    'SEOContentStrategy',
+    'EngagementContentStrategy',
+    'ConversionContentStrategy',
     'StrategyFactory',
     'ContentStructure',
 ]

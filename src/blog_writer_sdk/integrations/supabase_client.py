@@ -48,18 +48,13 @@ class SupabaseClient:
         
         self.supabase_url = supabase_url or os.getenv("SUPABASE_URL")
         self.supabase_key = supabase_key or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        self.environment = environment or os.getenv("DATABASE_ENVIRONMENT", "dev")
+        self.environment = environment or os.getenv("ENVIRONMENT", "dev")
         
         if not self.supabase_url or not self.supabase_key:
-            raise ValueError("Supabase URL and service role key are required")
-        
-        # Validate environment
-        if self.environment not in ["dev", "staging", "prod"]:
-            raise ValueError(f"Invalid environment: {self.environment}. Must be dev, staging, or prod.")
+            raise ValueError("Supabase URL and key are required")
         
         self.client: Client = create_client(self.supabase_url, self.supabase_key)
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"Initialized Supabase client for environment: {self.environment}")
     
     def _get_table_name(self, base_name: str) -> str:
         """
@@ -78,67 +73,61 @@ class SupabaseClient:
         Save a blog post to the database.
         
         Args:
-            blog_post: BlogPost object to save
-            user_id: Optional user ID for ownership
+            blog_post: Blog post object to save
+            user_id: Optional user ID for association
             
         Returns:
             Database record of the saved blog post
         """
         try:
             # Prepare blog post data
-            blog_data = {
+            post_data = {
                 "title": blog_post.title,
                 "content": blog_post.content,
                 "excerpt": blog_post.excerpt,
                 "slug": blog_post.slug,
                 "author": blog_post.author,
-                "categories": blog_post.categories,
-                "tags": blog_post.tags,
+                "categories": blog_post.categories or [],
+                "tags": blog_post.tags or [],
                 "status": blog_post.status,
-                "featured_image": str(blog_post.featured_image) if blog_post.featured_image else None,
-                "created_at": blog_post.created_at.isoformat(),
-                "updated_at": blog_post.updated_at.isoformat() if blog_post.updated_at else None,
-                "published_at": blog_post.published_at.isoformat() if blog_post.published_at else None,
-                "user_id": user_id,
+                "featured_image": blog_post.featured_image,
+                "meta_title": blog_post.meta_title,
+                "meta_description": blog_post.meta_description,
+                "meta_keywords": blog_post.meta_keywords or [],
+                "canonical_url": blog_post.canonical_url,
+                "og_title": blog_post.og_title,
+                "og_description": blog_post.og_description,
+                "og_image": blog_post.og_image,
+                "twitter_title": blog_post.twitter_title,
+                "twitter_description": blog_post.twitter_description,
+                "seo_score": blog_post.seo_score,
+                "word_count": blog_post.word_count,
+                "reading_time": blog_post.reading_time,
+                "keyword_density": blog_post.keyword_density,
+                "seo_recommendations": blog_post.seo_recommendations or [],
+                "readability_score": blog_post.readability_score,
+                "flesch_reading_ease": blog_post.flesch_reading_ease,
+                "flesch_kincaid_grade": blog_post.flesch_kincaid_grade,
+                "updated_at": datetime.utcnow().isoformat(),
+                "user_id": user_id
             }
             
-            # Add meta tags
-            if blog_post.meta_tags:
-                blog_data["meta_title"] = blog_post.meta_tags.title
-                blog_data["meta_description"] = blog_post.meta_tags.description
-                blog_data["meta_keywords"] = blog_post.meta_tags.keywords
-                blog_data["canonical_url"] = str(blog_post.meta_tags.canonical_url) if blog_post.meta_tags.canonical_url else None
-                blog_data["og_title"] = blog_post.meta_tags.og_title
-                blog_data["og_description"] = blog_post.meta_tags.og_description
-                blog_data["og_image"] = str(blog_post.meta_tags.og_image) if blog_post.meta_tags.og_image else None
-                blog_data["twitter_title"] = blog_post.meta_tags.twitter_title
-                blog_data["twitter_description"] = blog_post.meta_tags.twitter_description
+            # Add published_at if status is published
+            if blog_post.status == "published" and not post_data.get("published_at"):
+                post_data["published_at"] = datetime.utcnow().isoformat()
             
-            # Add SEO metrics
-            if blog_post.seo_metrics:
-                blog_data["seo_score"] = blog_post.seo_metrics.overall_seo_score
-                blog_data["word_count"] = blog_post.seo_metrics.word_count
-                blog_data["reading_time"] = blog_post.seo_metrics.reading_time_minutes
-                blog_data["keyword_density"] = json.dumps(blog_post.seo_metrics.keyword_density)
-                blog_data["seo_recommendations"] = blog_post.seo_metrics.recommendations
-            
-            # Add content quality metrics
-            if blog_post.content_quality:
-                blog_data["readability_score"] = blog_post.content_quality.readability_score
-                blog_data["flesch_reading_ease"] = blog_post.content_quality.flesch_reading_ease
-                blog_data["flesch_kincaid_grade"] = blog_post.content_quality.flesch_kincaid_grade
-            
-            # Insert into environment-specific table
             table_name = self._get_table_name("blog_posts")
-            result = self.client.table(table_name).insert(blog_data).execute()
+            result = self.client.table(table_name).insert(post_data).execute()
             
             if result.data:
+                self.logger.info(f"Blog post saved successfully: {result.data[0]['id']}")
                 return result.data[0]
             else:
                 raise Exception("Failed to save blog post")
                 
         except Exception as e:
-            raise Exception(f"Error saving blog post: {str(e)}")
+            self.logger.error(f"Error saving blog post: {str(e)}")
+            raise
     
     async def get_blog_post(self, post_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
@@ -146,7 +135,7 @@ class SupabaseClient:
         
         Args:
             post_id: Blog post ID
-            user_id: Optional user ID for ownership check
+            user_id: Optional user ID for filtering
             
         Returns:
             Blog post data or None if not found
@@ -165,20 +154,21 @@ class SupabaseClient:
             return None
             
         except Exception as e:
-            raise Exception(f"Error retrieving blog post: {str(e)}")
+            self.logger.error(f"Error retrieving blog post: {str(e)}")
+            raise
     
     async def list_blog_posts(
         self,
         user_id: Optional[str] = None,
         status: Optional[str] = None,
-        limit: int = 50,
+        limit: int = 20,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """
         List blog posts with optional filtering.
         
         Args:
-            user_id: Optional user ID filter
+            user_id: Optional user ID for filtering
             status: Optional status filter
             limit: Maximum number of posts to return
             offset: Number of posts to skip
@@ -192,17 +182,17 @@ class SupabaseClient:
             
             if user_id:
                 query = query.eq("user_id", user_id)
-            
             if status:
                 query = query.eq("status", status)
             
-            query = query.order("created_at", desc=True).limit(limit).offset(offset)
-            
+            query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
             result = query.execute()
+            
             return result.data or []
             
         except Exception as e:
-            raise Exception(f"Error listing blog posts: {str(e)}")
+            self.logger.error(f"Error listing blog posts: {str(e)}")
+            raise
     
     async def update_blog_post(
         self,
@@ -216,7 +206,7 @@ class SupabaseClient:
         Args:
             post_id: Blog post ID
             updates: Dictionary of fields to update
-            user_id: Optional user ID for ownership check
+            user_id: Optional user ID for filtering
             
         Returns:
             Updated blog post data
@@ -234,12 +224,14 @@ class SupabaseClient:
             result = query.execute()
             
             if result.data:
+                self.logger.info(f"Blog post updated successfully: {post_id}")
                 return result.data[0]
             else:
-                raise Exception("Blog post not found or update failed")
+                raise Exception("Failed to update blog post")
                 
         except Exception as e:
-            raise Exception(f"Error updating blog post: {str(e)}")
+            self.logger.error(f"Error updating blog post: {str(e)}")
+            raise
     
     async def delete_blog_post(self, post_id: str, user_id: Optional[str] = None) -> bool:
         """
@@ -247,7 +239,7 @@ class SupabaseClient:
         
         Args:
             post_id: Blog post ID
-            user_id: Optional user ID for ownership check
+            user_id: Optional user ID for filtering
             
         Returns:
             True if deleted successfully
@@ -260,20 +252,25 @@ class SupabaseClient:
                 query = query.eq("user_id", user_id)
             
             result = query.execute()
-            return len(result.data) > 0
+            
+            if result.data:
+                self.logger.info(f"Blog post deleted successfully: {post_id}")
+                return True
+            return False
             
         except Exception as e:
-            raise Exception(f"Error deleting blog post: {str(e)}")
+            self.logger.error(f"Error deleting blog post: {str(e)}")
+            raise
     
-    async def log_generation(
+    async def log_generation_analytics(
         self,
         topic: str,
         success: bool,
-        word_count: int,
-        generation_time: float,
-        user_id: Optional[str] = None,
+        word_count: Optional[int] = None,
+        generation_time: Optional[float] = None,
         seo_score: Optional[float] = None,
         readability_score: Optional[float] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Log blog generation analytics.
@@ -281,11 +278,11 @@ class SupabaseClient:
         Args:
             topic: Blog topic
             success: Whether generation was successful
-            word_count: Generated word count
-            generation_time: Time taken to generate
+            word_count: Number of words generated
+            generation_time: Time taken for generation
+            seo_score: SEO score of generated content
+            readability_score: Readability score of generated content
             user_id: Optional user ID
-            seo_score: Optional SEO score
-            readability_score: Optional readability score
             
         Returns:
             Analytics record
@@ -296,10 +293,10 @@ class SupabaseClient:
                 "success": success,
                 "word_count": word_count,
                 "generation_time": generation_time,
-                "user_id": user_id,
                 "seo_score": seo_score,
                 "readability_score": readability_score,
-                "created_at": datetime.utcnow().isoformat(),
+                "user_id": user_id,
+                "created_at": datetime.utcnow().isoformat()
             }
             
             table_name = self._get_table_name("generation_analytics")
@@ -311,9 +308,10 @@ class SupabaseClient:
                 raise Exception("Failed to log analytics")
                 
         except Exception as e:
-            raise Exception(f"Error logging analytics: {str(e)}")
+            self.logger.error(f"Error logging analytics: {str(e)}")
+            raise
     
-    async def get_analytics(
+    async def get_analytics_summary(
         self,
         user_id: Optional[str] = None,
         days: int = 30,
@@ -322,8 +320,8 @@ class SupabaseClient:
         Get analytics summary.
         
         Args:
-            user_id: Optional user ID filter
-            days: Number of days to include
+            user_id: Optional user ID for filtering
+            days: Number of days to look back
             
         Returns:
             Analytics summary
@@ -340,28 +338,28 @@ class SupabaseClient:
                 query = query.eq("user_id", user_id)
             
             result = query.execute()
-            analytics_data = result.data or []
+            data = result.data or []
             
             # Calculate summary statistics
-            total_generations = len(analytics_data)
-            successful_generations = sum(1 for record in analytics_data if record.get("success"))
-            total_words = sum(record.get("word_count", 0) for record in analytics_data)
-            avg_generation_time = sum(record.get("generation_time", 0) for record in analytics_data) / max(1, total_generations)
-            avg_seo_score = sum(record.get("seo_score", 0) for record in analytics_data if record.get("seo_score")) / max(1, sum(1 for record in analytics_data if record.get("seo_score")))
+            total_generations = len(data)
+            successful_generations = len([d for d in data if d.get("success", False)])
+            avg_generation_time = sum(d.get("generation_time", 0) for d in data if d.get("generation_time")) / max(1, len([d for d in data if d.get("generation_time")]))
+            avg_seo_score = sum(d.get("seo_score", 0) for d in data if d.get("seo_score")) / max(1, len([d for d in data if d.get("seo_score")]))
+            avg_readability_score = sum(d.get("readability_score", 0) for d in data if d.get("readability_score")) / max(1, len([d for d in data if d.get("readability_score")]))
             
             return {
-                "period_days": days,
                 "total_generations": total_generations,
                 "successful_generations": successful_generations,
                 "success_rate": successful_generations / max(1, total_generations),
-                "total_words_generated": total_words,
                 "average_generation_time": avg_generation_time,
                 "average_seo_score": avg_seo_score,
-                "recent_topics": [record.get("topic") for record in analytics_data[-10:]][::-1],  # Last 10, reversed
+                "average_readability_score": avg_readability_score,
+                "period_days": days
             }
             
         except Exception as e:
-            raise Exception(f"Error retrieving analytics: {str(e)}")
+            self.logger.error(f"Error getting analytics summary: {str(e)}")
+            raise
     
     async def search_blog_posts(
         self,
@@ -374,8 +372,8 @@ class SupabaseClient:
         
         Args:
             query: Search query
-            user_id: Optional user ID filter
-            limit: Maximum results to return
+            user_id: Optional user ID for filtering
+            limit: Maximum number of results
             
         Returns:
             List of matching blog posts
@@ -388,7 +386,7 @@ class SupabaseClient:
             if user_id:
                 search_query = search_query.eq("user_id", user_id)
             
-            # Search in title and content
+            # Simple text search (can be enhanced with full-text search)
             search_query = search_query.or_(f"title.ilike.%{query}%,content.ilike.%{query}%")
             search_query = search_query.limit(limit)
             
@@ -396,7 +394,8 @@ class SupabaseClient:
             return result.data or []
             
         except Exception as e:
-            raise Exception(f"Error searching blog posts: {str(e)}")
+            self.logger.error(f"Error searching blog posts: {str(e)}")
+            raise
     
     def create_database_schema(self, create_all_environments: bool = True) -> str:
         """
@@ -422,8 +421,8 @@ CREATE TABLE IF NOT EXISTS blog_posts_{env} (
     excerpt TEXT,
     slug TEXT NOT NULL,
     author TEXT,
-    categories TEXT[] DEFAULT '{}',
-    tags TEXT[] DEFAULT '{}',
+    categories TEXT[] DEFAULT '{{}}',
+    tags TEXT[] DEFAULT '{{}}',
     status TEXT DEFAULT 'draft',
     featured_image TEXT,
     
