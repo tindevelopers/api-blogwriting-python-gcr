@@ -26,7 +26,7 @@ A comprehensive Python SDK for AI-driven blog writing with advanced SEO optimiza
 - **Type Safety**: Full type hints and Pydantic models
 - **REST API**: FastAPI-powered API with automatic OpenAPI documentation
 - **Database Integration**: Supabase integration for content management
-- **Cloud-Ready**: Docker containerized with Railway deployment support
+- **Cloud-Ready**: Docker containerized with Google Cloud Run deployment support
 - **Extensible**: Plugin architecture for custom functionality
 
 ## 🏗️ Architecture
@@ -34,7 +34,7 @@ A comprehensive Python SDK for AI-driven blog writing with advanced SEO optimiza
 ```
 ┌─────────────────┐    HTTPS API     ┌─────────────────┐    PostgreSQL    ┌─────────────────┐
 │   Next.js App   │ ◄──────────────► │  Python API     │ ◄──────────────► │   Supabase DB   │
-│   (Vercel)      │                  │   (Railway)     │                  │   + Auth + APIs │
+│   (Vercel)      │                  │ (Google Cloud)  │                  │   + Auth + APIs │
 │   Auto SSL ✅   │                  │   Auto SSL ✅   │                  │   Auto SSL ✅   │
 └─────────────────┘                  └─────────────────┘                  └─────────────────┘
 ```
@@ -101,7 +101,7 @@ import httpx
 # Generate a blog post via API
 async with httpx.AsyncClient() as client:
     response = await client.post(
-        "https://your-api-url.railway.app/api/v1/generate",
+        "https://your-service-name-xxxxx-uc.a.run.app/api/v1/generate",
         json={
             "topic": "The Future of AI in Content Creation",
             "keywords": ["AI content", "automation", "writing tools"],
@@ -372,16 +372,16 @@ Deploy to Google Cloud Run for enterprise-grade scalability and reliability:
 
 See [CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md) for detailed instructions.
 
-### Railway Deployment (Alternative)
+### Google Cloud Run Deployment
 
-1. **Connect Repository**: Link your GitHub repo to Railway
-2. **Environment Variables**: Set up your environment variables in Railway dashboard
-3. **Deploy**: Railway automatically builds and deploys using the included `Dockerfile`
+1. **Setup Google Cloud**: Configure your Google Cloud project and enable Cloud Run
+2. **Environment Variables**: Set up your environment variables in Google Cloud
+3. **Deploy**: Use the included Cloud Build configuration for automated deployment
 
 ```bash
-# Railway automatically detects and uses:
+# Google Cloud Run automatically uses:
 # - Dockerfile for containerization
-# - railway.json for configuration
+# - cloudbuild.yaml for build configuration
 # - Automatic SSL and custom domains
 ```
 
@@ -398,13 +398,13 @@ docker run -p 8000:8000 \
   blog-writer-sdk
 ```
 
-### Vercel + Railway Architecture
+### Vercel + Google Cloud Run Architecture
 
 ```bash
 # Frontend (Vercel)
 vercel --prod
 
-# Backend (Railway)
+# Backend (Google Cloud Run)
 # Push to main branch triggers automatic deployment
 
 # Database (Supabase)
@@ -449,7 +449,7 @@ mypy src/
 ### Supported Platforms
 - **Supabase**: Database and authentication
 - **Vercel**: Frontend deployment
-- **Railway**: Backend deployment
+- **Google Cloud Run**: Backend deployment
 - **Next.js**: Frontend framework integration
 
 ### Planned Integrations
@@ -491,14 +491,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **[AI Provider Integration](src/blog_writer_sdk/ai/)**: Direct AI provider integrations
 - **[UI Examples](examples/ui-examples/README.md)**: React and Next.js dashboard templates
-- **[Deployment Guide](RAILWAY_DEPLOYMENT.md)**: Deploy to Railway
-- **[GitHub Actions Setup](GITHUB_RAILWAY_SETUP.md)**: CI/CD with Railway
+- **[Deployment Guide](CLOUD_RUN_DEPLOYMENT.md)**: Deploy to Google Cloud Run
+- **[GitHub Actions Setup](GITHUB_RAILWAY_SETUP.md)**: CI/CD with Google Cloud
 - **[Frontend Integration](FRONTEND_INTEGRATION.md)**: Next.js integration guide
 - **[Multi-SDK Docker Guide](MULTI_SDK_DOCKER_GUIDE.md)**: Dockerize multiple SDKs
 
 ## 🆘 Support
 
-- **Documentation**: [Full API Docs](https://your-api-url.railway.app/docs)
+- **Documentation**: [Full API Docs](https://your-service-name-xxxxx-uc.a.run.app/docs)
 - **Issues**: [GitHub Issues](https://github.com/yourusername/blog-writer-sdk-python/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/yourusername/blog-writer-sdk-python/discussions)
 
@@ -526,7 +526,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Built with [FastAPI](https://fastapi.tiangolo.com/) for the REST API
 - Powered by [Supabase](https://supabase.com/) for database operations
-- Deployed on [Railway](https://railway.app/) for seamless hosting
+- Deployed on [Google Cloud Run](https://cloud.google.com/run) for seamless hosting
 - Inspired by modern SEO best practices and content marketing needs
 
 ---

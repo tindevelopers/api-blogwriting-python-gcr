@@ -159,7 +159,7 @@ BlogWriter SDK v1.0.0
 
 ### **Production Features**
 - **Docker Optimized**: Multi-stage Docker builds for minimal image size
-- **Railway Ready**: Optimized for Railway deployment with health checks
+- **Google Cloud Run Ready**: Optimized for Google Cloud Run deployment with health checks
 - **Environment Configuration**: Comprehensive environment variable support
 - **Logging**: Structured logging with configurable levels
 - **Graceful Shutdown**: Proper cleanup on application shutdown
@@ -271,7 +271,7 @@ Special thanks to:
 
 ## 📞 **Support & Resources**
 
-- **Documentation**: [Full API Docs](https://your-api-url.railway.app/docs)
+- **Documentation**: [Full API Docs](https://your-service-name-xxxxx-uc.a.run.app/docs)
 - **GitHub Issues**: [Report Issues](https://github.com/tindevelopers/sdk-ai-blog-writer-python/issues)
 - **Discussions**: [Community Discussions](https://github.com/tindevelopers/sdk-ai-blog-writer-python/discussions)
 - **Examples**: Check the `examples/` directory for integration examples

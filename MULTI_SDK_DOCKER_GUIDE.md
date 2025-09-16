@@ -1,7 +1,7 @@
 # 🐳 Multi-Language SDK Dockerization Guide
 
 ## Overview
-This guide shows how to dockerize SDKs in different languages and deploy them consistently across platforms like Railway, DigitalOcean, AWS, etc.
+This guide shows how to dockerize SDKs in different languages and deploy them consistently across platforms like Google Cloud Run, DigitalOcean, AWS, etc.
 
 ## 🚀 TypeScript/Node.js SDK Dockerization
 
@@ -337,14 +337,14 @@ http {
 
 ## 🚀 Deployment Strategies
 
-### 1. Railway Deployment (Individual Services)
-Each SDK can be deployed as a separate Railway service:
+### 1. Google Cloud Run Deployment (Individual Services)
+Each SDK can be deployed as a separate Google Cloud Run service:
 
 ```bash
 # Deploy each SDK separately
-cd blog-writer-python && railway up
-cd ../content-publisher-typescript && railway up
-cd ../analytics-java && railway up
+cd blog-writer-python && gcloud run deploy blog-writer-python --source .
+cd ../content-publisher-typescript && gcloud run deploy content-publisher-typescript --source .
+cd ../analytics-java && gcloud run deploy analytics-java --source .
 ```
 
 ### 2. DigitalOcean App Platform
@@ -549,7 +549,7 @@ Use structured logging (JSON) for all SDKs:
 
 | Platform | Best For | Pros | Cons |
 |----------|----------|------|------|
-| Railway | Quick deployment | Easy setup, auto-scaling | Limited customization |
+| Google Cloud Run | Quick deployment | Easy setup, auto-scaling | Pay-per-use pricing |
 | DigitalOcean | Balanced approach | Good pricing, managed | Less features than AWS |
 | AWS ECS/Fargate | Enterprise | Full control, scalable | Complex setup |
 | Kubernetes | Large scale | Ultimate flexibility | High complexity |

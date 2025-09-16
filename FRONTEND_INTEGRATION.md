@@ -14,7 +14,7 @@ npm install axios
 #### 2. Environment Configuration
 Create `.env.local`:
 ```bash
-NEXT_PUBLIC_BLOGWRITER_API_URL=https://your-service-name.up.railway.app
+NEXT_PUBLIC_BLOGWRITER_API_URL=https://your-service-name-xxxxx-uc.a.run.app
 ```
 
 #### 3. API Client Setup
@@ -242,7 +242,7 @@ class BlogWriterClient:
         return response.json()
 
 # Usage example
-client = BlogWriterClient("https://your-service-name.up.railway.app")
+client = BlogWriterClient("https://your-service-name-xxxxx-uc.a.run.app")
 
 result = client.generate_blog(
     topic="How to Build a Python REST API",
@@ -263,7 +263,7 @@ You can integrate the BlogWriter API directly into existing applications:
 const axios = require('axios');
 
 const blogWriterAPI = axios.create({
-  baseURL: 'https://your-service-name.up.railway.app'
+  baseURL: 'https://your-service-name-xxxxx-uc.a.run.app'
 });
 
 async function generateBlog(topic, keywords = []) {
@@ -287,7 +287,7 @@ async function generateBlog(topic, keywords = []) {
 ```php
 <?php
 function generateBlog($topic, $keywords = []) {
-    $url = 'https://your-service-name.up.railway.app/api/v1/blog/generate';
+    $url = 'https://your-service-name-xxxxx-uc.a.run.app/api/v1/blog/generate';
     
     $data = [
         'topic' => $topic,
@@ -314,7 +314,7 @@ function generateBlog($topic, $keywords = []) {
 
 ## 🔧 **CORS Configuration**
 
-Make sure your Railway deployment has the correct CORS settings. Update the `ALLOWED_ORIGINS` environment variable to include your frontend domain:
+Make sure your Google Cloud Run deployment has the correct CORS settings. Update the `ALLOWED_ORIGINS` environment variable to include your frontend domain:
 
 ```bash
 ALLOWED_ORIGINS=http://localhost:3000,https://your-frontend.vercel.app,https://yourdomain.com
@@ -324,7 +324,7 @@ ALLOWED_ORIGINS=http://localhost:3000,https://your-frontend.vercel.app,https://y
 
 Once deployed, you can access interactive API documentation at:
 ```
-https://your-service-name.up.railway.app/docs
+https://your-service-name-xxxxx-uc.a.run.app/docs
 ```
 
 This provides a complete interface to test all endpoints and see request/response schemas.

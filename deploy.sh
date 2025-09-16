@@ -1,61 +1,82 @@
 #!/bin/bash
 
-# Railway Deployment Script for BlogWriter SDK
-echo "🚂 Deploying BlogWriter SDK to Railway..."
+# Google Cloud Run Deployment Script for BlogWriter SDK
+echo "☁️ Deploying BlogWriter SDK to Google Cloud Run..."
 
-# Check if Railway CLI is installed
-if ! command -v railway &> /dev/null; then
-    echo "❌ Railway CLI not found. Please install it first."
+# Check if gcloud CLI is installed
+if ! command -v gcloud &> /dev/null; then
+    echo "❌ Google Cloud CLI not found. Please install it first."
+    echo "Visit: https://cloud.google.com/sdk/docs/install"
     exit 1
 fi
 
-# Check if logged in
-if ! railway whoami &> /dev/null; then
-    echo "❌ Not logged in to Railway. Please run 'railway login' first."
+# Check if logged in to Google Cloud
+if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
+    echo "❌ Not logged in to Google Cloud. Please run 'gcloud auth login' first."
     exit 1
 fi
 
-echo "✅ Railway CLI ready"
+echo "✅ Google Cloud CLI ready"
 
-# Set essential environment variables
+# Set project ID (replace with your project ID)
+PROJECT_ID=${GOOGLE_CLOUD_PROJECT:-"your-project-id"}
+REGION=${GOOGLE_CLOUD_REGION:-"us-central1"}
+SERVICE_NAME=${SERVICE_NAME:-"blog-writer-sdk"}
+
+echo "📋 Project: $PROJECT_ID"
+echo "🌍 Region: $REGION"
+echo "🚀 Service: $SERVICE_NAME"
+
+# Set environment variables
 echo "🔧 Setting environment variables..."
+gcloud run services update $SERVICE_NAME \
+    --set-env-vars="PORT=8000,HOST=0.0.0.0,DEBUG=false" \
+    --region=$REGION \
+    --project=$PROJECT_ID || echo "⚠️ Service not found, will create during deployment"
 
-# Basic configuration
-railway variables --set "PORT=8000" --set "HOST=0.0.0.0" --set "DEBUG=false"
+gcloud run services update $SERVICE_NAME \
+    --set-env-vars="API_TITLE=Blog Writer SDK API,API_VERSION=0.1.0" \
+    --region=$REGION \
+    --project=$PROJECT_ID || echo "⚠️ Service not found, will create during deployment"
 
-# API configuration
-railway variables --set "API_TITLE=Blog Writer SDK API" --set "API_VERSION=0.1.0"
+gcloud run services update $SERVICE_NAME \
+    --set-env-vars="DEFAULT_TONE=professional,DEFAULT_LENGTH=medium" \
+    --region=$REGION \
+    --project=$PROJECT_ID || echo "⚠️ Service not found, will create during deployment"
 
-# Content settings
-railway variables --set "DEFAULT_TONE=professional" --set "DEFAULT_LENGTH=medium"
-railway variables --set "ENABLE_SEO_OPTIMIZATION=true" --set "ENABLE_QUALITY_ANALYSIS=true"
+gcloud run services update $SERVICE_NAME \
+    --set-env-vars="ENABLE_SEO_OPTIMIZATION=true,ENABLE_QUALITY_ANALYSIS=true" \
+    --region=$REGION \
+    --project=$PROJECT_ID || echo "⚠️ Service not found, will create during deployment"
 
-# CORS settings (update with your frontend domain)
-railway variables --set "ALLOWED_ORIGINS=http://localhost:3000,https://your-app.vercel.app"
+gcloud run services update $SERVICE_NAME \
+    --set-env-vars="ALLOWED_ORIGINS=http://localhost:3000,https://your-app.vercel.app" \
+    --region=$REGION \
+    --project=$PROJECT_ID || echo "⚠️ Service not found, will create during deployment"
 
-echo "✅ Environment variables set"
+# Deploy to Google Cloud Run
+echo "🚀 Deploying to Google Cloud Run..."
+gcloud run deploy $SERVICE_NAME \
+    --source . \
+    --platform managed \
+    --region $REGION \
+    --allow-unauthenticated \
+    --project $PROJECT_ID
 
-# Deploy the application
-echo "🚀 Deploying application..."
-railway up --detach
+# Get service URL
+SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --project=$PROJECT_ID --format="value(status.url)")
 
-echo "✅ Deployment initiated!"
-echo "📊 Check deployment status: railway logs"
-echo "🌐 Open dashboard: railway open"
-echo "🔗 Your project: https://railway.com/project/9f57aa33-7859-4f0d-9c9a-d3118c3b0f0b"
+echo "✅ Deployment complete!"
+echo "📊 Check deployment status: gcloud run services describe $SERVICE_NAME --region=$REGION"
+echo "🌐 Open dashboard: gcloud run services list"
+echo "🔗 Your service: $SERVICE_URL"
 
 echo ""
-echo "🎉 Deployment Complete!"
+echo "📝 Next steps:"
+echo "1. Add AI provider API keys in Google Cloud Console (Environment Variables)"
+echo "2. Test the health endpoint: curl $SERVICE_URL/health"
+echo "3. Update your frontend to use: $SERVICE_URL"
+echo "4. Set up custom domain if needed"
+
 echo ""
-echo "Next steps:"
-echo "1. Add AI provider API keys in Railway dashboard (Variables tab)"
-echo "2. Add Supabase credentials if needed"
-echo "3. Update ALLOWED_ORIGINS with your frontend domain"
-echo "4. Test your API endpoints"
-echo ""
-echo "API Endpoints available:"
-echo "- GET  /health - Health check"
-echo "- GET  /api/v1/config - Configuration status"
-echo "- GET  /api/v1/ai/health - AI providers health"
-echo "- POST /api/v1/blog/generate - Generate blog content"
-echo "- GET  /docs - API documentation"
+echo "🎉 BlogWriter SDK is now live on Google Cloud Run!"

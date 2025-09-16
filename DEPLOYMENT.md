@@ -1,13 +1,13 @@
 # Deployment Guide 🚀
 
-This guide covers deploying the Blog Writer SDK to various platforms, with a focus on the recommended **Vercel + Railway + Supabase** architecture.
+This guide covers deploying the Blog Writer SDK to various platforms, with a focus on the recommended **Vercel + Google Cloud Run + Supabase** architecture.
 
 ## 🏗️ Architecture Overview
 
 ```
 ┌─────────────────┐    HTTPS API     ┌─────────────────┐    PostgreSQL    ┌─────────────────┐
 │   Next.js App   │ ◄──────────────► │  Python API     │ ◄──────────────► │   Supabase DB   │
-│   (Vercel)      │                  │   (Railway)     │                  │   + Auth + APIs │
+│   (Vercel)      │                  │ (Google Cloud)  │                  │   + Auth + APIs │
 │   Auto SSL ✅   │                  │   Auto SSL ✅   │                  │   Auto SSL ✅   │
 └─────────────────┘                  └─────────────────┘                  └─────────────────┘
 ```
@@ -48,18 +48,18 @@ This guide covers deploying the Blog Writer SDK to various platforms, with a foc
    - `anon` public key
    - `service_role` secret key (for server-side operations)
 
-## 🚂 Step 2: Deploy to Railway
+## ☁️ Step 2: Deploy to Google Cloud Run
 
-### 2.1 Connect Repository
+### 2.1 Setup Google Cloud Project
 
-1. Go to [railway.app](https://railway.app)
-2. Click "Start a New Project"
-3. Choose "Deploy from GitHub repo"
-4. Select your blog-writer-sdk repository
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a new project or select existing one
+3. Enable Cloud Run API
+4. Enable Cloud Build API
 
 ### 2.2 Configure Environment Variables
 
-In Railway dashboard, go to Variables and add:
+Set up environment variables in Google Cloud:
 
 ```bash
 # Required
@@ -74,9 +74,9 @@ ALLOWED_ORIGINS=https://your-app.vercel.app,http://localhost:3000
 
 ### 2.3 Deploy
 
-1. Railway automatically detects the `Dockerfile`
-2. It builds and deploys your application
-3. You'll get a URL like `https://your-app.up.railway.app`
+1. Use the included `cloudbuild.yaml` for automated deployment
+2. Push to main branch triggers automatic deployment via GitHub Actions
+3. You'll get a URL like `https://your-service-name-xxxxx-uc.a.run.app`
 
 ### 2.4 Custom Domain (Optional)
 
@@ -130,7 +130,7 @@ export class BlogWriterClient {
 # .env.local
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-PYTHON_API_URL=https://your-app.up.railway.app
+PYTHON_API_URL=https://your-service-name-xxxxx-uc.a.run.app
 ```
 
 ### 3.3 API Route Example
@@ -168,10 +168,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 ```bash
 # Health check
-curl https://your-app.up.railway.app/health
+curl https://your-service-name-xxxxx-uc.a.run.app/health
 
 # Generate blog
-curl -X POST https://your-app.up.railway.app/api/v1/generate \
+curl -X POST https://your-service-name-xxxxx-uc.a.run.app/api/v1/generate \
   -H "Content-Type: application/json" \
   -d '{
     "topic": "Test Blog Post",
@@ -202,9 +202,9 @@ console.log(result);
 
 ## 📊 Step 5: Monitoring & Analytics
 
-### 5.1 Railway Monitoring
+### 5.1 Google Cloud Run Monitoring
 
-- View logs in Railway dashboard
+- View logs in Google Cloud Console
 - Monitor resource usage
 - Set up alerts for errors
 
@@ -232,7 +232,7 @@ await supabase_client.log_generation(
 ### 6.1 Environment Security
 
 - Never commit `.env` files
-- Use Railway's environment variables
+- Use Google Cloud's environment variables
 - Rotate API keys regularly
 
 ### 6.2 CORS Configuration
@@ -336,26 +336,26 @@ gcloud run deploy --image gcr.io/PROJECT-ID/blog-writer-sdk --platform managed
 3. **Build Failures**
    - Check Dockerfile syntax
    - Verify all dependencies in `pyproject.toml`
-   - Review Railway build logs
+   - Review Google Cloud build logs
 
 4. **Performance Issues**
-   - Monitor Railway resource usage
-   - Consider upgrading Railway plan
+   - Monitor Google Cloud resource usage
+   - Consider upgrading Google Cloud plan
    - Implement caching for repeated requests
 
 ### Getting Help
 
-- Check Railway logs: `railway logs`
+- Check Google Cloud logs: `gcloud logs read`
 - Review Supabase logs in dashboard
 - Test API endpoints with curl
-- Use Railway's support if needed
+- Use Google Cloud support if needed
 
 ## 📈 Scaling Considerations
 
 ### Horizontal Scaling
 
-- Railway automatically handles load balancing
-- Consider multiple Railway services for different regions
+- Google Cloud Run automatically handles load balancing
+- Consider multiple Google Cloud Run services for different regions
 - Use Supabase read replicas for database scaling
 
 ### Performance Optimization
