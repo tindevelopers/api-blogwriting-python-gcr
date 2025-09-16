@@ -627,7 +627,7 @@ async def optimize_content(
         
         return {
             "optimized_content": optimized_content,
-            "original_length": len(content.split()),
+            "original_length": len(request.content.split()),
             "optimized_length": len(optimized_content.split()),
         }
         
