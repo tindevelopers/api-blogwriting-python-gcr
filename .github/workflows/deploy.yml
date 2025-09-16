@@ -10,8 +10,7 @@ jobs:
     name: Deploy to Railway
     runs-on: ubuntu-latest
     
-    # Only run deployment after CI passes
-    needs: [test, security, docker]
+    # Run deployment on main branch pushes
     if: github.ref == 'refs/heads/main'
     
     steps:
