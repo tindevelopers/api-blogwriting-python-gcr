@@ -14,7 +14,7 @@ npm install axios
 #### 2. Environment Configuration
 Create `.env.local`:
 ```bash
-NEXT_PUBLIC_BLOGWRITER_API_URL=https://api-blog-writer-sdk-613248238610.us-central1.run.app
+NEXT_PUBLIC_BLOGWRITER_API_URL=https://api-ai-blog-writer-613248238610.us-central1.run.app
 ```
 
 #### 3. API Client Setup
@@ -242,7 +242,7 @@ class BlogWriterClient:
         return response.json()
 
 # Usage example
-client = BlogWriterClient("https://api-blog-writer-sdk-613248238610.us-central1.run.app")
+client = BlogWriterClient("https://api-ai-blog-writer-613248238610.us-central1.run.app")
 
 result = client.generate_blog(
     topic="How to Build a Python REST API",
@@ -263,7 +263,7 @@ You can integrate the BlogWriter API directly into existing applications:
 const axios = require('axios');
 
 const blogWriterAPI = axios.create({
-  baseURL: 'https://api-blog-writer-sdk-613248238610.us-central1.run.app'
+  baseURL: 'https://api-ai-blog-writer-613248238610.us-central1.run.app'
 });
 
 async function generateBlog(topic, keywords = []) {
@@ -287,7 +287,7 @@ async function generateBlog(topic, keywords = []) {
 ```php
 <?php
 function generateBlog($topic, $keywords = []) {
-    $url = 'https://api-blog-writer-sdk-613248238610.us-central1.run.app/api/v1/blog/generate';
+    $url = 'https://api-ai-blog-writer-613248238610.us-central1.run.app/api/v1/blog/generate';
     
     $data = [
         'topic' => $topic,
@@ -324,7 +324,7 @@ ALLOWED_ORIGINS=http://localhost:3000,https://your-frontend.vercel.app,https://y
 
 Once deployed, you can access interactive API documentation at:
 ```
-https://api-blog-writer-sdk-613248238610.us-central1.run.app/docs
+https://api-ai-blog-writer-613248238610.us-central1.run.app/docs
 ```
 
 This provides a complete interface to test all endpoints and see request/response schemas.

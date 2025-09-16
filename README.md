@@ -1,6 +1,6 @@
-# Blog Writer SDK 📝
+# AI Blog Writer API 📝
 
-A comprehensive Python SDK for AI-driven blog writing with advanced SEO optimization, built for modern web applications.
+A comprehensive Python API for AI-driven blog writing with advanced SEO optimization, built for modern web applications.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
@@ -101,7 +101,7 @@ import httpx
 # Generate a blog post via API
 async with httpx.AsyncClient() as client:
     response = await client.post(
-        "https://api-blog-writer-sdk-613248238610.us-central1.run.app/api/v1/generate",
+        "https://api-ai-blog-writer-613248238610.us-central1.run.app/api/v1/generate",
         json={
             "topic": "The Future of AI in Content Creation",
             "keywords": ["AI content", "automation", "writing tools"],
@@ -498,9 +498,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-- **Documentation**: [Full API Docs](https://api-blog-writer-sdk-613248238610.us-central1.run.app/docs)
-- **Issues**: [GitHub Issues](https://github.com/yourusername/blog-writer-sdk-python/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/blog-writer-sdk-python/discussions)
+- **Documentation**: [Full API Docs](https://api-ai-blog-writer-613248238610.us-central1.run.app/docs)
+- **Issues**: [GitHub Issues](https://github.com/tindevelopers/api-blogwriting-python-gcr/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/tindevelopers/api-blogwriting-python-gcr/discussions)
 
 ## 🗺️ Roadmap
 

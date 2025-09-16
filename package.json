@@ -2,7 +2,7 @@
   "name": "api-blog-writer-python-gcr",
   "version": "1.0.0",
   "type": "module",
-  "description": "A comprehensive Python SDK for AI-driven blog writing with advanced SEO optimization, built for modern web applications.",
+  "description": "A comprehensive Python API for AI-driven blog writing with advanced SEO optimization, built for modern web applications.",
   "main": "index.js",
   "directories": {
     "example": "examples",
@@ -24,7 +24,7 @@
     "seo",
     "content",
     "ai",
-    "sdk",
+    "api",
     "mcp",
     "google-cloud"
   ],

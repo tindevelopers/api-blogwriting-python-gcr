@@ -1,4 +1,4 @@
-# 🚀 BlogWriter SDK v1.0.0 Release Notes
+# 🚀 AI Blog Writer API v1.0.0 Release Notes
 
 **Release Date**: September 11, 2025  
 **Version**: 1.0.0  
@@ -6,7 +6,7 @@
 
 ## 🎉 Major Milestone: Production-Ready Release
 
-We're thrilled to announce the **v1.0.0** release of the BlogWriter SDK - a comprehensive, enterprise-ready solution for AI-driven blog writing with advanced SEO optimization, intelligent routing, and scalable architecture.
+We're thrilled to announce the **v1.0.0** release of the AI Blog Writer API - a comprehensive, enterprise-ready solution for AI-driven blog writing with advanced SEO optimization, intelligent routing, and scalable architecture.
 
 ## 🌟 What's New in v1.0.0
 
