@@ -89,7 +89,7 @@ After adding the secrets:
 
 ✅ **Service Account Created**: `blog-writer-deploy@api-ai-blog-writer.iam.gserviceaccount.com`  
 ✅ **Required APIs Enabled**: Cloud Run, Cloud Build, Artifact Registry  
-✅ **Application Deployed**: https://blog-writer-sdk-324019679988.us-central1.run.app  
+✅ **Application Deployed**: https://blog-writer-sdk-kq42l26tuq-uc.a.run.app  
 ⏳ **GitHub Secrets**: Need to be configured manually  
 
 Once the secrets are added, the GitHub Actions will automatically deploy on every push to the main branch!

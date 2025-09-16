@@ -130,7 +130,7 @@ export class BlogWriterClient {
 # .env.local
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-PYTHON_API_URL=https://your-service-name-xxxxx-uc.a.run.app
+PYTHON_API_URL=https://blog-writer-sdk-kq42l26tuq-uc.a.run.app
 ```
 
 ### 3.3 API Route Example
@@ -168,10 +168,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
 ```bash
 # Health check
-curl https://your-service-name-xxxxx-uc.a.run.app/health
+curl https://blog-writer-sdk-kq42l26tuq-uc.a.run.app/health
 
 # Generate blog
-curl -X POST https://your-service-name-xxxxx-uc.a.run.app/api/v1/generate \
+curl -X POST https://blog-writer-sdk-kq42l26tuq-uc.a.run.app/api/v1/generate \
   -H "Content-Type: application/json" \
   -d '{
     "topic": "Test Blog Post",
