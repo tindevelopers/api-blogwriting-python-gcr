@@ -23,6 +23,31 @@ from .base_provider import (
 from .openai_provider import OpenAIProvider, AzureOpenAIProvider
 from .anthropic_provider import AnthropicProvider
 from .ai_content_generator import AIContentGenerator, ContentTemplate
+from .blog_writer_abstraction import (
+    BlogWriterAbstraction,
+    BlogGenerationRequest,
+    BlogGenerationResult,
+    ContentStrategy,
+    ContentQuality,
+    ContentOptimizationStrategy,
+    SEOOptimizationStrategy,
+    EngagementOptimizationStrategy,
+    ConversionOptimizationStrategy,
+    ContentQualityAssurance
+)
+from .blog_writer_factory import (
+    BlogWriterFactory,
+    BlogWriterPreset,
+    BlogWriterBuilder
+)
+from .content_strategies import (
+    ContentGenerationStrategy,
+    SEOOptimizedStrategy,
+    EngagementFocusedStrategy,
+    ConversionOptimizedStrategy,
+    StrategyFactory,
+    ContentStructure
+)
 
 __all__ = [
     # Base classes and interfaces
@@ -49,4 +74,31 @@ __all__ = [
     # Main AI generator
     'AIContentGenerator',
     'ContentTemplate',
+    
+    # Blog Writer Abstraction Layer
+    'BlogWriterAbstraction',
+    'BlogGenerationRequest',
+    'BlogGenerationResult',
+    'ContentStrategy',
+    'ContentQuality',
+    
+    # Content Optimization Strategies
+    'ContentOptimizationStrategy',
+    'SEOOptimizationStrategy',
+    'EngagementOptimizationStrategy',
+    'ConversionOptimizationStrategy',
+    'ContentQualityAssurance',
+    
+    # Factory and Builder Patterns
+    'BlogWriterFactory',
+    'BlogWriterPreset',
+    'BlogWriterBuilder',
+    
+    # Content Generation Strategies
+    'ContentGenerationStrategy',
+    'SEOOptimizedStrategy',
+    'EngagementFocusedStrategy',
+    'ConversionOptimizedStrategy',
+    'StrategyFactory',
+    'ContentStructure',
 ]

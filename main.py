@@ -30,6 +30,14 @@ from src.blog_writer_sdk.models.blog_models import (
 )
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
+from src.blog_writer_sdk.ai import (
+    BlogWriterAbstraction,
+    BlogWriterFactory,
+    BlogWriterPreset,
+    BlogGenerationRequest as AbstractionBlogRequest,
+    ContentStrategy,
+    ContentQuality
+)
 # LiteLLM router removed - using direct AI provider integrations
 from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
@@ -717,6 +725,183 @@ async def ai_health_check():
             "ai_enabled": True,
             "error": str(e),
             "message": "Failed to check AI provider health"
+        }
+
+
+# Blog Writer Abstraction Layer endpoints
+class AbstractionBlogGenerationRequest(BaseModel):
+    """Request model for abstraction layer blog generation."""
+    topic: str = Field(..., min_length=3, max_length=200, description="Main topic for the blog post")
+    keywords: List[str] = Field(default_factory=list, max_items=20, description="Target SEO keywords")
+    target_audience: Optional[str] = Field(None, max_length=200, description="Target audience description")
+    content_strategy: ContentStrategy = Field(default=ContentStrategy.SEO_OPTIMIZED, description="Content generation strategy")
+    tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
+    length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
+    format: ContentFormat = Field(default=ContentFormat.HTML, description="Output format")
+    quality_target: ContentQuality = Field(default=ContentQuality.GOOD, description="Target content quality")
+    preferred_provider: Optional[str] = Field(None, description="Preferred AI provider")
+    additional_context: Optional[Dict[str, Any]] = Field(None, description="Additional context for generation")
+    seo_requirements: Optional[Dict[str, Any]] = Field(None, description="SEO-specific requirements")
+
+
+class AbstractionBlogGenerationResult(BaseModel):
+    """Response model for abstraction layer blog generation."""
+    title: str = Field(..., description="Generated blog title")
+    content: str = Field(..., description="Generated blog content")
+    meta_description: str = Field(..., description="SEO meta description")
+    introduction: str = Field(..., description="Blog introduction")
+    conclusion: str = Field(..., description="Blog conclusion")
+    faq_section: Optional[str] = Field(None, description="FAQ section if generated")
+    seo_score: Optional[float] = Field(None, description="SEO optimization score")
+    readability_score: Optional[float] = Field(None, description="Content readability score")
+    quality_score: Optional[float] = Field(None, description="Overall content quality score")
+    provider_used: str = Field(..., description="AI provider used for generation")
+    generation_time: Optional[float] = Field(None, description="Time taken for generation")
+    cost: Optional[float] = Field(None, description="Cost of generation")
+    tokens_used: Optional[int] = Field(None, description="Tokens used for generation")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+
+# Global abstraction layer instance
+abstraction_writer: Optional[BlogWriterAbstraction] = None
+
+
+def get_abstraction_writer() -> BlogWriterAbstraction:
+    """Get or create the abstraction layer blog writer."""
+    global abstraction_writer
+    if abstraction_writer is None:
+        # Create abstraction writer with default configuration
+        abstraction_writer = BlogWriterFactory.create_seo_focused_writer()
+    return abstraction_writer
+
+
+@app.post("/api/v1/abstraction/blog/generate", response_model=AbstractionBlogGenerationResult)
+async def generate_blog_with_abstraction(
+    request: AbstractionBlogGenerationRequest,
+    background_tasks: BackgroundTasks,
+    writer: BlogWriterAbstraction = Depends(get_abstraction_writer)
+):
+    """
+    Generate a blog post using the new abstraction layer.
+    
+    This endpoint provides advanced blog generation with:
+    - Multiple content strategies (SEO, Engagement, Conversion)
+    - Quality assurance and optimization
+    - Provider management and fallback
+    - Comprehensive analytics and monitoring
+    """
+    try:
+        # Convert API request to abstraction layer request
+        abstraction_request = AbstractionBlogRequest(
+            topic=request.topic,
+            keywords=request.keywords,
+            target_audience=request.target_audience,
+            content_strategy=request.content_strategy,
+            tone=request.tone,
+            length=request.length,
+            format=request.format,
+            quality_target=request.quality_target,
+            preferred_provider=request.preferred_provider,
+            additional_context=request.additional_context,
+            seo_requirements=request.seo_requirements
+        )
+        
+        # Generate blog using abstraction layer
+        result = await writer.generate_blog(abstraction_request)
+        
+        # Convert result to API response
+        return AbstractionBlogGenerationResult(
+            title=result.title,
+            content=result.content,
+            meta_description=result.meta_description,
+            introduction=result.introduction,
+            conclusion=result.conclusion,
+            faq_section=result.faq_section,
+            seo_score=result.seo_score,
+            readability_score=result.readability_score,
+            quality_score=result.quality_score,
+            provider_used=result.provider_used,
+            generation_time=result.generation_time,
+            cost=result.cost,
+            tokens_used=result.tokens_used,
+            metadata=result.metadata
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Blog generation failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/abstraction/strategies")
+async def get_content_strategies():
+    """Get available content generation strategies."""
+    return {
+        "strategies": [
+            {
+                "name": strategy.value,
+                "description": f"Content strategy focused on {strategy.value.replace('_', ' ')}"
+            }
+            for strategy in ContentStrategy
+        ]
+    }
+
+
+@app.get("/api/v1/abstraction/quality-levels")
+async def get_quality_levels():
+    """Get available content quality levels."""
+    return {
+        "quality_levels": [
+            {
+                "name": quality.value,
+                "description": f"Content quality level: {quality.value.replace('_', ' ')}"
+            }
+            for quality in ContentQuality
+        ]
+    }
+
+
+@app.get("/api/v1/abstraction/presets")
+async def get_blog_writer_presets():
+    """Get available blog writer presets."""
+    return {
+        "presets": [
+            {
+                "name": preset.value,
+                "description": f"Blog writer preset: {preset.value.replace('_', ' ')}"
+            }
+            for preset in BlogWriterPreset
+        ]
+    }
+
+
+@app.get("/api/v1/abstraction/status")
+async def get_abstraction_status(writer: BlogWriterAbstraction = Depends(get_abstraction_writer)):
+    """Get abstraction layer status and statistics."""
+    try:
+        provider_status = await writer.get_ai_provider_status()
+        generation_stats = writer.get_generation_statistics()
+        
+        return {
+            "status": "operational",
+            "provider_status": provider_status,
+            "generation_statistics": generation_stats,
+            "features": {
+                "content_strategies": len(ContentStrategy),
+                "quality_levels": len(ContentQuality),
+                "presets": len(BlogWriterPreset),
+                "optimization_strategies": True,
+                "quality_assurance": True,
+                "batch_generation": True,
+                "provider_fallback": True
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to get abstraction layer status"
         }
 
 
