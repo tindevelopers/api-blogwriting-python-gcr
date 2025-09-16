@@ -1,11 +1,12 @@
 name: Multi-Environment Deployment to Google Cloud Run
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-    types: [ closed ]
+  # Disabled until Google Cloud secrets are configured
+  # push:
+  #   branches: [ main, master ]
+  # pull_request:
+  #   branches: [ main, master ]
+  #   types: [ closed ]
   workflow_dispatch:
     inputs:
       environment:
@@ -52,6 +53,7 @@ jobs:
   deploy:
     needs: determine-environments
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && secrets.GOOGLE_CLOUD_SA_KEY != ''
     strategy:
       matrix:
         environment: ${{ fromJson(needs.determine-environments.outputs.environments) }}
@@ -209,6 +211,9 @@ jobs:
       run: |
         if [ "${{ needs.deploy.result }}" = "success" ]; then
           echo "🎉 All deployments completed successfully!"
+        elif [ "${{ needs.deploy.result }}" = "skipped" ]; then
+          echo "⏭️ Deployment skipped - Google Cloud secrets not configured"
+          echo "To enable deployment, configure GOOGLE_CLOUD_SA_KEY secret in repository settings"
         else
           echo "❌ Some deployments failed. Check the logs above."
           exit 1
