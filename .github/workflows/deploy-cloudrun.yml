@@ -1,11 +1,13 @@
 name: Deploy to Google Cloud Run
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-    types: [ closed ]
+  # Disabled until Google Cloud secrets are configured
+  # push:
+  #   branches: [ main, master ]
+  # pull_request:
+  #   branches: [ main, master ]
+  #   types: [ closed ]
+  workflow_dispatch:  # Allow manual deployment only
 
 env:
   PROJECT_ID: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
@@ -14,7 +16,7 @@ env:
 
 jobs:
   deploy:
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    if: (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)) && secrets.GOOGLE_CLOUD_SA_KEY != ''
     runs-on: ubuntu-latest
     
     permissions:

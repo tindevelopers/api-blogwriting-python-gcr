@@ -10,8 +10,8 @@ jobs:
     name: Deploy to Railway
     runs-on: ubuntu-latest
     
-    # Run deployment on main branch pushes
-    if: github.ref == 'refs/heads/main'
+    # Run deployment on main branch pushes if Railway token is configured
+    if: github.ref == 'refs/heads/main' && secrets.RAILWAY_TOKEN != ''
     
     steps:
     - name: Checkout code
