@@ -18,8 +18,8 @@ fi
 
 echo "✅ Google Cloud CLI ready"
 
-# Set project ID (replace with your project ID)
-PROJECT_ID=${GOOGLE_CLOUD_PROJECT:-"your-project-id"}
+# Set project ID
+PROJECT_ID=${GOOGLE_CLOUD_PROJECT:-"api-ai-blog-writer"}
 REGION=${GOOGLE_CLOUD_REGION:-"us-central1"}
 SERVICE_NAME=${SERVICE_NAME:-"blog-writer-sdk"}
 

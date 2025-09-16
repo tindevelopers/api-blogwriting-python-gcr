@@ -10,7 +10,7 @@ on:
   workflow_dispatch:  # Allow manual deployment only
 
 env:
-  PROJECT_ID: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+  PROJECT_ID: api-ai-blog-writer
   REGION: us-central1
   SERVICE_NAME: blog-writer-sdk
 
@@ -31,12 +31,12 @@ jobs:
       uses: google-github-actions/auth@v2
       with:
         credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
-        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        project_id: api-ai-blog-writer
 
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
       with:
-        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        project_id: api-ai-blog-writer
 
     - name: Configure Docker to use gcloud as a credential helper
       run: |
@@ -122,12 +122,12 @@ jobs:
       uses: google-github-actions/auth@v2
       with:
         credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
-        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        project_id: api-ai-blog-writer
 
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
       with:
-        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        project_id: api-ai-blog-writer
 
     - name: Configure Docker to use gcloud as a credential helper
       run: |
@@ -202,12 +202,12 @@ jobs:
       uses: google-github-actions/auth@v2
       with:
         credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
-        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        project_id: api-ai-blog-writer
 
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
       with:
-        project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        project_id: api-ai-blog-writer
 
     - name: Delete staging service
       run: |

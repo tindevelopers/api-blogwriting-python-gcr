@@ -14,7 +14,7 @@ You need to add the following secrets to your GitHub repository:
 ### 2. Google Cloud Project ID
 - **Secret Name**: `GOOGLE_CLOUD_PROJECT`
 - **Description**: Google Cloud project ID
-- **Value**: `sdk-ai-blog-writer`
+- **Value**: `api-ai-blog-writer`
 
 ## How to Add Secrets to GitHub Repository
 
@@ -36,15 +36,15 @@ The service account key has already been generated and configured. You need to a
 **To get the service account key:**
 
 1. **If you have access to the Google Cloud Console**:
-   - Go to: https://console.cloud.google.com/iam-admin/serviceaccounts?project=sdk-ai-blog-writer
-   - Find the service account: `blog-writer-deploy@sdk-ai-blog-writer.iam.gserviceaccount.com`
+   - Go to: https://console.cloud.google.com/iam-admin/serviceaccounts?project=api-ai-blog-writer
+   - Find the service account: `blog-writer-deploy@api-ai-blog-writer.iam.gserviceaccount.com`
    - Click on the service account → Keys tab → Add Key → Create new key → JSON
    - Download the JSON file
 
 2. **If you have the gcloud CLI**:
    ```bash
    gcloud iam service-accounts keys create blog-writer-deploy-key.json \
-     --iam-account=blog-writer-deploy@sdk-ai-blog-writer.iam.gserviceaccount.com
+     --iam-account=blog-writer-deploy@api-ai-blog-writer.iam.gserviceaccount.com
    ```
 
 3. **Use the generated key**:
@@ -87,7 +87,7 @@ After adding the secrets:
 
 ## Current Deployment Status
 
-✅ **Service Account Created**: `blog-writer-deploy@sdk-ai-blog-writer.iam.gserviceaccount.com`  
+✅ **Service Account Created**: `blog-writer-deploy@api-ai-blog-writer.iam.gserviceaccount.com`  
 ✅ **Required APIs Enabled**: Cloud Run, Cloud Build, Artifact Registry  
 ✅ **Application Deployed**: https://blog-writer-sdk-324019679988.us-central1.run.app  
 ⏳ **GitHub Secrets**: Need to be configured manually  
