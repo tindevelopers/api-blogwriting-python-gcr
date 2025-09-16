@@ -61,7 +61,7 @@ echo "🧪 Testing Current Deployment:"
 echo "=============================="
 
 # Test the deployed service
-SERVICE_URL="https://blog-writer-sdk-kq42l26tuq-uc.a.run.app"
+SERVICE_URL="https://api-blog-writer-sdk-613248238610.us-central1.run.app"
 
 echo "Testing health endpoint..."
 if curl -s -f "$SERVICE_URL/health" > /dev/null; then

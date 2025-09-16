@@ -101,7 +101,7 @@ import httpx
 # Generate a blog post via API
 async with httpx.AsyncClient() as client:
     response = await client.post(
-        "https://blog-writer-sdk-kq42l26tuq-uc.a.run.app/api/v1/generate",
+        "https://api-blog-writer-sdk-613248238610.us-central1.run.app/api/v1/generate",
         json={
             "topic": "The Future of AI in Content Creation",
             "keywords": ["AI content", "automation", "writing tools"],
@@ -498,7 +498,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-- **Documentation**: [Full API Docs](https://blog-writer-sdk-kq42l26tuq-uc.a.run.app/docs)
+- **Documentation**: [Full API Docs](https://api-blog-writer-sdk-613248238610.us-central1.run.app/docs)
 - **Issues**: [GitHub Issues](https://github.com/yourusername/blog-writer-sdk-python/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/yourusername/blog-writer-sdk-python/discussions)
 
