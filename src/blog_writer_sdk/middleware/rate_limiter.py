@@ -64,9 +64,9 @@ class RateLimiter:
         # Custom limits for specific endpoints
         self.endpoint_limits = {
             '/api/v1/blog/generate': {
-                'minute': 10,
-                'hour': 100,
-                'day': 500
+                'minute': 50,   # Increased from 10
+                'hour': 500,    # Increased from 100
+                'day': 2000     # Increased from 500
             },
             '/api/v1/keywords/analyze': {
                 'minute': 30,
@@ -225,13 +225,22 @@ class RateLimiter:
             return None
 
 
-# Global rate limiter instance
-rate_limiter = RateLimiter()
+# Global rate limiter instance with higher limits for development
+rate_limiter = RateLimiter(
+    default_requests_per_minute=300,  # Increased from 60
+    default_requests_per_hour=5000,   # Increased from 1000
+    default_requests_per_day=50000    # Increased from 10000
+)
 
 
 async def rate_limit_middleware(request: Request, call_next):
     """Rate limiting middleware."""
-    # Check rate limit
+    # Skip rate limiting for health checks during development
+    if request.url.path in ['/health', '/docs', '/redoc', '/openapi.json']:
+        response = await call_next(request)
+        return response
+    
+    # Check rate limit for other endpoints
     rate_limit_response = await rate_limiter.check_rate_limit(request)
     if rate_limit_response:
         return rate_limit_response
