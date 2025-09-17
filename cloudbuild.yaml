@@ -20,7 +20,7 @@ steps:
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: [
-      'run', 'deploy', 'blog-writer-sdk',
+      'run', 'deploy', 'api-ai-blog-writer',
       '--image', 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA',
       '--region', '$_REGION',
       '--platform', 'managed',
@@ -43,7 +43,7 @@ images:
 
 # Substitution variables
 substitutions:
-  _REGION: 'us-central1'
+  _REGION: 'us-east1'
 
 # Build options
 options:

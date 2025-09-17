@@ -1,25 +1,31 @@
 {
   "mcpServers": {
-    "google-cloud-mcp": {
-      "command": "node",
-      "args": [
-        "/Users/gene/Library/CloudStorage/OneDrive-TheInformationNetworkLtd/-PROGRAMMING/API-As-A-Service/api-blog-writer-python-gcr/node_modules/google-cloud-mcp/dist/index.js"
-      ],
-      "cwd": "/Users/gene/Library/CloudStorage/OneDrive-TheInformationNetworkLtd/-PROGRAMMING/API-As-A-Service/api-blog-writer-python-gcr",
-      "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": "/Users/gene/.config/gcloud/application_default_credentials.json",
-        "GOOGLE_CLOUD_PROJECT": "api-ai-blog-writer",
-        "GOOGLE_CLOUD_REGION": "us-central1"
-      }
-    },
     "cloud-run": {
       "command": "npx",
       "args": ["-y", "@google-cloud/cloud-run-mcp"],
       "env": {
-        "GOOGLE_APPLICATION_CREDENTIALS": "/Users/gene/.config/gcloud/application_default_credentials.json",
-        "GOOGLE_CLOUD_PROJECT": "api-ai-blog-writer",
+        "GOOGLE_APPLICATION_CREDENTIALS": "/Users/foo/.config/gcloud/application_default_credentials.json",
+        "GOOGLE_CLOUD_PROJECT": "sdk-ai-blog-writer",
         "GOOGLE_CLOUD_REGION": "us-central1",
-        "DEFAULT_SERVICE_NAME": "api-ai-blog-writer"
+        "DEFAULT_SERVICE_NAME": "api-blog-writer"
+      }
+    },
+    "gcloud": {
+      "command": "npx", 
+      "args": ["-y", "@google-cloud/gcloud-mcp"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "/Users/foo/.config/gcloud/application_default_credentials.json",
+        "GOOGLE_CLOUD_PROJECT": "sdk-ai-blog-writer",
+        "GOOGLE_CLOUD_REGION": "us-central1"
+      }
+    },
+    "observability": {
+      "command": "npx",
+      "args": ["-y", "@google-cloud/observability-mcp"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "/Users/foo/.config/gcloud/application_default_credentials.json",
+        "GOOGLE_CLOUD_PROJECT": "sdk-ai-blog-writer",
+        "GOOGLE_CLOUD_REGION": "us-central1"
       }
     }
   }

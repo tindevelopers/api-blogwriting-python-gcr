@@ -95,17 +95,17 @@ nano env.prod
 
 ## 📊 **Environment Configuration**
 
-| Environment | Memory | CPU | Min Instances | Max Instances | Concurrency |
-|-------------|--------|-----|---------------|---------------|-------------|
-| **Dev**     | 1Gi    | 1   | 0             | 5             | 10          |
-| **Staging** | 2Gi    | 2   | 0             | 10            | 80          |
-| **Prod**    | 2Gi    | 2   | 1             | 100           | 80          |
+| Environment | Region | Memory | CPU | Min Instances | Max Instances | Concurrency | Service Name |
+|-------------|--------|--------|-----|---------------|---------------|-------------|--------------|
+| **Dev**     | Paris (europe-west9) | 1Gi | 1 | 0 | 5 | 10 | api-ai-blog-writer-dev |
+| **Staging** | US-East-1 (us-east1) | 2Gi | 2 | 0 | 10 | 80 | api-ai-blog-writer-staging |
+| **Prod**    | US-East-1 (us-east1) | 2Gi | 2 | 1 | 100 | 80 | api-ai-blog-writer |
 
 ## 🔗 **Service URLs** (After Deployment)
 
-- **Development**: `https://blog-writer-sdk-dev-xxx-uc.a.run.app`
-- **Staging**: `https://blog-writer-sdk-staging-xxx-uc.a.run.app`
-- **Production**: `https://blog-writer-sdk-prod-xxx-uc.a.run.app`
+- **Development**: `https://api-ai-blog-writer-dev-xxx-ew9.a.run.app` (Paris)
+- **Staging**: `https://api-ai-blog-writer-staging-xxx-ue.a.run.app` (US-East-1)
+- **Production**: `https://api-ai-blog-writer-xxx-ue.a.run.app` (US-East-1)
 
 ## 📚 **API Documentation**
 
@@ -132,13 +132,14 @@ gcloud run services describe blog-writer-sdk-dev --region=us-central1 --project=
 ## 🎯 **Key Benefits Achieved**
 
 ✅ **Serverless & Auto-scaling**: Pay only when generating content  
-✅ **Global availability**: Serve applications worldwide  
+✅ **Multi-region deployment**: Fast European development + Global production  
 ✅ **Enterprise security**: IAM, secrets management, service accounts  
 ✅ **Environment isolation**: Separate dev/staging/prod with proper data isolation  
 ✅ **Cost optimization**: Environment-specific resource allocation  
 ✅ **Automated deployments**: GitHub Actions CI/CD pipeline  
 ✅ **Monitoring & observability**: Built-in Cloud Run monitoring  
 ✅ **Database isolation**: Environment-specific tables in single Supabase project  
+✅ **Professional branding**: Clean API naming with api-ai-blog-writer  
 
 ## 🔧 **Troubleshooting**
 

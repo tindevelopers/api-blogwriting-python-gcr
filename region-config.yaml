@@ -1,0 +1,53 @@
+# Multi-Region Configuration for API AI Blog Writer
+# Environment-specific region and service configuration
+
+environments:
+  dev:
+    region: "europe-west9"  # Paris - Fast development for European users
+    service_name: "api-ai-blog-writer-dev"
+    memory: "1Gi"
+    cpu: "1"
+    min_instances: 0
+    max_instances: 5
+    concurrency: 10
+    description: "Development environment in Paris for fast European development"
+    
+  staging:
+    region: "us-east1"      # US-East-1 - Test global performance
+    service_name: "api-ai-blog-writer-staging"
+    memory: "2Gi"
+    cpu: "2"
+    min_instances: 0
+    max_instances: 10
+    concurrency: 80
+    description: "Staging environment in US-East-1 for global performance testing"
+    
+  prod:
+    region: "us-east1"      # US-East-1 - Global production deployment
+    service_name: "api-ai-blog-writer"
+    memory: "2Gi"
+    cpu: "2"
+    min_instances: 1
+    max_instances: 100
+    concurrency: 80
+    description: "Production environment in US-East-1 for global reach"
+
+# Expected URLs after deployment
+expected_urls:
+  dev: "https://api-ai-blog-writer-dev-xxx-ew9.a.run.app"
+  staging: "https://api-ai-blog-writer-staging-xxx-ue.a.run.app"
+  prod: "https://api-ai-blog-writer-xxx-ue.a.run.app"
+
+# Deployment commands
+deployment_commands:
+  dev: "./scripts/deploy-simple.sh dev"
+  staging: "./scripts/deploy-simple.sh staging"
+  prod: "./scripts/deploy-simple.sh prod"
+
+# Benefits of this configuration
+benefits:
+  - "Fast development in Europe with Paris region"
+  - "Global performance testing with staging in US-East-1"
+  - "Optimal production deployment for worldwide users"
+  - "Environment isolation with proper naming conventions"
+  - "Cost optimization with environment-specific resource allocation"

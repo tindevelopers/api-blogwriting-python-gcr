@@ -20,7 +20,7 @@ steps:
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: [
-      'run', 'deploy', 'blog-writer-sdk-${_ENVIRONMENT}',
+      'run', 'deploy', 'api-ai-blog-writer${_SERVICE_SUFFIX}',
       '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:${COMMIT_SHA}',
       '--region', '${_REGION}',
       '--platform', 'managed',
@@ -44,8 +44,9 @@ images:
 
 # Default substitution variables
 substitutions:
-  _REGION: 'us-central1'
+  _REGION: 'us-east1'
   _ENVIRONMENT: 'dev'
+  _SERVICE_SUFFIX: '-dev'
   _MEMORY: '1Gi'
   _CPU: '1'
   _MIN_INSTANCES: '0'

@@ -13,9 +13,23 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_ID="sdk-ai-blog-writer"
-REGION="us-central1"
+PROJECT_ID="api-ai-blog-writer"
 ENVIRONMENT=${1:-"dev"}
+
+# Environment-specific region configuration
+case $ENVIRONMENT in
+    "dev")
+        REGION="europe-west9"  # Paris for European development
+        ;;
+    "staging"|"prod")
+        REGION="us-east1"      # US-East-1 for global performance
+        ;;
+    *)
+        echo -e "${RED}❌ Invalid environment: $ENVIRONMENT${NC}"
+        echo "Usage: $0 [dev|staging|prod]"
+        exit 1
+        ;;
+esac
 
 # Generate a timestamp-based tag
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
@@ -29,6 +43,7 @@ case $ENVIRONMENT in
         MIN_INSTANCES="0"
         MAX_INSTANCES="5"
         CONCURRENCY="10"
+        SERVICE_SUFFIX="-dev"
         ;;
     "staging")
         MEMORY="2Gi"
@@ -36,6 +51,7 @@ case $ENVIRONMENT in
         MIN_INSTANCES="0"
         MAX_INSTANCES="10"
         CONCURRENCY="80"
+        SERVICE_SUFFIX="-staging"
         ;;
     "prod")
         MEMORY="2Gi"
@@ -43,11 +59,7 @@ case $ENVIRONMENT in
         MIN_INSTANCES="1"
         MAX_INSTANCES="100"
         CONCURRENCY="80"
-        ;;
-    *)
-        echo -e "${RED}❌ Invalid environment: $ENVIRONMENT${NC}"
-        echo "Usage: $0 [dev|staging|prod]"
-        exit 1
+        SERVICE_SUFFIX=""  # No suffix for production
         ;;
 esac
 
@@ -88,14 +100,14 @@ gcloud secrets versions add $SECRET_NAME \
 IMAGE_NAME="$REGION-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$IMAGE_TAG"
 echo -e "${BLUE}🏗️  Building Docker image: $IMAGE_NAME${NC}"
 
-docker build -t "$IMAGE_NAME" .
+docker build --platform linux/amd64 -t "$IMAGE_NAME" .
 
 echo -e "${BLUE}📤 Pushing image to Artifact Registry...${NC}"
 docker push "$IMAGE_NAME"
 
 # Deploy to Cloud Run
 echo -e "${BLUE}🚀 Deploying to Cloud Run...${NC}"
-SERVICE_NAME="blog-writer-sdk-$ENVIRONMENT"
+SERVICE_NAME="api-ai-blog-writer$SERVICE_SUFFIX"
 
 gcloud run deploy $SERVICE_NAME \
     --image="$IMAGE_NAME" \
@@ -110,7 +122,7 @@ gcloud run deploy $SERVICE_NAME \
     --concurrency="$CONCURRENCY" \
     --timeout="900" \
     --service-account="blog-writer-$ENVIRONMENT@$PROJECT_ID.iam.gserviceaccount.com" \
-    --set-env-vars="PORT=8000,PYTHONUNBUFFERED=1,ENVIRONMENT=$ENVIRONMENT" \
+    --set-env-vars="PYTHONUNBUFFERED=1,ENVIRONMENT=$ENVIRONMENT" \
     --set-secrets="/secrets/env=blog-writer-env-$ENVIRONMENT:latest" \
     --project="$PROJECT_ID"
 
