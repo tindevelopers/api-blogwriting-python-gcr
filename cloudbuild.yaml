@@ -4,14 +4,14 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build',
-      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA',
+      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID',
       '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest',
       '.'
     ]
 
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID']
 
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest']
@@ -21,7 +21,7 @@ steps:
     entrypoint: gcloud
     args: [
       'run', 'deploy', 'api-ai-blog-writer',
-      '--image', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA',
+      '--image', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID',
       '--region', '$_REGION',
       '--platform', 'managed',
       '--allow-unauthenticated',
@@ -38,7 +38,7 @@ steps:
 
 # Store images in Container Registry
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID'
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest'
 
 # Substitution variables
