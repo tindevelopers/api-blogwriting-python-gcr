@@ -11,7 +11,7 @@ on:
 env:
   PROJECT_ID: api-ai-blog-writer
   REGION: us-central1
-  SERVICE_NAME: blog-writer-sdk
+  SERVICE_NAME: api-ai-blog-writer
 
 jobs:
   deploy:
