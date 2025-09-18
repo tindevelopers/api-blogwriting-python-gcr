@@ -173,7 +173,54 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="Blog Writer SDK API",
-    description="A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features",
+    description="""
+    A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features.
+    
+    ## Key Features
+    
+    ### 🤖 AI Provider Management
+    - **Dynamic Provider Configuration**: Add, update, and remove AI providers without service restarts
+    - **Multi-Provider Support**: OpenAI, Anthropic, Azure OpenAI with automatic fallback
+    - **Real-time Health Monitoring**: Live status checks and usage statistics
+    - **Secure API Key Management**: Encrypted storage and validation
+    - **Provider Switching**: Dynamic switching between providers based on performance
+    
+    ### 📝 Content Generation
+    - **AI-Powered Blog Writing**: Generate high-quality blog posts with multiple AI providers
+    - **SEO Optimization**: Built-in keyword analysis and content optimization
+    - **Multiple Content Types**: Blog posts, introductions, conclusions, FAQs, and more
+    - **Quality Assurance**: Content analysis and improvement suggestions
+    
+    ### 🔍 SEO & Analytics
+    - **DataForSEO Integration**: Real-time keyword research and analysis
+    - **Content Optimization**: SEO scoring and improvement recommendations
+    - **Competitor Analysis**: Analyze competitor content and strategies
+    - **Performance Metrics**: Track content performance and engagement
+    
+    ### ⚡ Enterprise Features
+    - **Batch Processing**: Handle multiple content generation requests
+    - **Rate Limiting**: Configurable rate limits and quotas
+    - **Caching**: Redis-based caching for improved performance
+    - **Monitoring**: Comprehensive metrics and health monitoring
+    - **Multi-Environment**: Support for dev, staging, and production environments
+    
+    ## Quick Start
+    
+    1. **Configure AI Providers**: Use `/api/v1/ai/providers/configure` to add your AI provider credentials
+    2. **Generate Content**: Use `/api/v1/blog/generate` to create blog posts
+    3. **Analyze Keywords**: Use `/api/v1/keywords/suggest` for keyword research
+    4. **Monitor Usage**: Use `/api/v1/ai/providers/stats` to track usage and costs
+    
+    ## Authentication
+    
+    API keys are managed securely through the provider management system. No additional authentication is required for basic usage.
+    
+    ## Support
+    
+    - 📚 **Documentation**: Complete API documentation available at `/docs`
+    - 🔧 **Health Checks**: Monitor service health at `/health`
+    - 📊 **Metrics**: View usage statistics at `/api/v1/metrics`
+    """,
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
