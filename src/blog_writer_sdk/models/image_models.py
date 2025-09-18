@@ -301,3 +301,4 @@ class ImageEditRequest(BaseModel):
 
 # Update forward references
 ImageGenerationResponse.model_rebuild()
+

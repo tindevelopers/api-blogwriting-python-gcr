@@ -451,3 +451,4 @@ class ImageProviderManager:
                 "max_resolution": provider.max_resolution if provider else None
             }
         return status
+

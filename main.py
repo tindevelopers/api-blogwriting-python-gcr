@@ -9,6 +9,7 @@ import os
 import time
 import logging
 import asyncio
+import uuid
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -42,6 +43,7 @@ from src.blog_writer_sdk.ai import (
 from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
+from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_logging, get_blog_logger, log_blog_generation, log_api_request
 from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
@@ -141,6 +143,13 @@ async def lifespan(app: FastAPI):
     # Initialize metrics collector
     metrics_collector = initialize_metrics(retention_hours=24)
     print(f"✅ Metrics collector initialized: {metrics_collector}")
+    
+    # Initialize cloud logging
+    cloud_logger = initialize_cloud_logging(
+        name="blog_writer_api",
+        use_cloud_logging=os.getenv("GOOGLE_CLOUD_PROJECT") is not None
+    )
+    print(f"✅ Cloud logging initialized: {cloud_logger}")
     
     # Initialize batch processor
     global batch_processor
@@ -753,8 +762,15 @@ async def general_exception_handler(request, exc):
 # Background tasks
 async def log_generation(topic: str, success: bool, word_count: int, generation_time: float):
     """Log blog generation for analytics."""
-    # This could be enhanced to log to a database or analytics service
-    print(f"📊 Generation Log: Topic='{topic}', Success={success}, Words={word_count}, Time={generation_time:.2f}s")
+    # Use structured cloud logging
+    log_blog_generation(
+        topic=topic,
+        success=success,
+        word_count=word_count,
+        generation_time=generation_time,
+        seo_optimization_enabled=blog_writer.enable_seo_optimization if blog_writer else False,
+        ai_enhancement_enabled=blog_writer.enable_ai_enhancement if blog_writer else False
+    )
 
 
 # Configuration endpoint (for debugging)

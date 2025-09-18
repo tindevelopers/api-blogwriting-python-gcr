@@ -658,3 +658,4 @@ class StabilityAIProvider(BaseImageProvider):
         """Async context manager exit."""
         if self._session:
             await self._session.close()
+
