@@ -43,16 +43,41 @@ jobs:
     - name: Verify secrets exist
       run: |
         echo "Checking if required secrets exist..."
-        gcloud secrets describe blog-writer-env --project=$PROJECT_ID || {
-          echo "❌ Secret 'blog-writer-env' not found. Please run setup-secrets.sh first."
+        # Determine environment based on branch
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+          ENV="prod"
+        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          ENV="dev"
+        else
+          ENV="dev"
+        fi
+        
+        SECRET_NAME="blog-writer-env-$ENV"
+        echo "Checking for secret: $SECRET_NAME"
+        
+        gcloud secrets describe $SECRET_NAME --project=$PROJECT_ID || {
+          echo "❌ Secret '$SECRET_NAME' not found. Available secrets:"
+          gcloud secrets list --project=$PROJECT_ID --format="table(name)"
           exit 1
         }
+        echo "✅ Secret '$SECRET_NAME' found"
 
     - name: Build and Deploy to Cloud Run
       run: |
+        # Determine environment based on branch
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+          ENV="prod"
+        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          ENV="dev"
+        else
+          ENV="dev"
+        fi
+        
+        echo "Deploying to environment: $ENV"
+        
         gcloud builds submit \
           --config cloudbuild.yaml \
-          --substitutions _REGION=$REGION \
+          --substitutions _REGION=$REGION,_ENV=$ENV \
           --project=$PROJECT_ID
 
     - name: Get service URL

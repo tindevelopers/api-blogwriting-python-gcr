@@ -33,7 +33,7 @@ steps:
       '--concurrency', '80',
       '--timeout', '900',
       '--set-env-vars', 'PORT=8000,PYTHONUNBUFFERED=1',
-      '--set-secrets', '/secrets/env=blog-writer-env:latest'
+      '--set-secrets', '/secrets/env=blog-writer-env-$_ENV:latest'
     ]
 
 # Store images in Container Registry
