@@ -6,11 +6,13 @@ content-based methods and external SEO data from DataForSEO.
 """
 
 import asyncio
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
 from .keyword_analyzer import KeywordAnalyzer
 from ..models.blog_models import KeywordAnalysis, SEODifficulty
+from ..integrations.dataforseo_integration import DataForSEOClient
 
 
 class EnhancedKeywordAnalyzer(KeywordAnalyzer):
@@ -21,7 +23,14 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
     DataForSEO API for comprehensive keyword research.
     """
     
-    def __init__(self, use_dataforseo: bool = True, location: str = "United States"):
+    def __init__(
+        self,
+        use_dataforseo: bool = True,
+        location: str = "United States",
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        language_code: str = "en",
+    ):
         """
         Initialize enhanced keyword analyzer.
         
@@ -32,11 +41,27 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         super().__init__()
         self.use_dataforseo = use_dataforseo
         self.location = location
-        self.language_code = "en"
+        self.language_code = language_code or "en"
         
         # Cache for API results to avoid repeated calls
         self._keyword_cache = {}
         self._cache_ttl = 3600  # 1 hour cache
+
+        # Initialize direct DataForSEO client if credentials available
+        api_key = api_key or os.getenv("DATAFORSEO_API_KEY")
+        api_secret = api_secret or os.getenv("DATAFORSEO_API_SECRET")
+        self._df_client: Optional[DataForSEOClient] = None
+        if self.use_dataforseo and api_key and api_secret:
+            try:
+                self._df_client = DataForSEOClient(
+                    api_key=api_key,
+                    api_secret=api_secret,
+                    location=self.location,
+                    language_code=self.language_code,
+                )
+            except Exception as e:
+                print(f"Warning: Failed to initialize DataForSEO client: {e}")
+                self._df_client = None
     
     async def analyze_keyword_enhanced(self, keyword: str) -> KeywordAnalysis:
         """
@@ -62,7 +87,7 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 return self._merge_analyses(basic_analysis, cached_data['data'])
         
         try:
-            # Get enhanced metrics from DataForSEO
+            # Get enhanced metrics from DataForSEO (direct API if available)
             enhanced_data = await self._get_dataforseo_metrics(keyword)
             
             # Cache the results
@@ -168,32 +193,55 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             return []
     
     async def _get_dataforseo_metrics(self, keyword: str) -> Dict[str, Any]:
-        """
-        Get comprehensive keyword metrics from DataForSEO.
-        
-        This method would integrate with the MCP DataForSEO tools
-        to get real search volume, competition, and other metrics.
-        """
-        # Placeholder for DataForSEO integration
-        # In a real implementation, this would use the MCP tools:
-        # - mcp_dataforseo_keywords_data_google_ads_search_volume
-        # - mcp_dataforseo_dataforseo_labs_google_keyword_overview
-        # - mcp_dataforseo_dataforseo_labs_bulk_keyword_difficulty
-        
+        """Get comprehensive keyword metrics from DataForSEO (direct API if available)."""
+        if not (self.use_dataforseo and self._df_client):
+            return {
+                "search_volume": None,
+                "cpc": None,
+                "competition": 0.0,
+                "trend_score": 0.0,
+                "difficulty_score": None,
+            }
+
+        sv_data = await self._df_client.get_search_volume_data([keyword])
+        diff_data = await self._df_client.get_keyword_difficulty([keyword])
+        m = sv_data.get(keyword, {})
         return {
-            "search_volume": None,  # Would come from API
-            "cpc": None,           # Would come from API
-            "competition": 0.0,    # Would come from API
-            "trend_score": 0.0,    # Would come from API
-            "difficulty_score": None,  # Would come from API
+            "search_volume": m.get("search_volume"),
+            "cpc": m.get("cpc"),
+            "competition": m.get("competition", 0.0),
+            "trend_score": m.get("trend", 0.0),
+            "difficulty_score": diff_data.get(keyword),
         }
     
     async def _get_dataforseo_batch_metrics(self, keywords: List[str]) -> Dict[str, Dict[str, Any]]:
-        """
-        Get metrics for multiple keywords in batch from DataForSEO.
-        """
-        # Placeholder for batch DataForSEO integration
-        return {keyword: await self._get_dataforseo_metrics(keyword) for keyword in keywords}
+        """Get metrics for multiple keywords in batch from DataForSEO (direct API)."""
+        if not (self.use_dataforseo and self._df_client):
+            return {kw: await self._get_dataforseo_metrics(kw) for kw in keywords}
+
+        sv_data = await self._df_client.get_search_volume_data(keywords)
+        diff_data = await self._df_client.get_keyword_difficulty(keywords)
+        combined: Dict[str, Dict[str, Any]] = {}
+        for kw in keywords:
+            m = sv_data.get(kw, {})
+            combined[kw] = {
+                "search_volume": m.get("search_volume"),
+                "cpc": m.get("cpc"),
+                "competition": m.get("competition", 0.0),
+                "trend_score": m.get("trend", 0.0),
+                "difficulty_score": diff_data.get(kw),
+            }
+        return combined
+
+    async def suggest_keyword_variations(self, keyword: str) -> List[str]:
+        """Suggest keyword variations using DataForSEO if available, else fallback."""
+        if self.use_dataforseo and self._df_client:
+            try:
+                suggestions = await self._df_client.get_keyword_suggestions(keyword, limit=20)
+                return [s.get("keyword", "").strip() for s in suggestions if s.get("keyword")]
+            except Exception as e:
+                print(f"Warning: DataForSEO suggestions failed: {e}")
+        return await super().suggest_keyword_variations(keyword)
     
     def _merge_analyses(self, basic: KeywordAnalysis, enhanced: Dict[str, Any]) -> KeywordAnalysis:
         """

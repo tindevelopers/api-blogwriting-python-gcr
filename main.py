@@ -43,6 +43,7 @@ from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
 from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
+from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 
 
 # API Request/Response Models
@@ -150,6 +151,13 @@ async def lifespan(app: FastAPI):
     )
     print("✅ Batch processor initialized")
     
+    # Initialize AI providers from environment variables
+    try:
+        await initialize_from_env()
+        print("✅ AI providers initialized from environment")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize AI providers from environment: {e}")
+    
     yield
     
     # Shutdown
@@ -187,6 +195,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include AI provider management router
+app.include_router(ai_provider_router)
+
 # Add rate limiting middleware
 app.middleware("http")(rate_limit_middleware)
 
@@ -201,8 +212,14 @@ def create_enhanced_keyword_analyzer() -> Optional[EnhancedKeywordAnalyzer]:
     
     if dataforseo_api_key and dataforseo_api_secret:
         try:
-            # Use the enhanced keyword analyzer with DataForSEO integration
-            return EnhancedKeywordAnalyzer(use_dataforseo=True, location="United States")
+            # Use the enhanced keyword analyzer with direct DataForSEO integration
+            return EnhancedKeywordAnalyzer(
+                use_dataforseo=True,
+                api_key=dataforseo_api_key,
+                api_secret=dataforseo_api_secret,
+                location=os.getenv("DATAFORSEO_LOCATION", "United States"),
+                language_code=os.getenv("DATAFORSEO_LANGUAGE", "en"),
+            )
         except Exception as e:
             print(f"⚠️ Failed to initialize DataForSEO integration: {e}")
             print("📝 Falling back to built-in keyword analysis")

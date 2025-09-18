@@ -1,11 +1,14 @@
 """
 DataForSEO integration for real keyword analysis.
 
-This module integrates with DataForSEO MCP tools to provide
+This module integrates directly with DataForSEO API to provide
 real search volume, competition, and SEO metrics.
 """
 
 import asyncio
+import httpx
+import base64
+import json
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
@@ -14,28 +17,41 @@ from ..models.blog_models import KeywordAnalysis, SEODifficulty
 
 class DataForSEOClient:
     """
-    Client for DataForSEO API integration using MCP tools.
+    Client for direct DataForSEO API integration.
     
     This class provides methods to get real SEO data including
     search volume, keyword difficulty, and competitor analysis.
     """
     
-    def __init__(self, location: str = "United States", language_code: str = "en"):
+    def __init__(self, api_key: str, api_secret: str, location: str = "United States", language_code: str = "en"):
         """
         Initialize DataForSEO client.
         
         Args:
+            api_key: DataForSEO API key
+            api_secret: DataForSEO API secret
             location: Location for search data (e.g., "United States", "United Kingdom")
             language_code: Language code for search data (e.g., "en", "es")
         """
+        self.api_key = api_key
+        self.api_secret = api_secret
         self.location = location
         self.language_code = language_code
         self._cache = {}
         self._cache_ttl = 3600  # 1 hour cache
+        self.base_url = "https://api.dataforseo.com/v3"
+        
+        # Create authentication header
+        credentials = f"{api_key}:{api_secret}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        self.headers = {
+            "Authorization": f"Basic {encoded_credentials}",
+            "Content-Type": "application/json"
+        }
     
     async def get_search_volume_data(self, keywords: List[str]) -> Dict[str, Dict[str, Any]]:
         """
-        Get search volume data for keywords using DataForSEO.
+        Get search volume data for keywords using DataForSEO API.
         
         Args:
             keywords: List of keywords to analyze
@@ -44,34 +60,63 @@ class DataForSEOClient:
             Dictionary with search volume data for each keyword
         """
         try:
-            # This would use the MCP DataForSEO tool
-            # For demonstration, I'll show the structure
+            # Check cache first
+            cache_key = f"search_volume_{hash(tuple(keywords))}"
+            if cache_key in self._cache:
+                cached_data, timestamp = self._cache[cache_key]
+                if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    return cached_data
             
-            # Example of how this would work with MCP tools:
-            # result = await mcp_dataforseo_keywords_data_google_ads_search_volume(
-            #     keywords=keywords,
-            #     language_code=self.language_code,
-            #     location_name=self.location
-            # )
+            # Prepare API request
+            url = f"{self.base_url}/keywords_data/google_ads/search_volume/live"
+            payload = [{
+                "keywords": keywords,
+                "language_code": self.language_code,
+                "location_name": self.location
+            }]
             
-            # For now, return structured placeholder data
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=self.headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+            
+            # Process response
+            results = {}
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                for item in data["tasks"][0]["result"]:
+                    keyword = item.get("keyword", "")
+                    results[keyword] = {
+                        "search_volume": item.get("search_volume", 0),
+                        "competition": item.get("competition", 0.0),
+                        "cpc": item.get("cpc", 0.0),
+                        "trend": item.get("trends", [{}])[0].get("value", 0.0) if item.get("trends") else 0.0,
+                        "competition_level": item.get("competition_level", "medium"),
+                        "monthly_searches": item.get("monthly_searches", [])
+                    }
+            
+            # Cache the results
+            self._cache[cache_key] = (results, datetime.now().timestamp())
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error getting search volume data: {e}")
+            # Return fallback data
             return {
                 keyword: {
                     "search_volume": self._estimate_search_volume(keyword),
                     "competition": self._estimate_competition(keyword),
                     "cpc": self._estimate_cpc(keyword),
-                    "trend": 0.0
+                    "trend": 0.0,
+                    "competition_level": "medium",
+                    "monthly_searches": []
                 }
                 for keyword in keywords
             }
-            
-        except Exception as e:
-            print(f"Error getting search volume data: {e}")
-            return {}
     
     async def get_keyword_difficulty(self, keywords: List[str]) -> Dict[str, float]:
         """
-        Get keyword difficulty scores using DataForSEO.
+        Get keyword difficulty scores using DataForSEO API.
         
         Args:
             keywords: List of keywords to analyze
@@ -80,22 +125,106 @@ class DataForSEOClient:
             Dictionary mapping keywords to difficulty scores (0-100)
         """
         try:
-            # This would use the MCP DataForSEO tool:
-            # result = await mcp_dataforseo_dataforseo_labs_bulk_keyword_difficulty(
-            #     keywords=keywords,
-            #     language_code=self.language_code,
-            #     location_name=self.location
-            # )
+            # Check cache first
+            cache_key = f"difficulty_{hash(tuple(keywords))}"
+            if cache_key in self._cache:
+                cached_data, timestamp = self._cache[cache_key]
+                if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    return cached_data
             
-            # For now, return estimated difficulty
+            # Prepare API request
+            url = f"{self.base_url}/dataforseo_labs/google/bulk_keyword_difficulty/live"
+            payload = [{
+                "keywords": keywords,
+                "language_code": self.language_code,
+                "location_name": self.location
+            }]
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=self.headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+            
+            # Process response
+            results = {}
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                for item in data["tasks"][0]["result"]:
+                    keyword = item.get("keyword", "")
+                    difficulty_score = item.get("keyword_difficulty", 50.0)
+                    results[keyword] = difficulty_score
+            
+            # Cache the results
+            self._cache[cache_key] = (results, datetime.now().timestamp())
+            
+            return results
+            
+        except Exception as e:
+            print(f"Error getting keyword difficulty: {e}")
+            # Return fallback data
             return {
                 keyword: self._estimate_difficulty_score(keyword)
                 for keyword in keywords
             }
+    
+    async def get_keyword_suggestions(self, seed_keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Get keyword suggestions using DataForSEO keyword ideas API.
+        
+        Args:
+            seed_keyword: Base keyword to get suggestions for
+            limit: Maximum number of suggestions to return
+            
+        Returns:
+            List of keyword suggestions with metrics
+        """
+        try:
+            # Check cache first
+            cache_key = f"suggestions_{seed_keyword}_{limit}"
+            if cache_key in self._cache:
+                cached_data, timestamp = self._cache[cache_key]
+                if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    return cached_data
+            
+            # Prepare API request
+            url = f"{self.base_url}/dataforseo_labs/google/keyword_ideas/live"
+            payload = [{
+                "keywords": [seed_keyword],
+                "language_code": self.language_code,
+                "location_name": self.location,
+                "limit": limit
+            }]
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=self.headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+            
+            # Process response
+            suggestions = []
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                for item in data["tasks"][0]["result"]:
+                    suggestion = {
+                        "keyword": item.get("keyword", ""),
+                        "search_volume": item.get("search_volume", 0),
+                        "competition": item.get("competition", 0.0),
+                        "cpc": item.get("cpc", 0.0),
+                        "keyword_difficulty": item.get("keyword_difficulty", 50.0),
+                        "keyword_info": item.get("keyword_info", {}),
+                        "keyword_properties": item.get("keyword_properties", {}),
+                        "impressions_info": item.get("impressions_info", {}),
+                        "serp_info": item.get("serp_info", {})
+                    }
+                    suggestions.append(suggestion)
+            
+            # Cache the results
+            self._cache[cache_key] = (suggestions, datetime.now().timestamp())
+            
+            return suggestions
             
         except Exception as e:
-            print(f"Error getting keyword difficulty: {e}")
-            return {}
+            print(f"Error getting keyword suggestions: {e}")
+            # Return fallback suggestions
+            return self._generate_fallback_suggestions(seed_keyword, limit)
     
     async def get_serp_analysis(self, keyword: str, depth: int = 10) -> Dict[str, Any]:
         """
@@ -275,6 +404,31 @@ class DataForSEOClient:
         
         difficulty = max(0, min(100, base_score + competition_score))
         return difficulty
+    
+    def _generate_fallback_suggestions(self, seed_keyword: str, limit: int) -> List[Dict[str, Any]]:
+        """Generate fallback keyword suggestions when API fails."""
+        modifiers = [
+            "best", "top", "how to", "guide", "tips", "benefits", "reviews",
+            "comparison", "vs", "alternatives", "free", "paid", "online",
+            "2024", "2025", "latest", "new", "popular", "trending"
+        ]
+        
+        suggestions = []
+        for i, modifier in enumerate(modifiers[:limit]):
+            keyword = f"{modifier} {seed_keyword}" if i % 2 == 0 else f"{seed_keyword} {modifier}"
+            suggestions.append({
+                "keyword": keyword,
+                "search_volume": self._estimate_search_volume(keyword),
+                "competition": self._estimate_competition(keyword),
+                "cpc": self._estimate_cpc(keyword),
+                "keyword_difficulty": self._estimate_difficulty_score(keyword),
+                "keyword_info": {},
+                "keyword_properties": {},
+                "impressions_info": {},
+                "serp_info": {}
+            })
+        
+        return suggestions
 
 
 class EnhancedKeywordAnalyzer:
@@ -282,16 +436,25 @@ class EnhancedKeywordAnalyzer:
     Enhanced keyword analyzer that combines content analysis with DataForSEO data.
     """
     
-    def __init__(self, use_dataforseo: bool = True, location: str = "United States"):
+    def __init__(self, use_dataforseo: bool = True, api_key: str = None, api_secret: str = None, location: str = "United States"):
         """
         Initialize enhanced keyword analyzer.
         
         Args:
             use_dataforseo: Whether to use DataForSEO for enhanced metrics
+            api_key: DataForSEO API key
+            api_secret: DataForSEO API secret
             location: Location for search data
         """
         self.use_dataforseo = use_dataforseo
-        self.dataforseo_client = DataForSEOClient(location=location) if use_dataforseo else None
+        if use_dataforseo and api_key and api_secret:
+            self.dataforseo_client = DataForSEOClient(
+                api_key=api_key,
+                api_secret=api_secret,
+                location=location
+            )
+        else:
+            self.dataforseo_client = None
     
     async def analyze_keywords_comprehensive(self, keywords: List[str]) -> Dict[str, KeywordAnalysis]:
         """

@@ -1,0 +1,12 @@
+name: blog-writer-dev
+description: Deploy dev on develop branch
+repositoryEventConfig:
+  repository: projects/api-ai-blog-writer/locations/europe-west1/connections/github-conn-ew1/repositories/api-blogwriting-python-gcr
+  push:
+    branch: ^develop$
+filename: cloudbuild-multi-env.yaml
+substitutions:
+  _ENVIRONMENT: dev
+  _SERVICE_SUFFIX: -dev
+  _REGION: europe-west1
+includeBuildLogs: INCLUDE_BUILD_LOGS_WITH_STATUS
