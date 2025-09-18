@@ -275,7 +275,7 @@ class DataForSEOClient:
             return self._generate_fallback_suggestions(seed_keyword, limit)
     
     @monitor_performance("dataforseo_get_serp_analysis")
-    async def get_serp_analysis(self, keyword: str, location_name: str, language_code: str, depth: int = 10, tenant_id: str) -> Dict[str, Any]:
+    async def get_serp_analysis(self, keyword: str, location_name: str, language_code: str, tenant_id: str, depth: int = 10) -> Dict[str, Any]:
         """
         Get SERP analysis for a keyword using DataForSEO.
         
