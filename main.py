@@ -1286,56 +1286,57 @@ async def cloudrun_status():
 
 
 # Credential Management Endpoints
-@app.post("/api/v1/tenants/{tenant_id}/credentials/dataforseo", response_model=Dict[str, str], tags=["Credential Management"])
-async def create_or_update_dataforseo_credentials(tenant_id: str, credentials: DataForSEOCredentials):
-    if not dataforseo_credential_service:
-        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
-    
-    success = await dataforseo_credential_service.store_credentials(
-        tenant_id, "dataforseo", credentials.model_dump()
-    )
-    if success:
-        return {"message": "DataforSEO credentials stored successfully."}
-    raise HTTPException(status_code=500, detail="Failed to store DataforSEO credentials.")
+# Credential endpoints not implemented yet - DataForSEOCredentials class not available
+# @app.post("/api/v1/tenants/{tenant_id}/credentials/dataforseo", response_model=Dict[str, str], tags=["Credential Management"])
+# async def create_or_update_dataforseo_credentials(tenant_id: str, credentials: DataForSEOCredentials):
+#     if not dataforseo_credential_service:
+#         raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+#     
+#     success = await dataforseo_credential_service.store_credentials(
+#         tenant_id, "dataforseo", credentials.model_dump()
+#     )
+#     if success:
+#         return {"message": "DataforSEO credentials stored successfully."}
+#     raise HTTPException(status_code=500, detail="Failed to store DataforSEO credentials.")
 
-@app.get("/api/v1/tenants/{tenant_id}/credentials/dataforseo/status", response_model=TenantCredentialStatus, tags=["Credential Management"])
-async def get_dataforseo_credentials_status(tenant_id: str):
-    if not dataforseo_credential_service:
-        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
-    
-    # Retrieve status from the database
-    result = supabase_client.table("tenant_credentials").select(
-        "provider", "is_active", "test_status"
-    ).eq("tenant_id", tenant_id).eq("provider", "dataforseo").single().execute()
+# @app.get("/api/v1/tenants/{tenant_id}/credentials/dataforseo/status", response_model=TenantCredentialStatus, tags=["Credential Management"])
+# async def get_dataforseo_credentials_status(tenant_id: str):
+#     if not dataforseo_credential_service:
+#         raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+#     
+#     # Retrieve status from the database
+#     result = supabase_client.table("tenant_credentials").select(
+#         "provider", "is_active", "test_status"
+#     ).eq("tenant_id", tenant_id).eq("provider", "dataforseo").single().execute()
+#
+#     if not result.data:
+#         raise HTTPException(status_code=404, detail="DataforSEO credentials not found for this tenant.")
+#     
+#     return TenantCredentialStatus(
+#         provider=result.data["provider"],
+#         is_active=result.data["is_active"],
+#         test_status=result.data["test_status"]
+#     )
 
-    if not result.data:
-        raise HTTPException(status_code=404, detail="DataforSEO credentials not found for this tenant.")
-    
-    return TenantCredentialStatus(
-        provider=result.data["provider"],
-        is_active=result.data["is_active"],
-        test_status=result.data["test_status"]
-    )
+# @app.post("/api/v1/tenants/{tenant_id}/credentials/dataforseo/test", response_model=Dict[str, str], tags=["Credential Management"])
+# async def test_dataforseo_credentials(tenant_id: str):
+#     if not dataforseo_credential_service:
+#         raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+#     
+#     test_result = await dataforseo_credential_service.test_credentials(tenant_id, "dataforseo")
+#     if test_result["status"] == "success":
+#         return {"message": test_result["message"]}
+#     raise HTTPException(status_code=500, detail=test_result["error"])
 
-@app.post("/api/v1/tenants/{tenant_id}/credentials/dataforseo/test", response_model=Dict[str, str], tags=["Credential Management"])
-async def test_dataforseo_credentials(tenant_id: str):
-    if not dataforseo_credential_service:
-        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
-    
-    test_result = await dataforseo_credential_service.test_credentials(tenant_id, "dataforseo")
-    if test_result["status"] == "success":
-        return {"message": test_result["message"]}
-    raise HTTPException(status_code=500, detail=test_result["error"])
-
-@app.delete("/api/v1/tenants/{tenant_id}/credentials/dataforseo", response_model=Dict[str, str], tags=["Credential Management"])
-async def delete_dataforseo_credentials(tenant_id: str):
-    if not dataforseo_credential_service:
-        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
-    
-    success = await dataforseo_credential_service.delete_credentials(tenant_id, "dataforseo")
-    if success:
-        return {"message": "DataforSEO credentials deleted successfully."}
-    raise HTTPException(status_code=500, detail="Failed to delete DataforSEO credentials.")
+# @app.delete("/api/v1/tenants/{tenant_id}/credentials/dataforseo", response_model=Dict[str, str], tags=["Credential Management"])
+# async def delete_dataforseo_credentials(tenant_id: str):
+#     if not dataforseo_credential_service:
+#         raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+#     
+#     success = await dataforseo_credential_service.delete_credentials(tenant_id, "dataforseo")
+#     if success:
+#         return {"message": "DataforSEO credentials deleted successfully."}
+#     raise HTTPException(status_code=500, detail="Failed to delete DataforSEO credentials.")
 
 
 if __name__ == "__main__":
