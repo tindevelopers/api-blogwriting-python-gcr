@@ -44,6 +44,7 @@ from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_ma
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
 from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
+from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 
 
 # API Request/Response Models
@@ -158,6 +159,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Failed to initialize AI providers from environment: {e}")
     
+    # Initialize image providers from environment variables
+    try:
+        await initialize_image_providers_from_env()
+        print("✅ Image providers initialized from environment")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize image providers from environment: {e}")
+    
     yield
     
     # Shutdown
@@ -185,6 +193,14 @@ app = FastAPI(
     - **Secure API Key Management**: Encrypted storage and validation
     - **Provider Switching**: Dynamic switching between providers based on performance
     
+    ### 🎨 Image Generation
+    - **Multi-Provider Image Generation**: Stability AI with extensible architecture for more providers
+    - **Text-to-Image**: Generate images from text prompts with customizable styles and quality
+    - **Image Variations**: Create variations of existing images with adjustable strength
+    - **Image Upscaling**: Enhance image resolution while preserving quality
+    - **Image Editing**: Inpainting and outpainting capabilities for image modification
+    - **Asynchronous Processing**: Background job processing for batch operations
+    
     ### 📝 Content Generation
     - **AI-Powered Blog Writing**: Generate high-quality blog posts with multiple AI providers
     - **SEO Optimization**: Built-in keyword analysis and content optimization
@@ -207,9 +223,11 @@ app = FastAPI(
     ## Quick Start
     
     1. **Configure AI Providers**: Use `/api/v1/ai/providers/configure` to add your AI provider credentials
-    2. **Generate Content**: Use `/api/v1/blog/generate` to create blog posts
-    3. **Analyze Keywords**: Use `/api/v1/keywords/suggest` for keyword research
-    4. **Monitor Usage**: Use `/api/v1/ai/providers/stats` to track usage and costs
+    2. **Configure Image Providers**: Use `/api/v1/images/providers/configure` to add image generation providers
+    3. **Generate Content**: Use `/api/v1/blog/generate` to create blog posts
+    4. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
+    5. **Analyze Keywords**: Use `/api/v1/keywords/suggest` for keyword research
+    6. **Monitor Usage**: Use `/api/v1/ai/providers/stats` to track usage and costs
     
     ## Authentication
     
@@ -244,6 +262,9 @@ app.add_middleware(
 
 # Include AI provider management router
 app.include_router(ai_provider_router)
+
+# Include image generation router
+app.include_router(image_generation_router)
 
 # Add rate limiting middleware
 app.middleware("http")(rate_limit_middleware)
