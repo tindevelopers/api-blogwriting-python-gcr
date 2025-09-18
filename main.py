@@ -44,9 +44,10 @@ from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
 from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_logging, get_blog_logger, log_blog_generation, log_api_request
-from src.blog_writer_sdk.services.credential_service import TenantCredentialService
-from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
-from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
+# Credential services not implemented yet - using direct environment variables
+# from src.blog_writer_sdk.services.credential_service import TenantCredentialService
+# from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
+# from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
 from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient, EnhancedKeywordAnalyzer
 
 from google.cloud import secretmanager
@@ -197,13 +198,10 @@ async def lifespan(app: FastAPI):
     secret_manager_client = secretmanager.SecretManagerServiceClient()
     print("✅ Google Secret Manager client initialized.")
 
-    # Initialize DataforSEO Credential Service
+    # Initialize DataforSEO Credential Service (not implemented yet)
     global dataforseo_credential_service
-    if supabase_client and secret_manager_client:
-        dataforseo_credential_service = DataForSEOCredentialService(supabase_client, secret_manager_client)
-        print("✅ DataforSEO Credential Service initialized.")
-    else:
-        print("⚠️ Supabase or Secret Manager client not initialized. DataforSEO Credential Service not available.")
+    dataforseo_credential_service = None  # Service not implemented yet
+    print("⚠️ DataforSEO Credential Service not implemented yet. Using direct environment variables.")
 
     # Initialize EnhancedKeywordAnalyzer
     global enhanced_keyword_analyzer
