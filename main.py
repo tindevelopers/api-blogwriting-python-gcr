@@ -44,6 +44,13 @@ from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
 from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_logging, get_blog_logger, log_blog_generation, log_api_request
+from src.blog_writer_sdk.services.credential_service import TenantCredentialService
+from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
+from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
+from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient, EnhancedKeywordAnalyzer
+
+from google.cloud import secretmanager
+from supabase import create_client, Client
 from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
@@ -175,6 +182,37 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Failed to initialize image providers from environment: {e}")
     
+    # Initialize Supabase client
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    if supabase_url and supabase_key:
+        global supabase_client
+        supabase_client = create_client(supabase_url, supabase_key)
+        print("✅ Supabase client initialized.")
+    else:
+        print("⚠️ Supabase credentials not found. Supabase client not initialized.")
+
+    # Initialize Google Secret Manager client
+    global secret_manager_client
+    secret_manager_client = secretmanager.SecretManagerServiceClient()
+    print("✅ Google Secret Manager client initialized.")
+
+    # Initialize DataforSEO Credential Service
+    global dataforseo_credential_service
+    if supabase_client and secret_manager_client:
+        dataforseo_credential_service = DataForSEOCredentialService(supabase_client, secret_manager_client)
+        print("✅ DataforSEO Credential Service initialized.")
+    else:
+        print("⚠️ Supabase or Secret Manager client not initialized. DataforSEO Credential Service not available.")
+
+    # Initialize EnhancedKeywordAnalyzer
+    global enhanced_keyword_analyzer
+    enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
+        use_dataforseo=True, # Assuming we always want to use DataforSEO if available
+        credential_service=dataforseo_credential_service
+    )
+    print("✅ EnhancedKeywordAnalyzer initialized.")
+
     yield
     
     # Shutdown
@@ -1247,6 +1285,59 @@ async def cloudrun_status():
                 "timestamp": time.time()
             }
         )
+
+
+# Credential Management Endpoints
+@app.post("/api/v1/tenants/{tenant_id}/credentials/dataforseo", response_model=Dict[str, str], tags=["Credential Management"])
+async def create_or_update_dataforseo_credentials(tenant_id: str, credentials: DataForSEOCredentials):
+    if not dataforseo_credential_service:
+        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+    
+    success = await dataforseo_credential_service.store_credentials(
+        tenant_id, "dataforseo", credentials.model_dump()
+    )
+    if success:
+        return {"message": "DataforSEO credentials stored successfully."}
+    raise HTTPException(status_code=500, detail="Failed to store DataforSEO credentials.")
+
+@app.get("/api/v1/tenants/{tenant_id}/credentials/dataforseo/status", response_model=TenantCredentialStatus, tags=["Credential Management"])
+async def get_dataforseo_credentials_status(tenant_id: str):
+    if not dataforseo_credential_service:
+        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+    
+    # Retrieve status from the database
+    result = supabase_client.table("tenant_credentials").select(
+        "provider", "is_active", "test_status"
+    ).eq("tenant_id", tenant_id).eq("provider", "dataforseo").single().execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="DataforSEO credentials not found for this tenant.")
+    
+    return TenantCredentialStatus(
+        provider=result.data["provider"],
+        is_active=result.data["is_active"],
+        test_status=result.data["test_status"]
+    )
+
+@app.post("/api/v1/tenants/{tenant_id}/credentials/dataforseo/test", response_model=Dict[str, str], tags=["Credential Management"])
+async def test_dataforseo_credentials(tenant_id: str):
+    if not dataforseo_credential_service:
+        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+    
+    test_result = await dataforseo_credential_service.test_credentials(tenant_id, "dataforseo")
+    if test_result["status"] == "success":
+        return {"message": test_result["message"]}
+    raise HTTPException(status_code=500, detail=test_result["error"])
+
+@app.delete("/api/v1/tenants/{tenant_id}/credentials/dataforseo", response_model=Dict[str, str], tags=["Credential Management"])
+async def delete_dataforseo_credentials(tenant_id: str):
+    if not dataforseo_credential_service:
+        raise HTTPException(status_code=500, detail="DataforSEO Credential Service not initialized.")
+    
+    success = await dataforseo_credential_service.delete_credentials(tenant_id, "dataforseo")
+    if success:
+        return {"message": "DataforSEO credentials deleted successfully."}
+    raise HTTPException(status_code=500, detail="Failed to delete DataforSEO credentials.")
 
 
 if __name__ == "__main__":
