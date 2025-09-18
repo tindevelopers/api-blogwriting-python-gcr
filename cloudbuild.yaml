@@ -4,24 +4,24 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build',
-      '-t', 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA',
-      '-t', 'gcr.io/$PROJECT_ID/blog-writer-sdk:latest',
+      '-t', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA',
+      '-t', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest',
       '.'
     ]
 
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA']
+    args: ['push', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA']
 
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/blog-writer-sdk:latest']
+    args: ['push', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest']
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: [
       'run', 'deploy', 'api-ai-blog-writer',
-      '--image', 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA',
+      '--image', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA',
       '--region', '$_REGION',
       '--platform', 'managed',
       '--allow-unauthenticated',
@@ -38,12 +38,12 @@ steps:
 
 # Store images in Container Registry
 images:
-  - 'gcr.io/$PROJECT_ID/blog-writer-sdk:$COMMIT_SHA'
-  - 'gcr.io/$PROJECT_ID/blog-writer-sdk:latest'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest'
 
 # Substitution variables
 substitutions:
-  _REGION: 'us-east1'
+  _REGION: 'europe-west1'
 
 # Build options
 options:
