@@ -22,7 +22,7 @@ from src.blog_writer_sdk.monitoring.cloud_logging import get_blog_logger, log_ap
 
 from ..models.blog_models import KeywordAnalysis, SEODifficulty
 
-logger = get_blog_logger(__name__)
+logger = get_blog_logger()
 
 class DataForSEOClient:
     """
