@@ -18,7 +18,7 @@ import time
 
 from src.blog_writer_sdk.monitoring.metrics import metrics_collector, monitor_performance
 from src.blog_writer_sdk.monitoring.cloud_logging import get_blog_logger, log_api_request
-from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
+# DataForSEOCredentialService import removed - service not implemented yet
 
 from ..models.blog_models import KeywordAnalysis, SEODifficulty
 
@@ -32,7 +32,7 @@ class DataForSEOClient:
     search volume, keyword difficulty, and competitor analysis.
     """
     
-    def __init__(self, credential_service: DataForSEOCredentialService = None):
+    def __init__(self, credential_service: Any = None):
         """
         Initialize DataForSEO client.
         
@@ -516,7 +516,7 @@ class EnhancedKeywordAnalyzer:
     Enhanced keyword analyzer that combines content analysis with DataForSEO data.
     """
     
-    def __init__(self, use_dataforseo: bool = True, credential_service: DataForSEOCredentialService = None):
+    def __init__(self, use_dataforseo: bool = True, credential_service: Any = None):
         """
         Initialize enhanced keyword analyzer.
         
