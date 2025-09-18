@@ -34,7 +34,7 @@ steps:
       '--timeout', '900',
       '--service-account', 'blog-writer-${_ENVIRONMENT}@$PROJECT_ID.iam.gserviceaccount.com',
       '--set-env-vars', 'PYTHONUNBUFFERED=1,ENVIRONMENT=${_ENVIRONMENT}',
-      '--update-secrets', 'file:/secrets/env=blog-writer-env-${_ENVIRONMENT}:latest'
+      '--set-secrets', 'BLOG_WRITER_ENV=blog-writer-env-${_ENVIRONMENT}:latest'
     ]
 
 # Store images in Artifact Registry
