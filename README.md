@@ -372,11 +372,13 @@ Deploy to Google Cloud Run for enterprise-grade scalability and reliability:
 
 See [CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md) for detailed instructions.
 
-### Google Cloud Run Deployment
+### Automated Deployment with GitHub Actions
 
 1. **Setup Google Cloud**: Configure your Google Cloud project and enable Cloud Run
-2. **Environment Variables**: Set up your environment variables in Google Cloud
-3. **Deploy**: Use the included Cloud Build configuration for automated deployment
+2. **Environment Variables**: Set up your environment variables in Google Cloud Secret Manager
+3. **Deploy**: Push to branches triggers automatic deployment via GitHub Actions
+   - `develop` branch → Deploys to `europe-west1` (dev environment)
+   - `main`/`master` branch → Deploys to `us-east1` (prod environment)
 
 ```bash
 # Google Cloud Run automatically uses:
