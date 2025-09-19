@@ -16,6 +16,9 @@ from contextlib import asynccontextmanager
 # Track startup time for uptime calculation
 startup_time = time.time()
 
+# Deployment trigger - updated timestamp
+deployment_version = "2024-12-19-001"
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
