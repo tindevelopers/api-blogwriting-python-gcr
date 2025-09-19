@@ -4,24 +4,24 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: [
       'build',
-      '-t', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA',
-      '-t', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest',
+      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID',
+      '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest',
       '.'
     ]
 
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID']
 
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest']
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: [
       'run', 'deploy', 'api-ai-blog-writer',
-      '--image', 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA',
+      '--image', 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID',
       '--region', '$_REGION',
       '--platform', 'managed',
       '--allow-unauthenticated',
@@ -32,18 +32,19 @@ steps:
       '--max-instances', '100',
       '--concurrency', '80',
       '--timeout', '900',
-      '--set-env-vars', 'PORT=8000,PYTHONUNBUFFERED=1',
-      '--set-secrets', '/secrets/env=blog-writer-env:latest'
+      '--set-env-vars', 'PYTHONUNBUFFERED=1',
+      '--set-secrets', '/secrets/env=blog-writer-env-$_ENV:latest'
     ]
 
 # Store images in Container Registry
 images:
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$COMMIT_SHA'
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest'
 
 # Substitution variables
 substitutions:
-  _REGION: 'europe-west1'
+  _REGION: 'us-central1'
+  _ENV: 'dev'
 
 # Build options
 options:
