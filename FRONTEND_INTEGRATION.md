@@ -337,3 +337,20 @@ This provides a complete interface to test all endpoints and see request/respons
 4. **Integrate into Existing Projects** as needed
 
 Would you like me to help you set up any of these integration options?
+
+## Updated V2 Standardized API Endpoints
+
+This section reinforces the reusable structure for frontend integration.
+
+### Standardized Endpoint Template
+- **Base Path:** `/api/{provider_id}`
+- **Common Operations:**
+  - GET `/api/{provider_id}`: Retrieve provider info
+  - POST `/api/{provider_id}/credentials`: Add credentials
+  - PUT `/api/{provider_id}/credentials`: Update credentials
+  - DELETE `/api/{provider_id}/credentials`: Remove credentials
+  - POST `/api/{provider_id}/credentials/test`: Validate credentials
+
+## Enhanced API Security
+
+Integrate JWT, API Gateway, and Supabase for secure frontend-backend communication.

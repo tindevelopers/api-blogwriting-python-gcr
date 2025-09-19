@@ -1338,6 +1338,48 @@ async def cloudrun_status():
 #         return {"message": "DataforSEO credentials deleted successfully."}
 #     raise HTTPException(status_code=500, detail="Failed to delete DataforSEO credentials.")
 
+# Add new routes for V2 standardized endpoints
+from fastapi import Depends, HTTPException
+from src.blog_writer_sdk.services.credential_service import TenantCredentialService  # Assuming this is implemented
+from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials  # Import as needed
+
+# Initialize credential service if not already (from existing code)
+if not dataforseo_credential_service:
+    dataforseo_credential_service = TenantCredentialService()  # Or appropriate initialization
+
+@app.get("/api/providers")
+async def get_providers():
+    return {"providers": ["dataforseo", "other_provider"]}  # Example list
+
+@app.get("/api/providers/{provider_id}")
+async def get_provider_info(provider_id: str):
+    if provider_id == "dataforseo":
+        return {"id": "dataforseo", "name": "DataForSEO", "features": ["serp", "keywords"]}
+    raise HTTPException(status_code=404, detail="Provider not found")
+
+@app.get("/api/credentials/{provider_id}")
+async def get_credentials(provider_id: str, tenant_id: str = Depends(get_current_tenant)):
+    # Secure retrieval logic
+    return dataforseo_credential_service.get_credentials(tenant_id, provider_id)
+
+@app.post("/api/credentials")
+async def add_credentials(credentials: DataForSEOCredentials, tenant_id: str = Depends(get_current_tenant)):
+    return dataforseo_credential_service.store_credentials(tenant_id, credentials.provider_id, credentials)
+
+@app.put("/api/credentials/{provider_id}")
+async def update_credentials(provider_id: str, credentials: DataForSEOCredentials, tenant_id: str = Depends(get_current_tenant)):
+    return dataforseo_credential_service.update_credentials(tenant_id, provider_id, credentials)
+
+@app.delete("/api/credentials/{provider_id}")
+async def delete_credentials(provider_id: str, tenant_id: str = Depends(get_current_tenant)):
+    return dataforseo_credential_service.delete_credentials(tenant_id, provider_id)
+
+@app.post("/api/credentials/{provider_id}/test")
+async def test_credentials(provider_id: str, tenant_id: str = Depends(get_current_tenant)):
+    return dataforseo_credential_service.test_credentials(tenant_id, provider_id)
+
+# Add remaining endpoints similarly...
+
 
 if __name__ == "__main__":
     import uvicorn
