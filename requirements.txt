@@ -35,3 +35,8 @@ google-cloud-logging>=3.8.0
 
 # HTTP client for image generation
 aiohttp>=3.9.0
+
+# New dependencies for credential management
+google-cloud-secret-manager>=2.16.0
+cryptography>=41.0.0
+supabase>=2.0.0

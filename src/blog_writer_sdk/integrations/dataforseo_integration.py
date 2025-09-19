@@ -11,9 +11,18 @@ import base64
 import json
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
+import os
+import logging
+from contextlib import asynccontextmanager
+import time
+
+from src.blog_writer_sdk.monitoring.metrics import metrics_collector, monitor_performance
+from src.blog_writer_sdk.monitoring.cloud_logging import get_blog_logger, log_api_request
+# DataForSEOCredentialService import removed - service not implemented yet
 
 from ..models.blog_models import KeywordAnalysis, SEODifficulty
 
+logger = get_blog_logger()
 
 class DataForSEOClient:
     """
@@ -23,7 +32,7 @@ class DataForSEOClient:
     search volume, keyword difficulty, and competitor analysis.
     """
     
-    def __init__(self, api_key: str, api_secret: str, location: str = "United States", language_code: str = "en"):
+    def __init__(self, credential_service: Any = None):
         """
         Initialize DataForSEO client.
         
@@ -33,23 +42,72 @@ class DataForSEOClient:
             location: Location for search data (e.g., "United States", "United Kingdom")
             language_code: Language code for search data (e.g., "en", "es")
         """
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.location = location
-        self.language_code = language_code
+        self.base_url = "https://api.dataforseo.com/v3"
+        self.credential_service = credential_service
+        self.api_key: Optional[str] = None
+        self.api_secret: Optional[str] = None
+        self.is_configured = False
         self._cache = {}
         self._cache_ttl = 3600  # 1 hour cache
-        self.base_url = "https://api.dataforseo.com/v3"
+    
+    async def initialize_credentials(self, tenant_id: str):
+        if self.credential_service:
+            credentials = await self.credential_service.get_credentials(tenant_id, "dataforseo")
+            if credentials:
+                self.api_key = credentials.get("api_key")
+                self.api_secret = credentials.get("api_secret")
+                self.is_configured = True
+                logger.info(f"DataforSEO credentials loaded for tenant {tenant_id} from credential service.")
+                return
         
-        # Create authentication header
-        credentials = f"{api_key}:{api_secret}"
+        # Fallback to environment variables if credential service is not used or no credentials found
+        self.api_key = os.getenv("DATAFORSEO_API_LOGIN")
+        self.api_secret = os.getenv("DATAFORSEO_API_PASSWORD")
+        if self.api_key and self.api_secret:
+            self.is_configured = True
+            logger.warning("DataforSEO credentials loaded from environment variables. Consider using credential service.")
+        else:
+            self.is_configured = False
+            logger.error("DataforSEO API credentials not found.")
+    
+    async def _make_request(self, endpoint: str, payload: List[Dict[str, Any]], tenant_id: str) -> Dict[str, Any]:
+        if not self.is_configured or not self.api_key or not self.api_secret:
+            logger.error(f"DataforSEO API not configured. Returning fallback data for endpoint: {endpoint}")
+            await log_api_request("dataforseo", endpoint, False, 0, "API not configured", tenant_id)
+            return self._fallback_data(endpoint, payload)
+
+        url = f"{self.base_url}/{endpoint}"
+        credentials = f"{self.api_key}:{self.api_secret}"
         encoded_credentials = base64.b64encode(credentials.encode()).decode()
-        self.headers = {
+        headers = {
             "Authorization": f"Basic {encoded_credentials}",
             "Content-Type": "application/json"
         }
-    
-    async def get_search_volume_data(self, keywords: List[str]) -> Dict[str, Dict[str, Any]]:
+
+        try:
+            start_time = time.perf_counter()
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, json=payload, timeout=30.0)
+                response.raise_for_status()  # Raise an exception for 4xx or 5xx status codes
+            end_time = time.perf_counter()
+            duration = end_time - start_time
+            await log_api_request("dataforseo", endpoint, True, duration, "Success", tenant_id)
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"DataForSEO API request failed due to HTTP error for {endpoint}: {e.response.status_code} - {e.response.text}")
+            await log_api_request("dataforseo", endpoint, False, 0, f"HTTP Error: {e.response.status_code}", tenant_id)
+            return self._fallback_data(endpoint, payload)
+        except httpx.RequestError as e:
+            logger.error(f"DataForSEO API request failed due to network error for {endpoint}: {e}")
+            await log_api_request("dataforseo", endpoint, False, 0, f"Network Error: {e}", tenant_id)
+            return self._fallback_data(endpoint, payload)
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during DataforSEO API request for {endpoint}: {e}")
+            await log_api_request("dataforseo", endpoint, False, 0, f"Unexpected Error: {e}", tenant_id)
+            return self._fallback_data(endpoint, payload)
+
+    @monitor_performance("dataforseo_get_search_volume")
+    async def get_search_volume_data(self, keywords: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, Any]:
         """
         Get search volume data for keywords using DataForSEO API.
         
@@ -68,17 +126,13 @@ class DataForSEOClient:
                     return cached_data
             
             # Prepare API request
-            url = f"{self.base_url}/keywords_data/google_ads/search_volume/live"
             payload = [{
                 "keywords": keywords,
-                "language_code": self.language_code,
-                "location_name": self.location
+                "location_name": location_name,
+                "language_code": language_code
             }]
             
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            data = await self._make_request("keywords_data/google_ads/search_volume/live", payload, tenant_id)
             
             # Process response
             results = {}
@@ -114,7 +168,8 @@ class DataForSEOClient:
                 for keyword in keywords
             }
     
-    async def get_keyword_difficulty(self, keywords: List[str]) -> Dict[str, float]:
+    @monitor_performance("dataforseo_get_keyword_difficulty")
+    async def get_keyword_difficulty(self, keywords: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, float]:
         """
         Get keyword difficulty scores using DataForSEO API.
         
@@ -133,17 +188,13 @@ class DataForSEOClient:
                     return cached_data
             
             # Prepare API request
-            url = f"{self.base_url}/dataforseo_labs/google/bulk_keyword_difficulty/live"
             payload = [{
                 "keywords": keywords,
-                "language_code": self.language_code,
-                "location_name": self.location
+                "location_name": location_name,
+                "language_code": language_code
             }]
             
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            data = await self._make_request("dataforseo_labs/bulk_keyword_difficulty/live", payload, tenant_id)
             
             # Process response
             results = {}
@@ -166,7 +217,8 @@ class DataForSEOClient:
                 for keyword in keywords
             }
     
-    async def get_keyword_suggestions(self, seed_keyword: str, limit: int = 20) -> List[Dict[str, Any]]:
+    @monitor_performance("dataforseo_get_keyword_suggestions")
+    async def get_keyword_suggestions(self, seed_keyword: str, location_name: str, language_code: str, tenant_id: str) -> List[Dict[str, Any]]:
         """
         Get keyword suggestions using DataForSEO keyword ideas API.
         
@@ -186,18 +238,14 @@ class DataForSEOClient:
                     return cached_data
             
             # Prepare API request
-            url = f"{self.base_url}/dataforseo_labs/google/keyword_ideas/live"
             payload = [{
-                "keywords": [seed_keyword],
-                "language_code": self.language_code,
-                "location_name": self.location,
+                "keyword": seed_keyword,
+                "location_name": location_name,
+                "language_code": language_code,
                 "limit": limit
             }]
             
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            data = await self._make_request("dataforseo_labs/google/keyword_suggestions/live", payload, tenant_id)
             
             # Process response
             suggestions = []
@@ -226,7 +274,8 @@ class DataForSEOClient:
             # Return fallback suggestions
             return self._generate_fallback_suggestions(seed_keyword, limit)
     
-    async def get_serp_analysis(self, keyword: str, depth: int = 10) -> Dict[str, Any]:
+    @monitor_performance("dataforseo_get_serp_analysis")
+    async def get_serp_analysis(self, keyword: str, location_name: str, language_code: str, tenant_id: str, depth: int = 10) -> Dict[str, Any]:
         """
         Get SERP analysis for a keyword using DataForSEO.
         
@@ -246,6 +295,14 @@ class DataForSEOClient:
             #     depth=depth
             # )
             
+            payload = [{
+                "keyword": keyword,
+                "location_name": location_name,
+                "language_code": language_code,
+                "depth": depth
+            }]
+            data = await self._make_request("serp/google/organic/live/advanced", payload, tenant_id)
+
             return {
                 "keyword": keyword,
                 "serp_results": [],
@@ -258,7 +315,8 @@ class DataForSEOClient:
             print(f"Error getting SERP analysis: {e}")
             return {}
     
-    async def get_competitor_keywords(self, domain: str, limit: int = 50) -> List[Dict[str, Any]]:
+    @monitor_performance("dataforseo_get_competitor_keywords")
+    async def get_competitor_keywords(self, domain: str, location_name: str, language_code: str, tenant_id: str) -> List[Dict[str, Any]]:
         """
         Get keywords that a competitor domain ranks for.
         
@@ -278,13 +336,21 @@ class DataForSEOClient:
             #     limit=limit
             # )
             
+            payload = [{
+                "target": domain,
+                "location_name": location_name,
+                "language_code": language_code
+            }]
+            data = await self._make_request("dataforseo_labs/google/competitors_domain/live", payload, tenant_id)
+
             return []
             
         except Exception as e:
             print(f"Error getting competitor keywords: {e}")
             return []
     
-    async def get_keyword_trends(self, keywords: List[str], time_range: str = "past_12_months") -> Dict[str, Any]:
+    @monitor_performance("dataforseo_get_keyword_trends")
+    async def get_keyword_trends(self, keywords: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, Any]:
         """
         Get keyword trend data using DataForSEO.
         
@@ -303,9 +369,16 @@ class DataForSEOClient:
             #     location_name=self.location
             # )
             
+            payload = [{
+                "keywords": keywords,
+                "location_name": location_name,
+                "language_code": language_code
+            }]
+            data = await self._make_request("dataforseo_labs/google/historical_serp/live", payload, tenant_id)
+
             return {
                 "keywords": keywords,
-                "time_range": time_range,
+                "time_range": "past_12_months", # Placeholder, actual time_range would be passed
                 "trends": {keyword: {"trend_score": 0.0} for keyword in keywords}
             }
             
@@ -313,7 +386,8 @@ class DataForSEOClient:
             print(f"Error getting keyword trends: {e}")
             return {}
     
-    async def analyze_content_gaps(self, primary_keyword: str, competitor_domains: List[str]) -> Dict[str, Any]:
+    @monitor_performance("dataforseo_analyze_content_gaps")
+    async def analyze_content_gaps(self, primary_keyword: str, competitor_domains: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, Any]:
         """
         Analyze content gaps compared to competitors.
         
@@ -334,7 +408,7 @@ class DataForSEOClient:
             
             # Analyze each competitor
             for domain in competitor_domains:
-                competitor_keywords = await self.get_competitor_keywords(domain, limit=100)
+                competitor_keywords = await self.get_competitor_keywords(domain, location_name, language_code, tenant_id)
                 # Process competitor data to identify gaps
                 # This would involve more complex analysis
             
@@ -430,38 +504,39 @@ class DataForSEOClient:
         
         return suggestions
 
+    def _fallback_data(self, endpoint: str, payload: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # In a real application, you might have more sophisticated fallback logic
+        # or return a specific error structure.
+        logger.warning(f"Returning fallback data for {endpoint} with payload {payload}")
+        return {"status": "error", "message": "API not configured or request failed. Returning fallback data.", "data": []}
+
 
 class EnhancedKeywordAnalyzer:
     """
     Enhanced keyword analyzer that combines content analysis with DataForSEO data.
     """
     
-    def __init__(self, use_dataforseo: bool = True, api_key: str = None, api_secret: str = None, location: str = "United States"):
+    def __init__(self, use_dataforseo: bool = True, credential_service: Any = None):
         """
         Initialize enhanced keyword analyzer.
         
         Args:
             use_dataforseo: Whether to use DataForSEO for enhanced metrics
-            api_key: DataForSEO API key
-            api_secret: DataForSEO API secret
-            location: Location for search data
+            credential_service: The DataForSEOCredentialService instance
         """
         self.use_dataforseo = use_dataforseo
-        if use_dataforseo and api_key and api_secret:
-            self.dataforseo_client = DataForSEOClient(
-                api_key=api_key,
-                api_secret=api_secret,
-                location=location
-            )
+        if use_dataforseo and credential_service:
+            self.dataforseo_client = DataForSEOClient(credential_service=credential_service)
         else:
             self.dataforseo_client = None
     
-    async def analyze_keywords_comprehensive(self, keywords: List[str]) -> Dict[str, KeywordAnalysis]:
+    async def analyze_keywords_comprehensive(self, keywords: List[str], tenant_id: str) -> Dict[str, KeywordAnalysis]:
         """
         Perform comprehensive keyword analysis with real SEO data.
         
         Args:
             keywords: List of keywords to analyze
+            tenant_id: The ID of the tenant making the request
             
         Returns:
             Dictionary mapping keywords to their comprehensive analysis
@@ -470,9 +545,10 @@ class EnhancedKeywordAnalyzer:
         
         if self.use_dataforseo and self.dataforseo_client:
             try:
+                await self.dataforseo_client.initialize_credentials(tenant_id)
                 # Get real SEO data
-                search_data = await self.dataforseo_client.get_search_volume_data(keywords)
-                difficulty_data = await self.dataforseo_client.get_keyword_difficulty(keywords)
+                search_data = await self.dataforseo_client.get_search_volume_data(keywords, "United States", "en", tenant_id)
+                difficulty_data = await self.dataforseo_client.get_keyword_difficulty(keywords, "United States", "en", tenant_id)
                 
                 for keyword in keywords:
                     seo_data = search_data.get(keyword, {})
@@ -505,13 +581,14 @@ class EnhancedKeywordAnalyzer:
         
         return results
     
-    async def get_content_strategy(self, primary_keywords: List[str], competitor_domains: List[str] = None) -> Dict[str, Any]:
+    async def get_content_strategy(self, primary_keywords: List[str], competitor_domains: List[str] = None, tenant_id: str = "default_tenant") -> Dict[str, Any]:
         """
         Generate a comprehensive content strategy based on keyword analysis.
         
         Args:
             primary_keywords: Main keywords to target
             competitor_domains: Optional competitor domains to analyze
+            tenant_id: The ID of the tenant making the request
             
         Returns:
             Content strategy recommendations
@@ -525,8 +602,9 @@ class EnhancedKeywordAnalyzer:
         }
         
         if self.use_dataforseo and self.dataforseo_client:
+            await self.dataforseo_client.initialize_credentials(tenant_id)
             # Analyze primary keywords
-            keyword_analyses = await self.analyze_keywords_comprehensive(primary_keywords)
+            keyword_analyses = await self.analyze_keywords_comprehensive(primary_keywords, tenant_id)
             
             # Categorize keywords by difficulty and opportunity
             for keyword, analysis in keyword_analyses.items():
@@ -548,7 +626,7 @@ class EnhancedKeywordAnalyzer:
             if competitor_domains:
                 for domain in competitor_domains:
                     gaps = await self.dataforseo_client.analyze_content_gaps(
-                        primary_keywords[0], [domain]
+                        primary_keywords[0], [domain], "United States", "en", tenant_id
                     )
                     strategy["competitor_gaps"].extend(gaps.get("opportunities", []))
         
