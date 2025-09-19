@@ -10,7 +10,6 @@ on:
 
 env:
   PROJECT_ID: api-ai-blog-writer
-  REGION: us-central1
   SERVICE_NAME: api-ai-blog-writer
 
 jobs:
@@ -43,14 +42,22 @@ jobs:
     - name: Verify secrets exist
       run: |
         echo "Checking if required secrets exist..."
-        # Determine environment based on branch
+        # Determine environment and region based on branch
         if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
           ENV="prod"
+          REGION="us-east1"
         elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
           ENV="dev"
+          REGION="europe-west1"
         else
           ENV="dev"
+          REGION="europe-west1"
         fi
+        
+        echo "Environment: $ENV"
+        echo "Region: $REGION"
+        echo "REGION=$REGION" >> $GITHUB_ENV
+        echo "ENV=$ENV" >> $GITHUB_ENV
         
         SECRET_NAME="blog-writer-env-$ENV"
         echo "Checking for secret: $SECRET_NAME"
@@ -64,27 +71,19 @@ jobs:
 
     - name: Build and Deploy to Cloud Run
       run: |
-        # Determine environment based on branch
-        if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
-          ENV="prod"
-        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-          ENV="dev"
-        else
-          ENV="dev"
-        fi
-        
-        echo "Deploying to environment: $ENV"
+        echo "Deploying to environment: ${{ env.ENV }}"
+        echo "Deploying to region: ${{ env.REGION }}"
         
         gcloud builds submit \
           --config cloudbuild.yaml \
-          --substitutions _REGION=$REGION,_ENV=$ENV \
+          --substitutions _REGION=${{ env.REGION }},_ENV=${{ env.ENV }} \
           --project=$PROJECT_ID
 
     - name: Get service URL
       id: get-url
       run: |
         SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
-          --region=$REGION \
+          --region=${{ env.REGION }} \
           --project=$PROJECT_ID \
           --format="value(status.url)")
         echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
@@ -160,6 +159,7 @@ jobs:
       run: |
         # Create a staging service name based on PR number
         STAGING_SERVICE_NAME="blog-writer-sdk-pr-${{ github.event.number }}"
+        STAGING_REGION="us-east1"  # Use us-east1 for staging (same as prod)
         
         # Build the image
         gcloud builds submit \
@@ -169,7 +169,7 @@ jobs:
         # Deploy to staging
         gcloud run deploy $STAGING_SERVICE_NAME \
           --image gcr.io/$PROJECT_ID/$STAGING_SERVICE_NAME:${{ github.sha }} \
-          --region=$REGION \
+          --region=$STAGING_REGION \
           --platform managed \
           --allow-unauthenticated \
           --port 8000 \
@@ -185,7 +185,7 @@ jobs:
         
         # Get staging URL
         STAGING_URL=$(gcloud run services describe $STAGING_SERVICE_NAME \
-          --region=$REGION \
+          --region=$STAGING_REGION \
           --project=$PROJECT_ID \
           --format="value(status.url)")
         
@@ -235,10 +235,11 @@ jobs:
     - name: Delete staging service
       run: |
         STAGING_SERVICE_NAME="blog-writer-sdk-pr-${{ github.event.number }}"
+        STAGING_REGION="us-east1"  # Use us-east1 for staging (same as prod)
         
         # Delete the Cloud Run service
         gcloud run services delete $STAGING_SERVICE_NAME \
-          --region=$REGION \
+          --region=$STAGING_REGION \
           --project=$PROJECT_ID \
           --quiet || echo "Service may not exist"
         
