@@ -60,7 +60,7 @@ class BatchJob:
     id: str
     items: List[BatchItem]
     status: BatchStatus = BatchStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     progress: float = 0.0
