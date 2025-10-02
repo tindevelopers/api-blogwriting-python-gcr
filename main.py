@@ -131,11 +131,29 @@ class ErrorResponse(BaseModel):
 
 
 # Application lifespan management
+def load_env_from_secrets():
+    """Load environment variables from mounted secrets file."""
+    secrets_file = "/secrets/env"
+    if os.path.exists(secrets_file):
+        print("📁 Loading environment variables from mounted secrets...")
+        with open(secrets_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ[key] = value
+        print("✅ Environment variables loaded from secrets")
+    else:
+        print("⚠️ No secrets file found at /secrets/env, using system environment variables")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan."""
     # Startup
     print("🚀 Blog Writer SDK API starting up...")
+    
+    # Load environment variables from mounted secrets
+    load_env_from_secrets()
     
     # Initialize cache manager
     redis_url = os.getenv("REDIS_URL")
@@ -314,8 +332,8 @@ app.include_router(ai_provider_router)
 # Include image generation router
 app.include_router(image_generation_router)
 
-# Add rate limiting middleware
-app.middleware("http")(rate_limit_middleware)
+# Add rate limiting middleware (disabled for development)
+# app.middleware("http")(rate_limit_middleware)
 
 # Global variables
 batch_processor: Optional[BatchProcessor] = None
@@ -1340,48 +1358,6 @@ async def cloudrun_status():
 #     if success:
 #         return {"message": "DataforSEO credentials deleted successfully."}
 #     raise HTTPException(status_code=500, detail="Failed to delete DataforSEO credentials.")
-
-# Add new routes for V2 standardized endpoints
-from fastapi import Depends, HTTPException
-from src.blog_writer_sdk.services.credential_service import TenantCredentialService  # Assuming this is implemented
-from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials  # Import as needed
-
-# Initialize credential service if not already (from existing code)
-if not dataforseo_credential_service:
-    dataforseo_credential_service = TenantCredentialService()  # Or appropriate initialization
-
-@app.get("/api/providers")
-async def get_providers():
-    return {"providers": ["dataforseo", "other_provider"]}  # Example list
-
-@app.get("/api/providers/{provider_id}")
-async def get_provider_info(provider_id: str):
-    if provider_id == "dataforseo":
-        return {"id": "dataforseo", "name": "DataForSEO", "features": ["serp", "keywords"]}
-    raise HTTPException(status_code=404, detail="Provider not found")
-
-@app.get("/api/credentials/{provider_id}")
-async def get_credentials(provider_id: str, tenant_id: str = Depends(get_current_tenant)):
-    # Secure retrieval logic
-    return dataforseo_credential_service.get_credentials(tenant_id, provider_id)
-
-@app.post("/api/credentials")
-async def add_credentials(credentials: DataForSEOCredentials, tenant_id: str = Depends(get_current_tenant)):
-    return dataforseo_credential_service.store_credentials(tenant_id, credentials.provider_id, credentials)
-
-@app.put("/api/credentials/{provider_id}")
-async def update_credentials(provider_id: str, credentials: DataForSEOCredentials, tenant_id: str = Depends(get_current_tenant)):
-    return dataforseo_credential_service.update_credentials(tenant_id, provider_id, credentials)
-
-@app.delete("/api/credentials/{provider_id}")
-async def delete_credentials(provider_id: str, tenant_id: str = Depends(get_current_tenant)):
-    return dataforseo_credential_service.delete_credentials(tenant_id, provider_id)
-
-@app.post("/api/credentials/{provider_id}/test")
-async def test_credentials(provider_id: str, tenant_id: str = Depends(get_current_tenant)):
-    return dataforseo_credential_service.test_credentials(tenant_id, provider_id)
-
-# Add remaining endpoints similarly...
 
 
 if __name__ == "__main__":

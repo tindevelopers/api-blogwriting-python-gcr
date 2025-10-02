@@ -45,7 +45,7 @@ images:
 substitutions:
   _REGION: 'europe-west1'  # Default to dev region, will be overridden by GitHub Actions
   _ENV: 'dev'
-  _SERVICE_NAME: 'api-ai-blog-writer-dev'  # Default service name, will be overridden by GitHub Actions
+  _SERVICE_NAME: 'blog-writer-api-dev'  # Default to dev service, will be overridden by GitHub Actions
 
 # Build options
 options:

@@ -491,22 +491,22 @@ class AIContentGenerator:
             ContentTemplate.HOW_TO_GUIDE.value: {
                 "structure": ["introduction", "materials_needed", "step_by_step", "tips", "conclusion"],
                 "keywords_density": 0.02,
-                "tone_preference": ContentTone.INSTRUCTIONAL
+                "tone_preference": ContentTone.TECHNICAL
             },
             ContentTemplate.LISTICLE.value: {
                 "structure": ["introduction", "numbered_items", "conclusion"],
                 "keywords_density": 0.015,
-                "tone_preference": ContentTone.ENGAGING
+                "tone_preference": ContentTone.CONVERSATIONAL
             },
             ContentTemplate.REVIEW.value: {
                 "structure": ["introduction", "pros_cons", "detailed_analysis", "verdict"],
                 "keywords_density": 0.02,
-                "tone_preference": ContentTone.ANALYTICAL
+                "tone_preference": ContentTone.AUTHORITATIVE
             },
             ContentTemplate.COMPARISON.value: {
                 "structure": ["introduction", "comparison_table", "detailed_comparison", "recommendation"],
                 "keywords_density": 0.025,
-                "tone_preference": ContentTone.OBJECTIVE
+                "tone_preference": ContentTone.PROFESSIONAL
             }
         }
     

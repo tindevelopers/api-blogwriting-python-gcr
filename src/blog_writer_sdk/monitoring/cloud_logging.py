@@ -34,7 +34,7 @@ class CloudLoggingFormatter(logging.Formatter):
         """Format log record for Google Cloud Logging."""
         # Base log entry
         log_entry = {
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now().astimezone().isoformat(),
             'severity': record.levelname,
             'message': record.getMessage(),
             'logger': record.name,
@@ -163,7 +163,7 @@ class BlogWriterLogger:
         log_data = {
             'level': level,
             'message': message,
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now().astimezone().isoformat(),
             **self._request_context,
             **kwargs
         }
