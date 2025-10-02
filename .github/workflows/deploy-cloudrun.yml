@@ -1,16 +1,21 @@
-name: Deploy to Google Cloud Run
+# DISABLED: Replaced by separate environment-specific workflows
+# - deploy-develop.yml (develop branch -> europe-west1)
+# - deploy-staging.yml (staging branch -> us-east1) 
+# - deploy-production.yml (main branch -> us-east1)
+
+name: Deploy to Google Cloud Run (DISABLED)
 
 on:
-  push:
-    branches: [ main, master, develop, staging ]
-  pull_request:
-    branches: [ main, master ]
-    types: [ closed ]
+  # Disabled - using separate workflows instead
+  # push:
+  #   branches: [ main, master, develop ]
+  # pull_request:
+  #   branches: [ main, master ]
+  #   types: [ closed ]
   workflow_dispatch:  # Allow manual deployment only
 
 env:
   PROJECT_ID: api-ai-blog-writer
-  SERVICE_NAME: api-ai-blog-writer
 
 jobs:
   deploy:
@@ -46,28 +51,22 @@ jobs:
         if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
           ENV="prod"
           REGION="us-east1"
-        elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
-          ENV="staging"
-          REGION="europe-west1"
+          SERVICE_NAME="api-ai-blog-writer-prod"
         elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
           ENV="dev"
           REGION="europe-west1"
+          SERVICE_NAME="api-ai-blog-writer-dev"
         else
           ENV="dev"
           REGION="europe-west1"
+          SERVICE_NAME="api-ai-blog-writer-dev"
         fi
         
         echo "Environment: $ENV"
         echo "Region: $REGION"
+        echo "Service Name: $SERVICE_NAME"
         echo "REGION=$REGION" >> $GITHUB_ENV
         echo "ENV=$ENV" >> $GITHUB_ENV
-        
-        # Set environment-specific service name
-        if [[ "$ENV" == "prod" ]]; then
-          SERVICE_NAME="api-ai-blog-writer"
-        else
-          SERVICE_NAME="api-ai-blog-writer-$ENV"
-        fi
         echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
         
         SECRET_NAME="blog-writer-env-$ENV"
@@ -84,6 +83,7 @@ jobs:
       run: |
         echo "Deploying to environment: ${{ env.ENV }}"
         echo "Deploying to region: ${{ env.REGION }}"
+        echo "Deploying to service: ${{ env.SERVICE_NAME }}"
         
         gcloud builds submit \
           --config cloudbuild.yaml \

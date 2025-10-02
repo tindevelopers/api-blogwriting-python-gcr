@@ -403,7 +403,7 @@ class BlogWriter:
             slug=slug,
             categories=request.keywords[:3] if request.keywords else [],
             tags=request.keywords if request.keywords else [],
-            created_at=datetime.utcnow(),
+            created_at=datetime.now().astimezone(),
         )
     
     async def _generate_suggestions(self, blog_post: BlogPost) -> List[str]:

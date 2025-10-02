@@ -1,0 +1,25 @@
+# Application Settings
+DEBUG=true
+HOST=0.0.0.0
+PORT=8000
+
+# Supabase Configuration (Optional for development)
+SUPABASE_URL=https://placeholder.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=placeholder-key
+SUPABASE_ANON_KEY=placeholder-key
+
+# AI Provider Configuration (Optional for development)
+OPENAI_API_KEY=placeholder-openai-key
+ANTHROPIC_API_KEY=placeholder-anthropic-key
+
+# DataForSEO Configuration (Optional for development)
+DATAFORSEO_API_KEY=placeholder-dataforseo-key
+DATAFORSEO_API_SECRET=placeholder-dataforseo-secret
+
+# Other settings
+ENVIRONMENT=dev
+LOG_LEVEL=debug
+
+# Disable external services for development
+ENABLE_SEO_OPTIMIZATION=false
+ENABLE_QUALITY_ANALYSIS=false
