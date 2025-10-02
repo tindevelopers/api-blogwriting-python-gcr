@@ -131,11 +131,29 @@ class ErrorResponse(BaseModel):
 
 
 # Application lifespan management
+def load_env_from_secrets():
+    """Load environment variables from mounted secrets file."""
+    secrets_file = "/secrets/env"
+    if os.path.exists(secrets_file):
+        print("📁 Loading environment variables from mounted secrets...")
+        with open(secrets_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ[key] = value
+        print("✅ Environment variables loaded from secrets")
+    else:
+        print("⚠️ No secrets file found at /secrets/env, using system environment variables")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan."""
     # Startup
     print("🚀 Blog Writer SDK API starting up...")
+    
+    # Load environment variables from mounted secrets
+    load_env_from_secrets()
     
     # Initialize cache manager
     redis_url = os.getenv("REDIS_URL")
