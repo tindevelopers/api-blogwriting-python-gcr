@@ -332,8 +332,8 @@ app.include_router(ai_provider_router)
 # Include image generation router
 app.include_router(image_generation_router)
 
-# Add rate limiting middleware
-app.middleware("http")(rate_limit_middleware)
+# Add rate limiting middleware (disabled for development)
+# app.middleware("http")(rate_limit_middleware)
 
 # Global variables
 batch_processor: Optional[BatchProcessor] = None

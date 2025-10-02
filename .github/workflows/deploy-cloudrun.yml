@@ -10,7 +10,6 @@ on:
 
 env:
   PROJECT_ID: api-ai-blog-writer
-  SERVICE_NAME: api-ai-blog-writer
 
 jobs:
   deploy:
@@ -46,18 +45,23 @@ jobs:
         if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
           ENV="prod"
           REGION="us-east1"
+          SERVICE_NAME="api-ai-blog-writer-prod"
         elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
           ENV="dev"
           REGION="europe-west1"
+          SERVICE_NAME="api-ai-blog-writer-dev"
         else
           ENV="dev"
           REGION="europe-west1"
+          SERVICE_NAME="api-ai-blog-writer-dev"
         fi
         
         echo "Environment: $ENV"
         echo "Region: $REGION"
+        echo "Service Name: $SERVICE_NAME"
         echo "REGION=$REGION" >> $GITHUB_ENV
         echo "ENV=$ENV" >> $GITHUB_ENV
+        echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
         
         SECRET_NAME="blog-writer-env-$ENV"
         echo "Checking for secret: $SECRET_NAME"
@@ -73,16 +77,17 @@ jobs:
       run: |
         echo "Deploying to environment: ${{ env.ENV }}"
         echo "Deploying to region: ${{ env.REGION }}"
+        echo "Deploying to service: ${{ env.SERVICE_NAME }}"
         
         gcloud builds submit \
           --config cloudbuild.yaml \
-          --substitutions _REGION=${{ env.REGION }},_ENV=${{ env.ENV }} \
+          --substitutions _REGION=${{ env.REGION }},_ENV=${{ env.ENV }},_SERVICE_NAME=${{ env.SERVICE_NAME }} \
           --project=$PROJECT_ID
 
     - name: Get service URL
       id: get-url
       run: |
-        SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
           --region=${{ env.REGION }} \
           --project=$PROJECT_ID \
           --format="value(status.url)")

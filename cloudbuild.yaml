@@ -20,7 +20,7 @@ steps:
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args: [
-      'run', 'deploy', 'api-ai-blog-writer',
+      'run', 'deploy', '${_SERVICE_NAME}',
       '--image', '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID',
       '--region', '${_REGION}',
       '--platform', 'managed',
@@ -45,6 +45,7 @@ images:
 substitutions:
   _REGION: 'europe-west1'  # Default to dev region, will be overridden by GitHub Actions
   _ENV: 'dev'
+  _SERVICE_NAME: 'api-ai-blog-writer-dev'  # Default to dev service, will be overridden by GitHub Actions
 
 # Build options
 options:
