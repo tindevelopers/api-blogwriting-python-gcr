@@ -1,11 +1,17 @@
-name: Deploy to Google Cloud Run
+# DISABLED: Replaced by separate environment-specific workflows
+# - deploy-develop.yml (develop branch -> europe-west1)
+# - deploy-staging.yml (staging branch -> us-east1) 
+# - deploy-production.yml (main branch -> us-east1)
+
+name: Deploy to Google Cloud Run (DISABLED)
 
 on:
-  push:
-    branches: [ main, master, develop ]
-  pull_request:
-    branches: [ main, master ]
-    types: [ closed ]
+  # Disabled - using separate workflows instead
+  # push:
+  #   branches: [ main, master, develop ]
+  # pull_request:
+  #   branches: [ main, master ]
+  #   types: [ closed ]
   workflow_dispatch:  # Allow manual deployment only
 
 env:

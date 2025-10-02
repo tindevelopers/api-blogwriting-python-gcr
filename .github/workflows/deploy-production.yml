@@ -1,0 +1,114 @@
+name: Deploy Production to US-East1
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allow manual deployment
+
+env:
+  PROJECT_ID: api-ai-blog-writer
+  SERVICE_NAME: api-ai-blog-writer-prod
+  REGION: us-east1
+  ENV: prod
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GOOGLE_CLOUD_SA_KEY }}
+        project_id: api-ai-blog-writer
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: api-ai-blog-writer
+
+    - name: Configure Docker to use gcloud as a credential helper
+      run: |
+        gcloud auth configure-docker
+
+    - name: Verify production secrets exist
+      run: |
+        echo "Checking for production environment secrets..."
+        gcloud secrets describe blog-writer-env-prod --project=$PROJECT_ID || {
+          echo "❌ Secret 'blog-writer-env-prod' not found. Available secrets:"
+          gcloud secrets list --project=$PROJECT_ID --format="table(name)"
+          exit 1
+        }
+        echo "✅ Secret 'blog-writer-env-prod' found"
+
+    - name: Build and Deploy to Cloud Run (Production)
+      run: |
+        echo "🚀 Deploying to production environment..."
+        echo "Environment: ${{ env.ENV }}"
+        echo "Region: ${{ env.REGION }}"
+        echo "Service: ${{ env.SERVICE_NAME }}"
+        
+        gcloud builds submit \
+          --config cloudbuild.yaml \
+          --substitutions _REGION=${{ env.REGION }},_ENV=${{ env.ENV }},_SERVICE_NAME=${{ env.SERVICE_NAME }} \
+          --project=$PROJECT_ID
+
+    - name: Get service URL
+      id: get-url
+      run: |
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+          --region=${{ env.REGION }} \
+          --project=$PROJECT_ID \
+          --format="value(status.url)")
+        echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
+        echo "🎉 Production service deployed at: $SERVICE_URL"
+
+    - name: Test deployment
+      run: |
+        echo "🧪 Testing production deployment..."
+        curl -f ${{ steps.get-url.outputs.SERVICE_URL }}/health || {
+          echo "❌ Health check failed"
+          exit 1
+        }
+        echo "✅ Health check passed"
+
+    - name: Run comprehensive API tests
+      run: |
+        echo "🧪 Running comprehensive API tests..."
+        BASE_URL="${{ steps.get-url.outputs.SERVICE_URL }}"
+        
+        # Test health endpoint
+        curl -f "$BASE_URL/health" || { echo "❌ Health check failed"; exit 1; }
+        echo "✅ Health check passed"
+        
+        # Test API root
+        curl -f "$BASE_URL/" || { echo "❌ API root failed"; exit 1; }
+        echo "✅ API root accessible"
+        
+        # Test docs endpoint
+        curl -f "$BASE_URL/docs" || { echo "❌ Docs endpoint failed"; exit 1; }
+        echo "✅ Docs endpoint accessible"
+
+    - name: Deployment Summary
+      run: |
+        echo "## 🚀 Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** Production" >> $GITHUB_STEP_SUMMARY
+        echo "**Service URL:** ${{ steps.get-url.outputs.SERVICE_URL }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Region:** ${{ env.REGION }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Service Name:** ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+        echo "- [API Documentation](${{ steps.get-url.outputs.SERVICE_URL }}/docs)" >> $GITHUB_STEP_SUMMARY
+        echo "- [Health Check](${{ steps.get-url.outputs.SERVICE_URL }}/health)" >> $GITHUB_STEP_SUMMARY
+        echo "- [API Configuration](${{ steps.get-url.outputs.SERVICE_URL }}/api/v1/config)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 Production Ready!" >> $GITHUB_STEP_SUMMARY
+        echo "The production API is now live and ready to serve requests." >> $GITHUB_STEP_SUMMARY
