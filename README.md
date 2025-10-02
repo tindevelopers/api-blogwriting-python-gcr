@@ -507,6 +507,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🗺️ Roadmap
 
 ### Version 0.2.0
+- [x] GitHub Actions CI/CD Pipeline (Completed)
 - [ ] WordPress plugin integration
 - [ ] Advanced analytics dashboard
 - [ ] Multi-language support
