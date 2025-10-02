@@ -7,8 +7,8 @@ on:
 
 env:
   PROJECT_ID: api-ai-blog-writer
-  SERVICE_NAME: api-ai-blog-writer-staging
-  REGION: us-east1
+  SERVICE_NAME: blog-writer-api-staging
+  REGION: europe-west1
   ENV: staging
 
 jobs:

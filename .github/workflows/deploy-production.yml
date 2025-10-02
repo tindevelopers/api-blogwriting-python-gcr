@@ -7,7 +7,7 @@ on:
 
 env:
   PROJECT_ID: api-ai-blog-writer
-  SERVICE_NAME: api-ai-blog-writer-prod
+  SERVICE_NAME: blog-writer-api-prod
   REGION: us-east1
   ENV: prod
 
