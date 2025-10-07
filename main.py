@@ -21,7 +21,8 @@ deployment_version = "2024-12-19-001"
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
+from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field
 
 from src.blog_writer_sdk import BlogWriter
@@ -246,9 +247,9 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="Blog Writer SDK API",
+    title="PetStore Direct Content Creator",
     description="""
-    A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features.
+    A powerful REST API for AI-driven content creation for pet stores with advanced SEO optimization, intelligent routing, and enterprise features.
     
     ## Key Features
     
@@ -306,10 +307,540 @@ app = FastAPI(
     - 📊 **Metrics**: View usage statistics at `/api/v1/metrics`
     """,
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None,
+    redoc_url=None,
     lifespan=lifespan,
 )
+
+# Custom JavaScript to inject the PetStore Direct logo
+CUSTOM_SWAGGER_JS = """
+<script>
+    window.addEventListener('load', function() {
+        const topbar = document.querySelector('.swagger-ui .topbar-wrapper');
+        if (topbar) {
+            const link = topbar.querySelector('.link');
+            if (link) {
+                const img = document.createElement('img');
+                img.src = 'https://petstore.direct/static/images/logo.png';
+                img.alt = 'PetStore Direct Logo';
+                img.style.height = '40px';
+                img.style.marginRight = '10px';
+                img.style.verticalAlign = 'middle';
+                img.onerror = function() {
+                    // Fallback to text if logo doesn't load
+                    this.style.display = 'none';
+                };
+                link.prepend(img);
+            }
+        }
+    });
+</script>
+"""
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    response = get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - API Documentation",
+        swagger_ui_parameters={"dom_id": "#swagger-ui", "layout": "BaseLayout", "deepLinking": True, "displayRequestDuration": True},
+    )
+    html_content = response.body.decode("utf-8")
+    html_content = html_content.replace(
+        "</head>",
+        f"{CUSTOM_SWAGGER_JS}</head>"
+    )
+    return HTMLResponse(content=html_content)
+
+@app.get("/redoc", include_in_schema=False)
+async def custom_redoc():
+    from fastapi.openapi.docs import get_redoc_html
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - ReDoc",
+    )
+
+@app.get("/api-docs", include_in_schema=False)
+async def api_documentation():
+    """Serve comprehensive API documentation in markdown format."""
+    try:
+        # Try to read from file first, fallback to embedded content
+        try:
+            with open("API_DOCUMENTATION.md", "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            # Embedded documentation content
+            content = """# 🏪 PetStore Direct Content Creator API
+
+## 📋 Overview
+
+The **PetStore Direct Content Creator API** is a powerful, AI-driven content creation platform specifically designed for pet stores, veterinary clinics, and pet service businesses. This API generates high-quality, SEO-optimized blog posts, product descriptions, and marketing content using advanced AI providers including OpenAI, Anthropic, and Azure OpenAI.
+
+## 🚀 Service Information
+
+- **Service Name:** PetStore Direct Content Creator
+- **Service URL:** `https://petstore-content-creator-613248238610.us-east1.run.app`
+- **Region:** us-east1
+- **Version:** 1.0.0
+- **Status:** ✅ Active and Healthy
+
+## 🎯 Key Features
+
+### 🤖 AI-Powered Content Generation
+- **Multi-Provider AI Support**: OpenAI GPT-4, Anthropic Claude, Azure OpenAI with intelligent fallback
+- **Pet-Focused Content**: Specialized templates for pet care guides, product reviews, breed information
+- **SEO Optimization**: Built-in keyword analysis and meta tag generation for pet industry terms
+- **Content Quality Analysis**: Readability scoring and improvement suggestions
+- **Multiple Output Formats**: Markdown, HTML, and JSON support
+
+### 📊 Advanced Analytics
+- **SEO Metrics**: Keyword density, focus keyword scoring, title optimization
+- **Content Quality**: Flesch-Kincaid grade level, reading ease, vocabulary diversity
+- **Performance Tracking**: Generation time, word count, success rates
+- **Real-time Monitoring**: Health checks, error tracking, usage statistics
+
+## 📚 API Endpoints
+
+### 🏥 Health & Status
+
+#### GET `/health`
+**Description:** Check service health and status
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": 1759488304.3095403,
+  "version": "1.0.0-cloudrun"
+}
+```
+
+#### GET `/api/v1/health/detailed`
+**Description:** Detailed health metrics including CPU, memory, and performance data
+
+### 📝 Content Generation
+
+#### POST `/api/v1/blog/generate`
+**Description:** Generate AI-powered blog content for pet stores
+
+**Request Body:**
+```json
+{
+  "topic": "Best Dog Food for Puppies",
+  "keywords": ["puppy food", "dog nutrition", "puppy care"],
+  "tone": "professional",
+  "length": "medium",
+  "target_audience": "new dog owners",
+  "custom_instructions": "Focus on nutritional benefits and feeding schedules"
+}
+```
+
+**Response includes:**
+- Generated blog content with title, content, and excerpt
+- SEO meta tags and Open Graph tags
+- SEO metrics and content quality scores
+- Readability analysis and recommendations
+- Generation time and word count
+
+### ⚙️ Configuration
+
+#### GET `/api/v1/config`
+**Description:** Get API configuration and supported features
+
+## 🎨 Content Types & Templates
+
+### 📝 Pet Care Guides
+- **Puppy Training Tips**
+- **Senior Pet Care**
+- **Pet Nutrition Guides**
+- **Breed-Specific Information**
+- **Health & Wellness Content**
+
+### 🛍️ Product Content
+- **Product Descriptions**
+- **Product Reviews**
+- **Comparison Articles**
+- **Buying Guides**
+- **Feature Highlights**
+
+### 🏥 Veterinary Content
+- **Medical Information**
+- **Treatment Options**
+- **Preventive Care**
+- **Emergency Procedures**
+- **Health Monitoring**
+
+## 🔧 Request Parameters
+
+### Content Generation Parameters
+
+| Parameter | Type | Required | Description | Example |
+|-----------|------|----------|-------------|---------|
+| `topic` | string | ✅ | Main topic/subject of the content | "Best Cat Litter for Odor Control" |
+| `keywords` | array | ❌ | SEO keywords to include | ["cat litter", "odor control", "clumping"] |
+| `tone` | string | ❌ | Writing tone and style | "professional", "casual", "friendly" |
+| `length` | string | ❌ | Content length preference | "short", "medium", "long", "extended" |
+| `target_audience` | string | ❌ | Intended audience | "new pet owners", "experienced breeders" |
+| `custom_instructions` | string | ❌ | Specific requirements or focus areas | "Include feeding schedules and portion sizes" |
+
+### Supported Tones
+- **Professional**: Formal, authoritative tone for business content
+- **Casual**: Friendly, approachable tone for general audience
+- **Friendly**: Warm, personal tone for customer engagement
+- **Authoritative**: Expert-level tone for technical content
+- **Conversational**: Natural, dialogue-like tone
+- **Technical**: Detailed, scientific tone for specialized content
+- **Creative**: Engaging, storytelling tone for marketing content
+
+### Supported Lengths
+- **Short**: 300-500 words (Quick reads, social media posts)
+- **Medium**: 500-1000 words (Standard blog posts, product descriptions)
+- **Long**: 1000-2000 words (Comprehensive guides, detailed reviews)
+- **Extended**: 2000+ words (In-depth articles, comprehensive resources)
+
+## 🚀 Usage Examples
+
+### Example 1: Pet Care Guide
+```bash
+curl -X POST "https://petstore-content-creator-613248238610.us-east1.run.app/api/v1/blog/generate" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "topic": "How to Train a Puppy to Use a Crate",
+    "keywords": ["puppy training", "crate training", "dog behavior"],
+    "tone": "instructional",
+    "length": "medium",
+    "target_audience": "new dog owners"
+  }'
+```
+
+### Example 2: Product Review
+```bash
+curl -X POST "https://petstore-content-creator-613248238610.us-east1.run.app/api/v1/blog/generate" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "topic": "Best Cat Litter for Multi-Cat Households",
+    "keywords": ["cat litter", "multi-cat", "odor control"],
+    "tone": "professional",
+    "length": "long",
+    "custom_instructions": "Include pros and cons, price comparisons, and maintenance tips"
+  }'
+```
+
+## 🔒 Security & Authentication
+
+### CORS Configuration
+The API supports Cross-Origin Resource Sharing (CORS) for the following origins:
+- `http://localhost:3000` (Next.js development)
+- `http://localhost:3001` (Alternative Next.js port)
+- `https://petstore.direct` (Production frontend)
+- `https://*.vercel.app` (Vercel deployments)
+
+### Rate Limiting
+- **Requests per minute**: 60 requests
+- **Requests per hour**: 1000 requests
+- **Requests per day**: 10000 requests
+- **Burst capacity**: 10 concurrent requests
+
+## 📈 Performance & Monitoring
+
+### Response Times
+- **Average response time**: < 2 seconds
+- **95th percentile**: < 5 seconds
+- **Timeout limit**: 15 minutes
+- **Concurrent requests**: Up to 80 per instance
+
+### Resource Allocation
+- **Memory**: 2GB per instance
+- **CPU**: 2 vCPUs per instance
+- **Storage**: 100GB disk space
+- **Network**: High-bandwidth connectivity
+
+### Monitoring Endpoints
+- **Health Check**: `/health`
+- **Detailed Metrics**: `/api/v1/health/detailed`
+- **API Documentation**: `/docs`
+- **Alternative Docs**: `/redoc`
+- **Comprehensive Docs**: `/api-docs`
+
+## 🛠️ Integration Examples
+
+### JavaScript/Node.js
+```javascript
+const axios = require('axios');
+
+const petStoreAPI = axios.create({
+  baseURL: 'https://petstore-content-creator-613248238610.us-east1.run.app',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+async function generatePetContent(topic, keywords = []) {
+  try {
+    const response = await petStoreAPI.post('/api/v1/blog/generate', {
+      topic,
+      keywords,
+      tone: 'professional',
+      length: 'medium'
+    });
+    
+    return response.data;
+  } catch (error) {
+    console.error('Content generation failed:', error.response?.data || error.message);
+    throw error;
+  }
+}
+```
+
+### Python
+```python
+import requests
+
+class PetStoreContentAPI:
+    def __init__(self, base_url):
+        self.base_url = base_url.rstrip('/')
+    
+    def generate_content(self, topic, **kwargs):
+        payload = {
+            "topic": topic,
+            "tone": kwargs.get("tone", "professional"),
+            "length": kwargs.get("length", "medium"),
+            "keywords": kwargs.get("keywords", []),
+            "target_audience": kwargs.get("target_audience"),
+            "custom_instructions": kwargs.get("custom_instructions")
+        }
+        
+        response = requests.post(
+            f"{self.base_url}/api/v1/blog/generate",
+            json=payload,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        response.raise_for_status()
+        return response.json()
+```
+
+## 🎯 Best Practices
+
+### Content Generation
+1. **Be Specific with Topics**: Use detailed, specific topics for better results
+2. **Include Relevant Keywords**: Add 3-5 relevant keywords for SEO optimization
+3. **Choose Appropriate Tone**: Match tone to your audience and content type
+4. **Set Realistic Length**: Choose length based on content complexity and audience needs
+5. **Provide Context**: Use custom instructions to guide content focus
+
+### SEO Optimization
+1. **Keyword Research**: Use pet industry-specific keywords
+2. **Local SEO**: Include location-based keywords for local pet stores
+3. **Long-tail Keywords**: Target specific, less competitive phrases
+4. **Content Structure**: Use proper heading hierarchy (H1, H2, H3)
+5. **Meta Optimization**: Leverage generated meta tags for better search visibility
+
+## 🚨 Error Handling
+
+### Common Error Responses
+
+#### 400 Bad Request
+```json
+{
+  "detail": "Topic is required for content generation"
+}
+```
+
+#### 422 Validation Error
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "tone"],
+      "msg": "invalid choice",
+      "type": "value_error.const"
+    }
+  ]
+}
+```
+
+#### 429 Rate Limit Exceeded
+```json
+{
+  "detail": "Rate limit exceeded. Please try again later."
+}
+```
+
+## 📞 Support & Resources
+
+### Documentation
+- **Interactive API Docs**: `https://petstore-content-creator-613248238610.us-east1.run.app/docs`
+- **Alternative Docs**: `https://petstore-content-creator-613248238610.us-east1.run.app/redoc`
+- **Comprehensive Docs**: `https://petstore-content-creator-613248238610.us-east1.run.app/api-docs`
+- **OpenAPI Spec**: `https://petstore-content-creator-613248238610.us-east1.run.app/openapi.json`
+
+### Health Monitoring
+- **Service Health**: `https://petstore-content-creator-613248238610.us-east1.run.app/health`
+- **Detailed Metrics**: `https://petstore-content-creator-613248238610.us-east1.run.app/api/v1/health/detailed`
+
+---
+
+*This API is powered by advanced AI technology and optimized for the pet industry. For technical support or feature requests, please contact the development team.*
+
+**Last Updated**: October 3, 2025  
+**API Version**: 1.0.0  
+**Service Status**: ✅ Active"""
+        
+        # Convert markdown to HTML for better presentation
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>PetStore Direct Content Creator - API Documentation</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    max-width: 1200px;
+                    margin: 0 auto;
+                    padding: 20px;
+                    background: #f8f9fa;
+                }}
+                .container {{
+                    background: white;
+                    padding: 40px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                }}
+                h1 {{
+                    color: #2c3e50;
+                    border-bottom: 3px solid #3498db;
+                    padding-bottom: 10px;
+                }}
+                h2 {{
+                    color: #34495e;
+                    margin-top: 30px;
+                    border-left: 4px solid #3498db;
+                    padding-left: 15px;
+                }}
+                h3 {{
+                    color: #2c3e50;
+                    margin-top: 25px;
+                }}
+                code {{
+                    background: #f4f4f4;
+                    padding: 2px 6px;
+                    border-radius: 3px;
+                    font-family: 'Monaco', 'Menlo', monospace;
+                }}
+                pre {{
+                    background: #2c3e50;
+                    color: #ecf0f1;
+                    padding: 20px;
+                    border-radius: 5px;
+                    overflow-x: auto;
+                    margin: 20px 0;
+                }}
+                pre code {{
+                    background: none;
+                    color: inherit;
+                    padding: 0;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                }}
+                th, td {{
+                    border: 1px solid #ddd;
+                    padding: 12px;
+                    text-align: left;
+                }}
+                th {{
+                    background: #f8f9fa;
+                    font-weight: 600;
+                }}
+                .status-badge {{
+                    background: #27ae60;
+                    color: white;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    font-weight: bold;
+                }}
+                .endpoint {{
+                    background: #e8f4fd;
+                    padding: 15px;
+                    border-left: 4px solid #3498db;
+                    margin: 15px 0;
+                }}
+                .method {{
+                    display: inline-block;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 12px;
+                    margin-right: 10px;
+                }}
+                .get {{ background: #27ae60; color: white; }}
+                .post {{ background: #3498db; color: white; }}
+                .put {{ background: #f39c12; color: white; }}
+                .delete {{ background: #e74c3c; color: white; }}
+                .feature-grid {{
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                    gap: 20px;
+                    margin: 20px 0;
+                }}
+                .feature-card {{
+                    background: #f8f9fa;
+                    padding: 20px;
+                    border-radius: 8px;
+                    border-left: 4px solid #3498db;
+                }}
+                .logo {{
+                    text-align: center;
+                    margin-bottom: 30px;
+                }}
+                .logo img {{
+                    height: 60px;
+                    margin-bottom: 10px;
+                }}
+                .service-info {{
+                    background: #e8f5e8;
+                    padding: 20px;
+                    border-radius: 8px;
+                    margin: 20px 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="logo">
+                    <h1>🏪 PetStore Direct Content Creator API</h1>
+                    <p><span class="status-badge">✅ Active</span> | Version 1.0.0 | us-east1</p>
+                </div>
+                <div class="service-info">
+                    <h3>🚀 Service Information</h3>
+                    <p><strong>Service URL:</strong> <code>https://petstore-content-creator-613248238610.us-east1.run.app</code></p>
+                    <p><strong>API Documentation:</strong> <a href="/docs">Interactive Docs</a> | <a href="/redoc">ReDoc</a></p>
+                    <p><strong>Health Check:</strong> <a href="/health">Service Status</a></p>
+                </div>
+                {content.replace('```json', '<pre><code class="language-json">').replace('```', '</code></pre>').replace('```bash', '<pre><code class="language-bash">').replace('```javascript', '<pre><code class="language-javascript">').replace('```python', '<pre><code class="language-python">').replace('```php', '<pre><code class="language-php">')}
+            </div>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(content=html_content)
+    except FileNotFoundError:
+        return HTMLResponse(
+            content="<h1>Documentation Not Found</h1><p>The API documentation file is not available.</p>",
+            status_code=404
+        )
+    except Exception as e:
+        return HTMLResponse(
+            content=f"<h1>Error Loading Documentation</h1><p>Error: {str(e)}</p>",
+            status_code=500
+        )
 
 # Configure CORS
 app.add_middleware(

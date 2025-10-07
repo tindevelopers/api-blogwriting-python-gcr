@@ -1,0 +1,27 @@
+# Application Settings
+DEBUG=false
+HOST=0.0.0.0
+PORT=8000
+
+# Supabase Configuration (dummy values for production)
+SUPABASE_URL=https://prod-supabase.co
+SUPABASE_SERVICE_ROLE_KEY=prod-supabase-service-role-key
+SUPABASE_ANON_KEY=prod-supabase-anon-key
+
+# AI Provider Configuration (dummy values for production)
+OPENAI_API_KEY=prod-openai-key
+ANTHROPIC_API_KEY=prod-anthropic-key
+
+# DataForSEO Configuration (dummy values for production)
+DATAFORSEO_API_KEY=prod-dataforseo-key
+DATAFORSEO_API_SECRET=prod-dataforseo-secret
+
+# Other settings
+ENVIRONMENT=prod
+LOG_LEVEL=info
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
+RATE_LIMIT_REQUESTS_PER_HOUR=1000
+RATE_LIMIT_REQUESTS_PER_DAY=10000
+
+
+

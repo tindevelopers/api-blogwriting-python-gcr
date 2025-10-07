@@ -1,6 +1,6 @@
-# AI Blog Writer API 📝
+# 🏪 PetStoreDirect Content Creator
 
-A comprehensive Python API for AI-driven blog writing with advanced SEO optimization, built for modern web applications.
+A comprehensive AI-powered content creation platform for pet stores, generating high-quality blog posts, product descriptions, and marketing content with advanced SEO optimization.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
@@ -9,15 +9,16 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 ## 🚀 Features
 
 ### Core Capabilities
+- **🐾 Pet-Focused Content Generation**: Specialized AI content for pet stores, veterinary clinics, and pet services
 - **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic, Azure OpenAI) with intelligent fallback
 - **🚀 Direct AI Provider Integration**: Direct integration with OpenAI, Anthropic, and other AI providers
-- **📊 SEO-First Architecture**: Built-in SEO optimization and analysis
+- **📊 SEO-First Architecture**: Built-in SEO optimization and analysis for pet industry keywords
 - **🔍 Enhanced Keyword Analysis**: Optional DataForSEO integration for real search volume, competition, and trends data
-- **📝 Content Templates**: Pre-built templates for how-to guides, listicles, reviews, comparisons, and more
+- **📝 Pet Industry Templates**: Pre-built templates for pet care guides, product reviews, breed information, and more
 - **✅ Content Quality Analysis**: Readability scoring and improvement suggestions
-- **🎯 Keyword Research**: Advanced keyword analysis and suggestions with fallback to built-in methods
+- **🎯 Pet Keyword Research**: Advanced keyword analysis for pet-related terms and local SEO
 - **📄 Multiple Output Formats**: Markdown, HTML, and JSON support
-- **🏷️ Meta Tag Generation**: Automatic SEO meta tags and Open Graph tags
+- **🏷️ Meta Tag Generation**: Automatic SEO meta tags and Open Graph tags for pet content
 - **🏗️ Content Structure Optimization**: Heading hierarchy and internal linking
 - **🔄 Provider Fallback**: Automatic failover between AI providers for reliability
 
