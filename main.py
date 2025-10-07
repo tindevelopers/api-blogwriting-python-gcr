@@ -52,6 +52,12 @@ from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_loggin
 # from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
 # from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
 from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient, EnhancedKeywordAnalyzer
+from src.blog_writer_sdk.integrations import (
+    WebflowClient, WebflowPublisher,
+    ShopifyClient, ShopifyPublisher,
+    WordPressClient, WordPressPublisher,
+    CloudinaryStorage, CloudflareR2Storage, MediaStorageManager
+)
 
 from google.cloud import secretmanager
 from supabase import create_client, Client
@@ -96,6 +102,26 @@ class KeywordAnalysisRequest(BaseModel):
     keywords: List[str] = Field(..., max_length=50, description="Keywords to analyze")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
+
+
+class PlatformPublishRequest(BaseModel):
+    """Request model for platform publishing."""
+    blog_result: BlogGenerationResult = Field(..., description="Generated blog content to publish")
+    platform: str = Field(..., description="Target platform (webflow, shopify, wordpress)")
+    publish: bool = Field(default=True, description="Whether to publish immediately")
+    categories: Optional[List[str]] = Field(default_factory=list, description="Categories for the content")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for the content")
+    media_files: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Media files to upload")
+
+
+class MediaUploadRequest(BaseModel):
+    """Request model for media upload."""
+    media_data: str = Field(..., description="Base64 encoded media data")
+    filename: str = Field(..., description="Original filename")
+    folder: Optional[str] = Field(None, description="Upload folder")
+    alt_text: Optional[str] = Field(None, description="Alt text for images")
+    caption: Optional[str] = Field(None, description="Caption for media")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional metadata")
 
 
 class KeywordExtractionRequest(BaseModel):
@@ -273,6 +299,13 @@ app = FastAPI(
     - **Multiple Content Types**: Blog posts, introductions, conclusions, FAQs, and more
     - **Quality Assurance**: Content analysis and improvement suggestions
     
+    ### 🌐 Platform Publishing
+    - **Multi-Platform Support**: Publish directly to Webflow, Shopify, and WordPress
+    - **Webflow Integration**: CMS publishing with collection management and media uploads
+    - **Shopify Integration**: Blog publishing with automatic product recommendations
+    - **WordPress Integration**: REST API publishing with category and tag management
+    - **Media Storage**: Cloudinary and Cloudflare R2 support for image and video assets
+    
     ### 🔍 SEO & Analytics
     - **DataForSEO Integration**: Real-time keyword research and analysis
     - **Content Optimization**: SEO scoring and improvement recommendations
@@ -292,8 +325,10 @@ app = FastAPI(
     2. **Configure Image Providers**: Use `/api/v1/images/providers/configure` to add image generation providers
     3. **Generate Content**: Use `/api/v1/blog/generate` to create blog posts
     4. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
-    5. **Analyze Keywords**: Use `/api/v1/keywords/suggest` for keyword research
-    6. **Monitor Usage**: Use `/api/v1/ai/providers/stats` to track usage and costs
+    5. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
+    6. **Upload Media**: Use `/api/v1/media/upload/{provider}` to upload to Cloudinary or Cloudflare R2
+    7. **Analyze Keywords**: Use `/api/v1/keywords/suggest` for keyword research
+    8. **Monitor Usage**: Use `/api/v1/ai/providers/stats` to track usage and costs
     
     ## Authentication
     
@@ -541,11 +576,20 @@ async def root():
         "ready": "/ready",
         "live": "/live",
         "endpoints": {
-            "generate": "/api/v1/generate",
+            "generate": "/api/v1/blog/generate",
             "analyze": "/api/v1/analyze",
             "keywords": "/api/v1/keywords",
             "batch": "/api/v1/batch",
-            "metrics": "/api/v1/metrics"
+            "metrics": "/api/v1/metrics",
+            "platforms": {
+                "webflow": "/api/v1/publish/webflow",
+                "shopify": "/api/v1/publish/shopify",
+                "wordpress": "/api/v1/publish/wordpress"
+            },
+            "media": {
+                "cloudinary": "/api/v1/media/upload/cloudinary",
+                "cloudflare": "/api/v1/media/upload/cloudflare"
+            }
         }
     }
 
@@ -1304,6 +1348,224 @@ async def cloudrun_status():
                 "timestamp": time.time()
             }
         )
+
+
+# Platform Publishing Endpoints
+
+@app.post("/api/v1/publish/webflow")
+async def publish_to_webflow(request: PlatformPublishRequest):
+    """Publish blog content to Webflow."""
+    try:
+        # Initialize Webflow client
+        webflow_client = WebflowClient()
+        webflow_publisher = WebflowPublisher(webflow_client)
+        
+        # Prepare media files if provided
+        media_files = []
+        if request.media_files:
+            for media_file in request.media_files:
+                # Decode base64 media data
+                media_data = base64.b64decode(media_file["data"])
+                media_files.append({
+                    "data": media_data,
+                    "filename": media_file["filename"],
+                    "alt_text": media_file.get("alt_text")
+                })
+        
+        # Publish with media
+        result = await webflow_publisher.publish_with_media(
+            blog_result=request.blog_result,
+            media_files=media_files,
+            publish=request.publish
+        )
+        
+        return {
+            "success": True,
+            "platform": "webflow",
+            "result": result,
+            "message": "Successfully published to Webflow"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to publish to Webflow: {str(e)}")
+
+
+@app.post("/api/v1/publish/shopify")
+async def publish_to_shopify(request: PlatformPublishRequest):
+    """Publish blog content to Shopify with product recommendations."""
+    try:
+        # Initialize Shopify client
+        shopify_client = ShopifyClient()
+        shopify_publisher = ShopifyPublisher(shopify_client)
+        
+        # Publish with product recommendations
+        result = await shopify_publisher.publish_with_recommendations(
+            blog_result=request.blog_result,
+            categories=request.categories,
+            publish=request.publish,
+            include_products=True
+        )
+        
+        return {
+            "success": True,
+            "platform": "shopify",
+            "result": result,
+            "message": "Successfully published to Shopify with product recommendations"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to publish to Shopify: {str(e)}")
+
+
+@app.post("/api/v1/publish/wordpress")
+async def publish_to_wordpress(request: PlatformPublishRequest):
+    """Publish blog content to WordPress."""
+    try:
+        # Initialize WordPress client
+        wordpress_client = WordPressClient()
+        wordpress_publisher = WordPressPublisher(wordpress_client)
+        
+        # Prepare media files if provided
+        media_files = []
+        if request.media_files:
+            for media_file in request.media_files:
+                # Decode base64 media data
+                media_data = base64.b64decode(media_file["data"])
+                media_files.append({
+                    "data": media_data,
+                    "filename": media_file["filename"],
+                    "alt_text": media_file.get("alt_text"),
+                    "caption": media_file.get("caption")
+                })
+        
+        # Publish with media
+        result = await wordpress_publisher.publish_with_media(
+            blog_result=request.blog_result,
+            media_files=media_files,
+            categories=request.categories,
+            publish=request.publish
+        )
+        
+        return {
+            "success": True,
+            "platform": "wordpress",
+            "result": result,
+            "message": "Successfully published to WordPress"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to publish to WordPress: {str(e)}")
+
+
+# Media Storage Endpoints
+
+@app.post("/api/v1/media/upload/cloudinary")
+async def upload_to_cloudinary(request: MediaUploadRequest):
+    """Upload media to Cloudinary."""
+    try:
+        # Initialize Cloudinary storage
+        cloudinary_storage = CloudinaryStorage()
+        
+        # Decode base64 media data
+        media_data = base64.b64decode(request.media_data)
+        
+        # Upload media
+        result = await cloudinary_storage.upload_media(
+            media_data=media_data,
+            filename=request.filename,
+            folder=request.folder,
+            metadata=request.metadata
+        )
+        
+        return {
+            "success": True,
+            "provider": "cloudinary",
+            "result": result,
+            "message": "Successfully uploaded to Cloudinary"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload to Cloudinary: {str(e)}")
+
+
+@app.post("/api/v1/media/upload/cloudflare")
+async def upload_to_cloudflare(request: MediaUploadRequest):
+    """Upload media to Cloudflare R2."""
+    try:
+        # Initialize Cloudflare R2 storage
+        cloudflare_storage = CloudflareR2Storage()
+        
+        # Decode base64 media data
+        media_data = base64.b64decode(request.media_data)
+        
+        # Upload media
+        result = await cloudflare_storage.upload_media(
+            media_data=media_data,
+            filename=request.filename,
+            folder=request.folder,
+            metadata=request.metadata
+        )
+        
+        return {
+            "success": True,
+            "provider": "cloudflare-r2",
+            "result": result,
+            "message": "Successfully uploaded to Cloudflare R2"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload to Cloudflare R2: {str(e)}")
+
+
+@app.get("/api/v1/platforms/webflow/collections")
+async def get_webflow_collections():
+    """Get available Webflow collections."""
+    try:
+        webflow_client = WebflowClient()
+        collections = await webflow_client.get_collections()
+        
+        return {
+            "success": True,
+            "platform": "webflow",
+            "collections": collections
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get Webflow collections: {str(e)}")
+
+
+@app.get("/api/v1/platforms/shopify/blogs")
+async def get_shopify_blogs():
+    """Get available Shopify blogs."""
+    try:
+        shopify_client = ShopifyClient()
+        blogs = await shopify_client.get_blogs()
+        
+        return {
+            "success": True,
+            "platform": "shopify",
+            "blogs": blogs
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get Shopify blogs: {str(e)}")
+
+
+@app.get("/api/v1/platforms/wordpress/categories")
+async def get_wordpress_categories():
+    """Get available WordPress categories."""
+    try:
+        wordpress_client = WordPressClient()
+        categories = await wordpress_client.get_categories()
+        
+        return {
+            "success": True,
+            "platform": "wordpress",
+            "categories": categories
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get WordPress categories: {str(e)}")
 
 
 # Credential Management Endpoints
