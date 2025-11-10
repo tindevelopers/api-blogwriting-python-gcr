@@ -18,6 +18,7 @@ startup_time = time.time()
 
 # Deployment trigger - updated timestamp
 deployment_version = "2024-12-19-001"
+APP_VERSION = os.getenv("APP_VERSION", "1.1.0")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -346,7 +347,7 @@ app = FastAPI(
     - 🔧 **Health Checks**: Monitor service health at `/health`
     - 📊 **Metrics**: View usage statistics at `/api/v1/metrics`
     """,
-    version="1.0.0",
+    version=APP_VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -495,7 +496,7 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=time.time(),
-        version="1.0.0-cloudrun"
+        version=f"{APP_VERSION}-cloudrun"
     )
 
 
@@ -577,7 +578,7 @@ async def root():
     """Root endpoint with API information."""
     return {
         "message": "Blog Writer SDK API",
-        "version": "1.0.0",
+        "version": APP_VERSION,
         "environment": "cloud-run",
         "docs": "/docs",
         "health": "/health",
@@ -1310,7 +1311,7 @@ async def cloudrun_status():
         # Get application status
         app_status = {
             "uptime_seconds": time.time() - startup_time,
-            "version": "1.0.0-cloudrun",
+            "version": f"{APP_VERSION}-cloudrun",
             "python_version": os.sys.version,
             "environment": "production" if not os.getenv("DEBUG", "false").lower() == "true" else "development"
         }
