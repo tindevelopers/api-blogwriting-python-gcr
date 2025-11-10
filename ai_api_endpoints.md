@@ -114,3 +114,49 @@ The system tracks:
 4. **Monitor** - Track usage and costs through the built-in metrics
 
 Your project is ready to make AI API calls as soon as you provide the API keys!
+
+---
+
+## 🔗 Target-Agnostic Integrations Endpoint (Backlinks/Interlinks)
+
+### Endpoint
+- `POST /api/v1/integrations/connect-and-recommend`
+
+### Purpose
+- Compute recommended backlinks and interlinks based on selected keywords.
+- Accepts any frontend integration (Webflow, WordPress, Medium, Shopify, custom, etc.) without backend code changes.
+- Best‑effort persistence to Supabase:
+  - `integrations_{ENV}` for integration metadata
+  - `recommendations_{ENV}` for computed recommendations
+
+### Request (summary)
+```json
+{
+  "provider": "custom",
+  "tenant_id": "example-tenant",
+  "connection": { "any": "opaque-config" },
+  "keywords": ["example keyword", "another term"]
+}
+```
+
+### Response (summary)
+```json
+{
+  "provider": "custom",
+  "tenant_id": "example-tenant",
+  "saved_integration": true,
+  "recommended_backlinks": 4,
+  "recommended_interlinks": 6,
+  "per_keyword": [
+    { "keyword": "example keyword", "difficulty": 0.5, "suggested_backlinks": 3, "suggested_interlinks": 5 },
+    { "keyword": "another term", "difficulty": 0.4, "suggested_backlinks": 3, "suggested_interlinks": 5 }
+  ],
+  "notes": null
+}
+```
+
+### Supabase Schema
+- See `supabase_schema.sql` for `integrations_{env}` and `recommendations_{env}` tables.
+
+### Version
+- Added in API version `1.1.0`.

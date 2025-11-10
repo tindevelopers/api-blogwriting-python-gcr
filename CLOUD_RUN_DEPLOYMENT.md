@@ -73,6 +73,28 @@ chmod +x scripts/setup-secrets.sh scripts/deploy.sh
 
 That's it! Your service will be deployed and accessible at the provided URL.
 
+## ✅ Post-Deployment Verification (Versioned)
+
+After a deployment, verify the new revision and API version:
+
+```bash
+# Check service URL (develop)
+gcloud run services describe blog-writer-api-dev \
+  --region=europe-west1 \
+  --project=api-ai-blog-writer \
+  --format="value(status.url)"
+
+# Verify health shows version
+curl -s https://<SERVICE_URL>/health | jq
+# Expect: {"status":"healthy","version":"1.1.0-cloudrun", ...}
+
+# Verify OpenAPI version
+curl -s https://<SERVICE_URL>/openapi.json | jq -r '.info.version'
+# Expect: 1.1.0
+```
+
+If your browser caches docs, force refresh or fetch `/openapi.json?ts=$(date +%s)`.
+
 ## 🔧 Manual Deployment
 
 If you prefer manual control over the deployment process:

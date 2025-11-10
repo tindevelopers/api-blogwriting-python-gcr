@@ -511,6 +511,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[Frontend Integration](FRONTEND_INTEGRATION.md)**: Next.js integration guide
 - **[Multi-SDK Docker Guide](MULTI_SDK_DOCKER_GUIDE.md)**: Dockerize multiple SDKs
 - **[Changelog](CHANGELOG.md)**: Release notes and version history
+- **[Integrations Endpoint](INTEGRATIONS_ENDPOINT.md)**: Backlink & interlink recommendations API
 
 ## 🆘 Support
 
