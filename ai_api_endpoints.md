@@ -160,3 +160,47 @@ Your project is ready to make AI API calls as soon as you provide the API keys!
 
 ### Version
 - Added in API version `1.1.0`.
+
+---
+
+## 🔍 Enhanced Keyword Analysis Endpoint
+
+### Endpoint
+- `POST /api/v1/keywords/enhanced`
+
+### Purpose
+- Returns richer keyword metrics (when DataForSEO is configured): search volume, difficulty, CPC, intent signals, trend proxy, related and long-tail suggestions, with graceful fallback.
+
+### Request (summary)
+```json
+{
+  "keywords": ["ai in business","cloud run seo"],
+  "location": "United States",
+  "language": "en"
+}
+```
+
+### Response (summary)
+```json
+{
+  "enhanced_analysis": {
+    "ai in business": {
+      "search_volume": 1200,
+      "difficulty": "medium",
+      "competition": 0.45,
+      "cpc": 2.1,
+      "trend_score": 0.3,
+      "recommended": true,
+      "reason": "High search volume with manageable difficulty",
+      "related_keywords": ["best ai in business", "..."],
+      "long_tail_keywords": ["how to use ai in business", "..."]
+    }
+  }
+}
+```
+
+### Credentials
+- Set `DATAFORSEO_API_KEY` and `DATAFORSEO_API_SECRET` in your environment (legacy `LOGIN/PASSWORD` also supported as fallback).
+
+### Version
+- Added in API version `1.1.0`.

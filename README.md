@@ -277,21 +277,10 @@ The SDK supports enhanced keyword analysis through DataForSEO integration, provi
 
 #### Usage with Enhanced Analysis
 
-```python
-from blog_writer_sdk.integrations.dataforseo_integration import DataForSEOIntegration
-from blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
-
-# Initialize DataForSEO integration
-dataforseo = DataForSEOIntegration(
-    api_key="your_api_key",
-    api_secret="your_api_secret"
-)
-
-# Create enhanced analyzer
-enhanced_analyzer = EnhancedKeywordAnalyzer(dataforseo_client=dataforseo)
-
-# Use with BlogWriter
-writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
+```bash
+curl -X POST "$BASE/api/v1/keywords/enhanced" \
+  -H "Content-Type: application/json" \
+  -d '{"keywords":["ai in business","cloud run seo"],"location":"United States","language":"en"}'
 ```
 
 ## 📊 API Endpoints
@@ -303,8 +292,9 @@ writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
 
 ### Keyword Research
 - `POST /api/v1/keywords/analyze` - Analyze keyword difficulty
-- `POST /api/v1/keywords/extract` - Extract keywords from content
+- `POST /api/v1/keywords/extract` - Extract keywords from content (phrase-mode via `max_ngram`, `dedup_lim`)
 - `POST /api/v1/keywords/suggest` - Get keyword suggestions
+- `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis using DataForSEO (intent, volume, difficulty, CPC; graceful fallback)
 
 ### Integrations (Target-Agnostic)
 - `POST /api/v1/integrations/connect-and-recommend`  
