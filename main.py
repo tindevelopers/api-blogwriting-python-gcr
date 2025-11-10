@@ -55,15 +55,21 @@ from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOCl
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
-    WordPressClient, WordPressPublisher,
     CloudinaryStorage, CloudflareR2Storage, MediaStorageManager
 )
+try:
+    # Optional: WordPress not installed in this repo currently
+    from src.blog_writer_sdk.integrations.wordpress_integration import WordPressClient, WordPressPublisher  # type: ignore
+    WORDPRESS_AVAILABLE = True
+except Exception:
+    WORDPRESS_AVAILABLE = False
 
 from google.cloud import secretmanager
 from supabase import create_client, Client
 from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
+from src.blog_writer_sdk.api.integration_management import router as integrations_router
 
 
 # API Request/Response Models
@@ -367,6 +373,8 @@ app.include_router(ai_provider_router)
 # Include image generation router
 app.include_router(image_generation_router)
 
+# Include integrations router
+app.include_router(integrations_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
@@ -1421,6 +1429,8 @@ async def publish_to_shopify(request: PlatformPublishRequest):
 async def publish_to_wordpress(request: PlatformPublishRequest):
     """Publish blog content to WordPress."""
     try:
+        if not WORDPRESS_AVAILABLE:
+            raise HTTPException(status_code=501, detail="WordPress integration is not available in this deployment")
         # Initialize WordPress client
         wordpress_client = WordPressClient()
         wordpress_publisher = WordPressPublisher(wordpress_client)
@@ -1555,6 +1565,8 @@ async def get_shopify_blogs():
 async def get_wordpress_categories():
     """Get available WordPress categories."""
     try:
+        if not WORDPRESS_AVAILABLE:
+            raise HTTPException(status_code=501, detail="WordPress integration is not available in this deployment")
         wordpress_client = WordPressClient()
         categories = await wordpress_client.get_categories()
         

@@ -8,7 +8,6 @@ like databases, third-party APIs, and media storage providers.
 from .supabase_client import SupabaseClient
 from .webflow_integration import WebflowClient, WebflowPublisher
 from .shopify_integration import ShopifyClient, ShopifyPublisher
-from .wordpress_integration import WordPressClient, WordPressPublisher
 from .media_storage import (
     MediaStorageProvider,
     CloudinaryStorage,
@@ -25,8 +24,6 @@ __all__ = [
     "WebflowPublisher",
     "ShopifyClient",
     "ShopifyPublisher",
-    "WordPressClient",
-    "WordPressPublisher",
     "MediaStorageProvider",
     "CloudinaryStorage",
     "CloudflareR2Storage",
