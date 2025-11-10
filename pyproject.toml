@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "blog-writer-sdk"
-version = "0.1.0"
+version = "1.1.0"
 description = "A powerful Python SDK for AI-driven blog writing with advanced SEO optimization"
 readme = "README.md"
 requires-python = ">=3.9"

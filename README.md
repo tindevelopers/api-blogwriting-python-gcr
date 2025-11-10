@@ -6,6 +6,10 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+**Version**: 1.1.0  
+**Publish date**: 2025-11-10  
+See the full [CHANGELOG](CHANGELOG.md) for details.
+
 ## 🚀 Features
 
 ### Core Capabilities
@@ -302,6 +306,14 @@ writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
 - `POST /api/v1/keywords/extract` - Extract keywords from content
 - `POST /api/v1/keywords/suggest` - Get keyword suggestions
 
+### Integrations (Target-Agnostic)
+- `POST /api/v1/integrations/connect-and-recommend`  
+  Accepts a `provider` label (e.g., `webflow`, `wordpress`, `medium`, `shopify`, `custom`), an opaque `connection` object, and a set of `keywords`.  
+  Returns backlink and interlink recommendations (aggregate and per-keyword) and best-effort persists:
+  - `integrations_{ENV}`: basic integration metadata
+  - `recommendations_{ENV}`: computed recommendations  
+  This endpoint is provider-agnostic (no provider-specific branching).
+
 ### Utility
 - `GET /health` - Health check
 - `GET /api/v1/config` - Get API configuration
@@ -325,7 +337,8 @@ writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
 
 ## 🗄️ Database Schema
 
-The SDK includes a complete Supabase schema for content management:
+The SDK includes Supabase schemas for content management and generic recommendations.  
+For integration metadata and recommendations (env-suffixed tables), see `supabase_schema.sql`.
 
 ```sql
 -- Blog posts with full SEO metadata
@@ -497,6 +510,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[GitHub Actions Setup](GITHUB_RAILWAY_SETUP.md)**: CI/CD with Google Cloud
 - **[Frontend Integration](FRONTEND_INTEGRATION.md)**: Next.js integration guide
 - **[Multi-SDK Docker Guide](MULTI_SDK_DOCKER_GUIDE.md)**: Dockerize multiple SDKs
+- **[Changelog](CHANGELOG.md)**: Release notes and version history
 
 ## 🆘 Support
 
