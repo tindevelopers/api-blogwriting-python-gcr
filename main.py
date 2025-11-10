@@ -110,6 +110,13 @@ class KeywordAnalysisRequest(BaseModel):
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
 
+class EnhancedKeywordAnalysisRequest(BaseModel):
+    """Request model for enhanced keyword analysis with DataForSEO."""
+    keywords: List[str] = Field(..., max_length=50, description="Keywords to analyze")
+    location: Optional[str] = Field("United States", description="Location for keyword analysis")
+    language: Optional[str] = Field("en", description="Language code for analysis")
+    include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
+
 
 class PlatformPublishRequest(BaseModel):
     """Request model for platform publishing."""
@@ -135,6 +142,8 @@ class KeywordExtractionRequest(BaseModel):
     """Request model for keyword extraction API."""
     content: str = Field(..., min_length=100, description="Content to extract keywords from")
     max_keywords: int = Field(default=20, ge=5, le=50, description="Maximum keywords to extract")
+    max_ngram: int = Field(default=3, ge=1, le=5, description="Maximum words per keyphrase (phrase mode)")
+    dedup_lim: float = Field(default=0.7, ge=0.1, le=0.99, description="Deduplication threshold for phrases")
 
 
 class KeywordSuggestionRequest(BaseModel):
@@ -740,6 +749,46 @@ async def analyze_keywords(
         )
 
 
+# Enhanced keyword analysis endpoint using DataForSEO (if configured)
+@app.post("/api/v1/keywords/enhanced")
+async def analyze_keywords_enhanced(
+    request: EnhancedKeywordAnalysisRequest
+):
+    """
+    Enhanced keyword analysis leveraging DataForSEO when available.
+    Falls back gracefully if credentials are not configured.
+    """
+    try:
+        if not enhanced_analyzer:
+            raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
+        results = await enhanced_analyzer.analyze_keywords_comprehensive(
+            keywords=request.keywords,
+            tenant_id=os.getenv("TENANT_ID", "default")
+        )
+        # Shape into a simple dict for API response
+        out = {
+            k: {
+                "search_volume": v.search_volume,
+                "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
+                "competition": v.competition,
+                "cpc": v.cpc,
+                "trend_score": v.trend_score,
+                "recommended": v.recommended,
+                "reason": v.reason,
+                "related_keywords": v.related_keywords,
+                "long_tail_keywords": v.long_tail_keywords
+            }
+            for k, v in results.items()
+        }
+        return {"enhanced_analysis": out}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
 # Extract keywords from content endpoint
 @app.post("/api/v1/keywords/extract")
 async def extract_keywords(
@@ -757,7 +806,9 @@ async def extract_keywords(
     try:
         keywords = await writer.keyword_analyzer.extract_keywords_from_content(
             content=request.content,
-            max_keywords=request.max_keywords
+            max_keywords=request.max_keywords,
+            max_ngram=request.max_ngram,
+            dedup_lim=request.dedup_lim
         )
         
         return {"extracted_keywords": keywords}
