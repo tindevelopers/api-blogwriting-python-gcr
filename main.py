@@ -858,6 +858,15 @@ async def generate_blog_enhanced(
         # Calculate SEO score (simplified)
         seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
         
+        # Extract quality scores (Phase 3)
+        quality_dimensions = {}
+        if pipeline_result.quality_score is not None:
+            quality_report = pipeline_result.seo_metadata.get("quality_report", {})
+            quality_dimensions = quality_report.get("dimension_scores", {})
+        
+        # Extract semantic keywords (Phase 3)
+        semantic_keywords = pipeline_result.seo_metadata.get("semantic_keywords", [])
+        
         # Prepare stage results for response
         stage_results_data = [
             {
@@ -892,6 +901,10 @@ async def generate_blog_enhanced(
             generation_time=pipeline_result.generation_time,
             seo_metadata=pipeline_result.seo_metadata,
             internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+            quality_score=pipeline_result.quality_score,
+            quality_dimensions=quality_dimensions,
+            structured_data=pipeline_result.structured_data,
+            semantic_keywords=semantic_keywords,
             success=True,
             warnings=[]
         )
