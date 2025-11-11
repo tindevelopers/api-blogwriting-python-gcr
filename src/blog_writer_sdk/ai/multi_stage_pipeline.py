@@ -65,9 +65,9 @@ class MultiStageGenerationPipeline:
         knowledge_graph: Optional[GoogleKnowledgeGraphClient] = None,
         semantic_integrator: Optional[SemanticKeywordIntegrator] = None,
         quality_scorer: Optional[ContentQualityScorer] = None,
-        intent_analyzer: Optional[IntentAnalyzer] = None,
-        few_shot_extractor: Optional[FewShotLearningExtractor] = None,
-        length_optimizer: Optional[ContentLengthOptimizer] = None,
+        intent_analyzer: Optional["IntentAnalyzer"] = None,
+        few_shot_extractor: Optional["FewShotLearningExtractor"] = None,
+        length_optimizer: Optional["ContentLengthOptimizer"] = None,
         use_consensus: bool = False
     ):
         """
