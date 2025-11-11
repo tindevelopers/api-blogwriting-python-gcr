@@ -71,6 +71,17 @@ from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
+from src.blog_writer_sdk.models.enhanced_blog_models import (
+    EnhancedBlogGenerationRequest,
+    EnhancedBlogGenerationResponse
+)
+from src.blog_writer_sdk.ai.multi_stage_pipeline import MultiStageGenerationPipeline
+from src.blog_writer_sdk.ai.enhanced_prompts import PromptTemplate
+from src.blog_writer_sdk.integrations.google_custom_search import GoogleCustomSearchClient
+from src.blog_writer_sdk.seo.readability_analyzer import ReadabilityAnalyzer
+from src.blog_writer_sdk.seo.citation_generator import CitationGenerator
+from src.blog_writer_sdk.seo.serp_analyzer import SERPAnalyzer
+from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
 
 
 # API Request/Response Models
@@ -273,6 +284,37 @@ async def lifespan(app: FastAPI):
         credential_service=dataforseo_credential_service
     )
     print("✅ EnhancedKeywordAnalyzer initialized.")
+    
+    # Initialize Google Custom Search client (Phase 1)
+    global google_custom_search_client
+    google_api_key = os.getenv("GOOGLE_CUSTOM_SEARCH_API_KEY")
+    google_engine_id = os.getenv("GOOGLE_CUSTOM_SEARCH_ENGINE_ID")
+    if google_api_key and google_engine_id:
+        google_custom_search_client = GoogleCustomSearchClient(
+            api_key=google_api_key,
+            search_engine_id=google_engine_id
+        )
+        print("✅ Google Custom Search client initialized.")
+    else:
+        google_custom_search_client = None
+        print("⚠️ Google Custom Search not configured (GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID)")
+    
+    # Initialize Google Search Console client (Phase 2)
+    global google_search_console_client
+    gsc_site_url = os.getenv("GSC_SITE_URL")
+    if gsc_site_url:
+        google_search_console_client = GoogleSearchConsoleClient(site_url=gsc_site_url)
+        print("✅ Google Search Console client initialized.")
+    else:
+        google_search_console_client = None
+        print("⚠️ Google Search Console not configured (GSC_SITE_URL)")
+    
+    # Initialize multi-stage pipeline components
+    global readability_analyzer, citation_generator, serp_analyzer
+    readability_analyzer = ReadabilityAnalyzer()
+    citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
+    serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
+    print("✅ Phase 1 & 2 components initialized.")
 
     yield
     
@@ -682,6 +724,152 @@ async def generate_blog(
         raise HTTPException(
             status_code=500,
             detail=f"Blog generation failed: {str(e)}"
+        )
+
+
+# Enhanced blog generation endpoint (Phase 1 & 2)
+@app.post("/api/v1/blog/generate-enhanced", response_model=EnhancedBlogGenerationResponse)
+async def generate_blog_enhanced(
+    request: EnhancedBlogGenerationRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Generate high-quality blog content using multi-stage pipeline (Phase 1 & 2).
+    
+    This endpoint uses:
+    - Multi-stage generation pipeline (Research → Draft → Enhancement → SEO)
+    - Google Custom Search for research and fact-checking
+    - Readability optimization
+    - SERP feature optimization
+    - Citation integration
+    
+    Returns significantly higher-quality content optimized for ranking.
+    """
+    try:
+        # Get global clients
+        global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer, ai_generator
+        
+        # Initialize pipeline
+        pipeline = MultiStageGenerationPipeline(
+            ai_generator=ai_generator,
+            google_search=google_custom_search_client if request.use_google_search else None,
+            readability_analyzer=readability_analyzer
+        )
+        
+        # Determine template type
+        template = None
+        if request.template_type:
+            try:
+                template = PromptTemplate(request.template_type)
+            except ValueError:
+                template = PromptTemplate.EXPERT_AUTHORITY
+        
+        # Prepare additional context
+        additional_context = {}
+        if request.target_audience:
+            additional_context["target_audience"] = request.target_audience
+        if request.custom_instructions:
+            additional_context["custom_instructions"] = request.custom_instructions
+        
+        # SERP optimization if enabled
+        serp_features = []
+        if request.use_serp_optimization and request.keywords:
+            try:
+                serp_analysis = await serp_analyzer.analyze_serp_features(
+                    request.keywords[0]
+                )
+                serp_features = [f.type for f in serp_analysis.features]
+                additional_context["serp_features"] = serp_features
+            except Exception as e:
+                logger.warning(f"SERP analysis failed: {e}")
+        
+        # Generate using multi-stage pipeline
+        pipeline_result = await pipeline.generate(
+            topic=request.topic,
+            keywords=request.keywords,
+            tone=request.tone,
+            length=request.length,
+            template=template,
+            additional_context=additional_context
+        )
+        
+        # Add citations if enabled
+        citations = []
+        final_content = pipeline_result.final_content
+        if request.use_citations and google_custom_search_client:
+            try:
+                citation_result = await citation_generator.generate_citations(
+                    final_content,
+                    request.topic,
+                    request.keywords
+                )
+                citations = [
+                    {
+                        "text": c.text[:100],
+                        "url": c.source_url,
+                        "title": c.source_title
+                    }
+                    for c in citation_result.citations
+                ]
+                # Integrate citations into content
+                final_content = citation_generator.integrate_citations(
+                    final_content,
+                    citation_result.citations
+                )
+                # Add references section
+                if citation_result.sources_used:
+                    final_content += citation_generator.generate_references_section(
+                        citation_result.sources_used
+                    )
+            except Exception as e:
+                logger.warning(f"Citation generation failed: {e}")
+        
+        # Calculate SEO score (simplified)
+        seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
+        
+        # Prepare stage results for response
+        stage_results_data = [
+            {
+                "stage": s.stage,
+                "provider": s.provider_used,
+                "tokens": s.tokens_used,
+                "cost": s.cost
+            }
+            for s in pipeline_result.stage_results
+        ]
+        
+        # Log generation
+        background_tasks.add_task(
+            log_generation,
+            topic=request.topic,
+            success=True,
+            word_count=len(final_content.split()),
+            generation_time=pipeline_result.generation_time
+        )
+        
+        return EnhancedBlogGenerationResponse(
+            title=pipeline_result.meta_title or request.topic,
+            content=final_content,
+            meta_title=pipeline_result.meta_title,
+            meta_description=pipeline_result.meta_description,
+            readability_score=pipeline_result.readability_score,
+            seo_score=seo_score,
+            stage_results=stage_results_data,
+            citations=citations,
+            total_tokens=pipeline_result.total_tokens,
+            total_cost=pipeline_result.total_cost,
+            generation_time=pipeline_result.generation_time,
+            seo_metadata=pipeline_result.seo_metadata,
+            internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+            success=True,
+            warnings=[]
+        )
+        
+    except Exception as e:
+        logger.error(f"Enhanced blog generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Enhanced blog generation failed: {str(e)}"
         )
 
 

@@ -350,3 +350,4 @@ class WebflowPublisher:
         except Exception as e:
             self.logger.error(f"Failed to publish blog with media to Webflow: {str(e)}")
             raise
+
