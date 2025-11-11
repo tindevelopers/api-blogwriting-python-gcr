@@ -791,8 +791,9 @@ async def generate_blog_enhanced(
         # Get global clients
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
+        global intent_analyzer, few_shot_extractor, length_optimizer
         
-        # Initialize pipeline with Phase 3 components
+        # Initialize pipeline with Phase 3 components and additional enhancements
         pipeline = MultiStageGenerationPipeline(
             ai_generator=ai_generator,
             google_search=google_custom_search_client if request.use_google_search else None,
@@ -800,6 +801,9 @@ async def generate_blog_enhanced(
             knowledge_graph=google_knowledge_graph_client if request.use_knowledge_graph else None,
             semantic_integrator=semantic_integrator if request.use_semantic_keywords else None,
             quality_scorer=quality_scorer if request.use_quality_scoring else None,
+            intent_analyzer=intent_analyzer,  # Always enabled for better content
+            few_shot_extractor=few_shot_extractor if request.use_google_search else None,
+            length_optimizer=length_optimizer if request.use_google_search else None,
             use_consensus=request.use_consensus_generation
         )
         
