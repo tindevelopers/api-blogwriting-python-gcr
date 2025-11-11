@@ -23,6 +23,12 @@ class EnhancedBlogGenerationRequest(BaseModel):
     use_citations: bool = Field(default=True, description="Include citations and sources")
     use_serp_optimization: bool = Field(default=True, description="Optimize for SERP features")
     
+    # Phase 3 options
+    use_consensus_generation: bool = Field(default=False, description="Use multi-model consensus generation (Phase 3)")
+    use_knowledge_graph: bool = Field(default=True, description="Use Google Knowledge Graph for entities (Phase 3)")
+    use_semantic_keywords: bool = Field(default=True, description="Use advanced semantic keyword integration (Phase 3)")
+    use_quality_scoring: bool = Field(default=True, description="Enable comprehensive quality scoring (Phase 3)")
+    
     # Additional context
     target_audience: Optional[str] = Field(None, description="Target audience")
     custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
@@ -54,6 +60,12 @@ class EnhancedBlogGenerationResponse(BaseModel):
     # SEO metadata
     seo_metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional SEO metadata")
     internal_links: List[Dict[str, str]] = Field(default_factory=list, description="Internal linking suggestions")
+    
+    # Phase 3 features
+    quality_score: Optional[float] = Field(None, ge=0, le=100, description="Overall content quality score (Phase 3)")
+    quality_dimensions: Dict[str, float] = Field(default_factory=dict, description="Quality scores by dimension (Phase 3)")
+    structured_data: Optional[Dict[str, Any]] = Field(None, description="Schema.org structured data (Phase 3)")
+    semantic_keywords: List[str] = Field(default_factory=list, description="Semantically integrated keywords (Phase 3)")
     
     # Success indicators
     success: bool = Field(default=True, description="Whether generation was successful")

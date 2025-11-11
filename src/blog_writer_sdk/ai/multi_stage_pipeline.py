@@ -14,9 +14,13 @@ from dataclasses import dataclass
 from .ai_content_generator import AIContentGenerator
 from .enhanced_prompts import EnhancedPromptBuilder, PromptTemplate
 from .base_provider import AIRequest, AIGenerationConfig, ContentType
+from .consensus_generator import ConsensusGenerator
 from ..models.blog_models import ContentTone, ContentLength
 from ..integrations.google_custom_search import GoogleCustomSearchClient
+from ..integrations.google_knowledge_graph import GoogleKnowledgeGraphClient
 from ..seo.readability_analyzer import ReadabilityAnalyzer, ReadabilityMetrics
+from ..seo.semantic_keyword_integrator import SemanticKeywordIntegrator
+from ..seo.content_quality_scorer import ContentQualityScorer
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,8 @@ class PipelineResult:
     total_tokens: int
     total_cost: float
     generation_time: float
+    quality_score: Optional[float] = None
+    structured_data: Optional[Dict[str, Any]] = None
 
 
 class MultiStageGenerationPipeline:
@@ -54,7 +60,11 @@ class MultiStageGenerationPipeline:
         self,
         ai_generator: AIContentGenerator,
         google_search: Optional[GoogleCustomSearchClient] = None,
-        readability_analyzer: Optional[ReadabilityAnalyzer] = None
+        readability_analyzer: Optional[ReadabilityAnalyzer] = None,
+        knowledge_graph: Optional[GoogleKnowledgeGraphClient] = None,
+        semantic_integrator: Optional[SemanticKeywordIntegrator] = None,
+        quality_scorer: Optional[ContentQualityScorer] = None,
+        use_consensus: bool = False
     ):
         """
         Initialize multi-stage pipeline.
@@ -63,10 +73,19 @@ class MultiStageGenerationPipeline:
             ai_generator: AI content generator instance
             google_search: Google Custom Search client (optional)
             readability_analyzer: Readability analyzer (optional)
+            knowledge_graph: Google Knowledge Graph client (optional)
+            semantic_integrator: Semantic keyword integrator (optional)
+            quality_scorer: Content quality scorer (optional)
+            use_consensus: Whether to use consensus generation (Phase 3)
         """
         self.ai_generator = ai_generator
         self.google_search = google_search
         self.readability_analyzer = readability_analyzer or ReadabilityAnalyzer()
+        self.knowledge_graph = knowledge_graph
+        self.semantic_integrator = semantic_integrator
+        self.quality_scorer = quality_scorer or ContentQualityScorer(readability_analyzer=self.readability_analyzer)
+        self.use_consensus = use_consensus
+        self.consensus_generator = ConsensusGenerator(ai_generator) if use_consensus else None
         self.prompt_builder = EnhancedPromptBuilder()
     
     async def generate(
@@ -95,7 +114,7 @@ class MultiStageGenerationPipeline:
         import time
         start_time = time.time()
         stage_results = []
-        citations = []
+        citations = []  # Will be populated during processing
         
         # Stage 1: Research & Outline (Claude 3.5 Sonnet)
         logger.info("Stage 1: Research & Outline")
@@ -105,13 +124,39 @@ class MultiStageGenerationPipeline:
         stage_results.append(outline_result)
         outline = outline_result.content
         
-        # Stage 2: Draft Generation (GPT-4o)
+        # Stage 2: Draft Generation (GPT-4o or Consensus)
         logger.info("Stage 2: Draft Generation")
-        draft_result = await self._stage2_draft_generation(
-            topic, outline, keywords, tone, length, template, additional_context
-        )
+        if self.use_consensus and self.consensus_generator:
+            # Use consensus generation (Phase 3)
+            logger.info("Using consensus generation for Stage 2")
+            consensus_result = await self.consensus_generator.generate_with_consensus(
+                topic=topic,
+                outline=outline_result.content,
+                keywords=keywords,
+                tone=tone.value if hasattr(tone, 'value') else str(tone),
+                length=length.value if hasattr(length, 'value') else str(length),
+                additional_context=additional_context
+            )
+            draft_content = consensus_result.final_content
+            draft_result = PipelineStageResult(
+                content=draft_content,
+                metadata={
+                    "stage": "draft_consensus",
+                    "variations": len(consensus_result.draft_variations),
+                    "best_sections": list(consensus_result.best_sections.keys())
+                },
+                stage="draft_consensus",
+                provider_used="multi-model",
+                tokens_used=consensus_result.total_tokens,
+                cost=consensus_result.total_cost
+            )
+        else:
+            # Standard single-model generation
+            draft_result = await self._stage2_draft_generation(
+                topic, outline, keywords, tone, length, template, additional_context
+            )
+            draft_content = draft_result.content
         stage_results.append(draft_result)
-        draft_content = draft_result.content
         
         # Stage 3: Enhancement & Fact-Checking (Claude 3.5 Sonnet)
         logger.info("Stage 3: Enhancement & Fact-Checking")
@@ -155,6 +200,67 @@ class MultiStageGenerationPipeline:
         meta_title = seo_metadata.get("meta_title", "")
         meta_description = seo_metadata.get("meta_description", "")
         
+        # Phase 3: Semantic keyword integration
+        if self.semantic_integrator:
+            logger.info("Integrating semantic keywords (Phase 3)")
+            try:
+                semantic_result = await self.semantic_integrator.integrate_semantic_keywords(
+                    enhanced_content,
+                    keywords,
+                    max_related=10
+                )
+                enhanced_content = semantic_result.integrated_content
+                # Add semantic metadata
+                seo_metadata["semantic_keywords"] = semantic_result.keywords_used
+                seo_metadata["keyword_clusters"] = len(semantic_result.keyword_clusters)
+            except Exception as e:
+                logger.warning(f"Semantic keyword integration failed: {e}")
+        
+        # Phase 3: Knowledge Graph integration
+        structured_data = None
+        if self.knowledge_graph:
+            logger.info("Integrating Knowledge Graph entities (Phase 3)")
+            try:
+                # Extract entities and generate structured data
+                entities = await self.knowledge_graph.extract_entities_from_content(
+                    enhanced_content,
+                    limit=5
+                )
+                if entities:
+                    structured_data = await self.knowledge_graph.generate_structured_data(
+                        topic,
+                        enhanced_content,
+                        keywords
+                    )
+                    seo_metadata["structured_data"] = structured_data
+                    seo_metadata["entities_found"] = len(entities)
+            except Exception as e:
+                logger.warning(f"Knowledge Graph integration failed: {e}")
+        
+        # Phase 3: Content quality scoring
+        quality_report = None
+        if self.quality_scorer:
+            logger.info("Scoring content quality (Phase 3)")
+            try:
+                quality_report = self.quality_scorer.score_content(
+                    content=enhanced_content,
+                    title=meta_title,
+                    keywords=keywords,
+                    meta_description=meta_description,
+                    citations=[{"url": "", "title": ""}]  # Citations will be added later
+                )
+                seo_metadata["quality_report"] = {
+                    "overall_score": quality_report.overall_score,
+                    "dimension_scores": {
+                        dim: score.score
+                        for dim, score in quality_report.dimension_scores.items()
+                    },
+                    "passed_threshold": quality_report.passed_threshold,
+                    "critical_issues": quality_report.critical_issues[:3]
+                }
+            except Exception as e:
+                logger.warning(f"Quality scoring failed: {e}")
+        
         # Calculate totals
         total_tokens = sum(s.tokens_used for s in stage_results)
         total_cost = sum(s.cost for s in stage_results)
@@ -170,7 +276,9 @@ class MultiStageGenerationPipeline:
             citations=citations,
             total_tokens=total_tokens,
             total_cost=total_cost,
-            generation_time=generation_time
+            generation_time=generation_time,
+            quality_score=quality_report.overall_score if quality_report else None,
+            structured_data=structured_data
         )
     
     async def _stage1_research_outline(

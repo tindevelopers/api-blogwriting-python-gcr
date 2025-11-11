@@ -53,6 +53,9 @@ from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_loggin
 # from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
 # from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
 from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient, EnhancedKeywordAnalyzer
+
+# Global DataForSEO client for Phase 3 semantic integration
+dataforseo_client_global = None
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
@@ -78,9 +81,12 @@ from src.blog_writer_sdk.models.enhanced_blog_models import (
 from src.blog_writer_sdk.ai.multi_stage_pipeline import MultiStageGenerationPipeline
 from src.blog_writer_sdk.ai.enhanced_prompts import PromptTemplate
 from src.blog_writer_sdk.integrations.google_custom_search import GoogleCustomSearchClient
+from src.blog_writer_sdk.integrations.google_knowledge_graph import GoogleKnowledgeGraphClient
 from src.blog_writer_sdk.seo.readability_analyzer import ReadabilityAnalyzer
 from src.blog_writer_sdk.seo.citation_generator import CitationGenerator
 from src.blog_writer_sdk.seo.serp_analyzer import SERPAnalyzer
+from src.blog_writer_sdk.seo.semantic_keyword_integrator import SemanticKeywordIntegrator
+from src.blog_writer_sdk.seo.content_quality_scorer import ContentQualityScorer
 from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
 
 
@@ -278,11 +284,16 @@ async def lifespan(app: FastAPI):
     print("⚠️ DataforSEO Credential Service not implemented yet. Using direct environment variables.")
 
     # Initialize EnhancedKeywordAnalyzer
-    global enhanced_keyword_analyzer
+    global enhanced_keyword_analyzer, dataforseo_client_global
     enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
         use_dataforseo=True, # Assuming we always want to use DataforSEO if available
         credential_service=dataforseo_credential_service
     )
+    
+    # Initialize DataForSEO client for semantic integration (Phase 3)
+    # Note: DataForSEO client will be initialized synchronously when needed
+    dataforseo_client_global = None  # Will be initialized on first use if credentials available
+    
     print("✅ EnhancedKeywordAnalyzer initialized.")
     
     # Initialize Google Custom Search client (Phase 1)
@@ -311,10 +322,24 @@ async def lifespan(app: FastAPI):
     
     # Initialize multi-stage pipeline components
     global readability_analyzer, citation_generator, serp_analyzer
+    global google_knowledge_graph_client, semantic_integrator, quality_scorer
     readability_analyzer = ReadabilityAnalyzer()
     citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
     serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
-    print("✅ Phase 1 & 2 components initialized.")
+    
+    # Phase 3: Google Knowledge Graph
+    kg_api_key = os.getenv("GOOGLE_KNOWLEDGE_GRAPH_API_KEY")
+    if kg_api_key:
+        google_knowledge_graph_client = GoogleKnowledgeGraphClient(api_key=kg_api_key)
+        print("✅ Google Knowledge Graph client initialized.")
+    else:
+        google_knowledge_graph_client = None
+        print("⚠️ Google Knowledge Graph not configured (GOOGLE_KNOWLEDGE_GRAPH_API_KEY)")
+    
+    # Phase 3: Semantic keyword integrator (uses DataForSEO if available)
+    semantic_integrator = SemanticKeywordIntegrator(dataforseo_client=dataforseo_client_global)
+    quality_scorer = ContentQualityScorer(readability_analyzer=readability_analyzer)
+    print("✅ Phase 3 components initialized.")
 
     yield
     
@@ -734,7 +759,7 @@ async def generate_blog_enhanced(
     background_tasks: BackgroundTasks
 ):
     """
-    Generate high-quality blog content using multi-stage pipeline (Phase 1 & 2).
+    Generate high-quality blog content using multi-stage pipeline (Phase 1, 2 & 3).
     
     This endpoint uses:
     - Multi-stage generation pipeline (Research → Draft → Enhancement → SEO)
@@ -742,18 +767,24 @@ async def generate_blog_enhanced(
     - Readability optimization
     - SERP feature optimization
     - Citation integration
+    - Phase 3: Multi-model consensus, Knowledge Graph, semantic keywords, quality scoring
     
     Returns significantly higher-quality content optimized for ranking.
     """
     try:
         # Get global clients
-        global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer, ai_generator
+        global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
+        global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
         
-        # Initialize pipeline
+        # Initialize pipeline with Phase 3 components
         pipeline = MultiStageGenerationPipeline(
             ai_generator=ai_generator,
             google_search=google_custom_search_client if request.use_google_search else None,
-            readability_analyzer=readability_analyzer
+            readability_analyzer=readability_analyzer,
+            knowledge_graph=google_knowledge_graph_client if request.use_knowledge_graph else None,
+            semantic_integrator=semantic_integrator if request.use_semantic_keywords else None,
+            quality_scorer=quality_scorer if request.use_quality_scoring else None,
+            use_consensus=request.use_consensus_generation
         )
         
         # Determine template type
