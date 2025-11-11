@@ -87,6 +87,9 @@ from src.blog_writer_sdk.seo.citation_generator import CitationGenerator
 from src.blog_writer_sdk.seo.serp_analyzer import SERPAnalyzer
 from src.blog_writer_sdk.seo.semantic_keyword_integrator import SemanticKeywordIntegrator
 from src.blog_writer_sdk.seo.content_quality_scorer import ContentQualityScorer
+from src.blog_writer_sdk.seo.intent_analyzer import IntentAnalyzer
+from src.blog_writer_sdk.seo.few_shot_learning import FewShotLearningExtractor
+from src.blog_writer_sdk.seo.content_length_optimizer import ContentLengthOptimizer
 from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
 
 
@@ -323,6 +326,7 @@ async def lifespan(app: FastAPI):
     # Initialize multi-stage pipeline components
     global readability_analyzer, citation_generator, serp_analyzer
     global google_knowledge_graph_client, semantic_integrator, quality_scorer
+    global intent_analyzer, few_shot_extractor, length_optimizer
     readability_analyzer = ReadabilityAnalyzer()
     citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
     serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
@@ -339,7 +343,19 @@ async def lifespan(app: FastAPI):
     # Phase 3: Semantic keyword integrator (uses DataForSEO if available)
     semantic_integrator = SemanticKeywordIntegrator(dataforseo_client=dataforseo_client_global)
     quality_scorer = ContentQualityScorer(readability_analyzer=readability_analyzer)
+    
+    # Additional enhancements: Intent analysis, few-shot learning, length optimization
+    intent_analyzer = IntentAnalyzer(dataforseo_client=dataforseo_client_global)
+    few_shot_extractor = FewShotLearningExtractor(
+        google_search_client=google_custom_search_client,
+        dataforseo_client=dataforseo_client_global
+    )
+    length_optimizer = ContentLengthOptimizer(
+        google_search_client=google_custom_search_client,
+        dataforseo_client=dataforseo_client_global
+    )
     print("✅ Phase 3 components initialized.")
+    print("✅ Additional enhancements initialized (intent analysis, few-shot learning, length optimization).")
 
     yield
     

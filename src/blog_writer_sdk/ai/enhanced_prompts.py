@@ -103,12 +103,19 @@ Focus on creating content that provides genuine value, unique insights, and acti
             keywords
         )
         
+        # Add freshness signals
+        from datetime import datetime
+        current_year = datetime.now().year
+        current_date = datetime.now().strftime("%B %Y")
+        
         prompt = f"""You are an expert content writer specializing in creating high-quality, authoritative blog posts that rank well in search engines and provide genuine value to readers.
 
 TOPIC: {topic}
 PRIMARY KEYWORD: {primary_keyword}
 TONE: {tone.value}
 TARGET LENGTH: {word_count_target} words
+CURRENT DATE: {current_date}
+CURRENT YEAR: {current_year}
 
 CONTENT OUTLINE:
 {outline}
@@ -134,6 +141,9 @@ CONTENT QUALITY STANDARDS:
 - Use active voice and clear, concise language
 - Ensure factual accuracy and avoid speculation
 - Create content that demonstrates expertise and authority
+- Include current information from {current_year} where relevant
+- Reference recent developments or trends when applicable
+- Add temporal context to show content is up-to-date
 
 STRUCTURE REQUIREMENTS:
 - Start with a compelling introduction that hooks the reader
@@ -151,6 +161,16 @@ Generate comprehensive, well-researched content that readers will find valuable 
                 prompt += f"\n\nRECENT INFORMATION TO INCLUDE:\n{context['recent_info']}"
             if context.get("serp_features"):
                 prompt += f"\n\nTARGET SERP FEATURES:\n{chr(10).join(f'- {f}' for f in context['serp_features'])}"
+            if context.get("few_shot_examples"):
+                prompt += f"\n\n{context['few_shot_examples']}"
+            if context.get("search_intent"):
+                intent = context.get("search_intent")
+                recommendations = context.get("intent_recommendations", [])
+                prompt += f"\n\nSEARCH INTENT: {intent}"
+                if recommendations:
+                    prompt += f"\nINTENT-BASED RECOMMENDATIONS:\n{chr(10).join(f'- {r}' for r in recommendations[:3])}"
+            if context.get("adjusted_word_count"):
+                prompt += f"\n\nADJUSTED TARGET LENGTH: {context['adjusted_word_count']} words (optimized based on competition)"
         
         return prompt
     

@@ -21,6 +21,7 @@ from ..integrations.google_knowledge_graph import GoogleKnowledgeGraphClient
 from ..seo.readability_analyzer import ReadabilityAnalyzer, ReadabilityMetrics
 from ..seo.semantic_keyword_integrator import SemanticKeywordIntegrator
 from ..seo.content_quality_scorer import ContentQualityScorer
+from ..seo.intent_analyzer import IntentAnalyzer, SearchIntent
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,9 @@ class MultiStageGenerationPipeline:
         knowledge_graph: Optional[GoogleKnowledgeGraphClient] = None,
         semantic_integrator: Optional[SemanticKeywordIntegrator] = None,
         quality_scorer: Optional[ContentQualityScorer] = None,
+        intent_analyzer: Optional[IntentAnalyzer] = None,
+        few_shot_extractor: Optional[FewShotLearningExtractor] = None,
+        length_optimizer: Optional[ContentLengthOptimizer] = None,
         use_consensus: bool = False
     ):
         """
@@ -76,6 +80,9 @@ class MultiStageGenerationPipeline:
             knowledge_graph: Google Knowledge Graph client (optional)
             semantic_integrator: Semantic keyword integrator (optional)
             quality_scorer: Content quality scorer (optional)
+            intent_analyzer: Intent analyzer for intent-based generation (optional)
+            few_shot_extractor: Few-shot learning extractor (optional)
+            length_optimizer: Content length optimizer (optional)
             use_consensus: Whether to use consensus generation (Phase 3)
         """
         self.ai_generator = ai_generator
@@ -84,6 +91,9 @@ class MultiStageGenerationPipeline:
         self.knowledge_graph = knowledge_graph
         self.semantic_integrator = semantic_integrator
         self.quality_scorer = quality_scorer or ContentQualityScorer(readability_analyzer=self.readability_analyzer)
+        self.intent_analyzer = intent_analyzer
+        self.few_shot_extractor = few_shot_extractor
+        self.length_optimizer = length_optimizer
         self.use_consensus = use_consensus
         self.consensus_generator = ConsensusGenerator(ai_generator) if use_consensus else None
         self.prompt_builder = EnhancedPromptBuilder()
@@ -115,6 +125,65 @@ class MultiStageGenerationPipeline:
         start_time = time.time()
         stage_results = []
         citations = []  # Will be populated during processing
+        
+        # Analyze search intent (if analyzer available)
+        intent_analysis = None
+        if self.intent_analyzer and keywords:
+            logger.info("Analyzing search intent")
+            try:
+                intent_analysis = await self.intent_analyzer.analyze_intent(
+                    keywords=keywords,
+                    language_code="en"
+                )
+                # Add intent to context
+                if additional_context is None:
+                    additional_context = {}
+                additional_context["search_intent"] = intent_analysis.primary_intent.value
+                additional_context["intent_recommendations"] = intent_analysis.recommendations
+                logger.info(f"Detected intent: {intent_analysis.primary_intent.value} (confidence: {intent_analysis.confidence:.2f})")
+            except Exception as e:
+                logger.warning(f"Intent analysis failed: {e}")
+        
+        # Extract few-shot learning examples (if extractor available)
+        few_shot_context = None
+        if self.few_shot_extractor and keywords:
+            logger.info("Extracting top-ranking content examples")
+            try:
+                few_shot_context = await self.few_shot_extractor.extract_top_ranking_examples(
+                    keyword=keywords[0],
+                    num_examples=3
+                )
+                # Add few-shot context to additional_context
+                if additional_context is None:
+                    additional_context = {}
+                additional_context["few_shot_examples"] = self.few_shot_extractor.build_few_shot_prompt_context(few_shot_context)
+                logger.info(f"Extracted {len(few_shot_context.examples)} content examples")
+            except Exception as e:
+                logger.warning(f"Few-shot extraction failed: {e}")
+        
+        # Optimize content length based on competition (if optimizer available)
+        length_analysis = None
+        if self.length_optimizer and keywords:
+            logger.info("Analyzing optimal content length")
+            try:
+                length_analysis = await self.length_optimizer.analyze_optimal_length(
+                    keyword=keywords[0]
+                )
+                # Adjust length target if needed
+                original_word_count = self.prompt_builder._get_word_count(length)
+                adjusted_word_count = self.length_optimizer.adjust_word_count_target(
+                    original_word_count,
+                    length_analysis
+                )
+                if adjusted_word_count != original_word_count:
+                    logger.info(f"Adjusted word count target: {original_word_count} -> {adjusted_word_count}")
+                    # Update length in context
+                    if additional_context is None:
+                        additional_context = {}
+                    additional_context["adjusted_word_count"] = adjusted_word_count
+                    additional_context["depth_score"] = length_analysis.depth_score
+            except Exception as e:
+                logger.warning(f"Length optimization failed: {e}")
         
         # Stage 1: Research & Outline (Claude 3.5 Sonnet)
         logger.info("Stage 1: Research & Outline")
