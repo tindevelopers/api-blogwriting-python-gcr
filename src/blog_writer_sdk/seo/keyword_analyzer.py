@@ -79,7 +79,11 @@ class KeywordAnalyzer:
         )
     
     async def extract_keywords_from_content(
-        self, content: str, max_keywords: int = 20
+        self,
+        content: str,
+        max_keywords: int = 20,
+        max_ngram: int = 3,
+        dedup_lim: float = 0.7
     ) -> List[str]:
         """
         Extract potential keywords from content.
@@ -92,7 +96,7 @@ class KeywordAnalyzer:
             List of extracted keywords
         """
         if yake:
-            return self._extract_with_yake(content, max_keywords)
+            return self._extract_with_yake(content, max_keywords, max_ngram, dedup_lim)
         else:
             return self._extract_with_frequency(content, max_keywords)
     
@@ -320,14 +324,14 @@ class KeywordAnalyzer:
         
         return content.strip()
     
-    def _extract_with_yake(self, content: str, max_keywords: int) -> List[str]:
+    def _extract_with_yake(self, content: str, max_keywords: int, max_ngram: int, dedup_lim: float) -> List[str]:
         """Extract keywords using YAKE library."""
         try:
             # Configure YAKE
             kw_extractor = yake.KeywordExtractor(
                 lan="en",
-                n=3,  # Maximum number of words in keyphrase
-                dedupLim=0.7,  # Deduplication threshold
+                n=max_ngram,  # Maximum number of words in keyphrase
+                dedupLim=dedup_lim,  # Deduplication threshold
                 top=max_keywords,  # Number of keywords to extract
             )
             

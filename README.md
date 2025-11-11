@@ -6,6 +6,10 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+**Version**: 1.1.0  
+**Publish date**: 2025-11-10  
+See the full [CHANGELOG](CHANGELOG.md) for details.
+
 ## 🚀 Features
 
 ### Core Capabilities
@@ -273,21 +277,10 @@ The SDK supports enhanced keyword analysis through DataForSEO integration, provi
 
 #### Usage with Enhanced Analysis
 
-```python
-from blog_writer_sdk.integrations.dataforseo_integration import DataForSEOIntegration
-from blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
-
-# Initialize DataForSEO integration
-dataforseo = DataForSEOIntegration(
-    api_key="your_api_key",
-    api_secret="your_api_secret"
-)
-
-# Create enhanced analyzer
-enhanced_analyzer = EnhancedKeywordAnalyzer(dataforseo_client=dataforseo)
-
-# Use with BlogWriter
-writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
+```bash
+curl -X POST "$BASE/api/v1/keywords/enhanced" \
+  -H "Content-Type: application/json" \
+  -d '{"keywords":["ai in business","cloud run seo"],"location":"United States","language":"en"}'
 ```
 
 ## 📊 API Endpoints
@@ -299,8 +292,17 @@ writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
 
 ### Keyword Research
 - `POST /api/v1/keywords/analyze` - Analyze keyword difficulty
-- `POST /api/v1/keywords/extract` - Extract keywords from content
+- `POST /api/v1/keywords/extract` - Extract keywords from content (phrase-mode via `max_ngram`, `dedup_lim`)
 - `POST /api/v1/keywords/suggest` - Get keyword suggestions
+- `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis using DataForSEO (intent, volume, difficulty, CPC; graceful fallback)
+
+### Integrations (Target-Agnostic)
+- `POST /api/v1/integrations/connect-and-recommend`  
+  Accepts a `provider` label (e.g., `webflow`, `wordpress`, `medium`, `shopify`, `custom`), an opaque `connection` object, and a set of `keywords`.  
+  Returns backlink and interlink recommendations (aggregate and per-keyword) and best-effort persists:
+  - `integrations_{ENV}`: basic integration metadata
+  - `recommendations_{ENV}`: computed recommendations  
+  This endpoint is provider-agnostic (no provider-specific branching).
 
 ### Utility
 - `GET /health` - Health check
@@ -325,7 +327,8 @@ writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
 
 ## 🗄️ Database Schema
 
-The SDK includes a complete Supabase schema for content management:
+The SDK includes Supabase schemas for content management and generic recommendations.  
+For integration metadata and recommendations (env-suffixed tables), see `supabase_schema.sql`.
 
 ```sql
 -- Blog posts with full SEO metadata
@@ -497,6 +500,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[GitHub Actions Setup](GITHUB_RAILWAY_SETUP.md)**: CI/CD with Google Cloud
 - **[Frontend Integration](FRONTEND_INTEGRATION.md)**: Next.js integration guide
 - **[Multi-SDK Docker Guide](MULTI_SDK_DOCKER_GUIDE.md)**: Dockerize multiple SDKs
+- **[Changelog](CHANGELOG.md)**: Release notes and version history
+- **[Integrations Endpoint](INTEGRATIONS_ENDPOINT.md)**: Backlink & interlink recommendations API
 
 ## 🆘 Support
 

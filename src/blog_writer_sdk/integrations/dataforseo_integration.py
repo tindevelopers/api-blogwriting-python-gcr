@@ -61,14 +61,100 @@ class DataForSEOClient:
                 return
         
         # Fallback to environment variables if credential service is not used or no credentials found
-        self.api_key = os.getenv("DATAFORSEO_API_LOGIN")
-        self.api_secret = os.getenv("DATAFORSEO_API_PASSWORD")
+        # Prefer KEY/SECRET, fallback to LOGIN/PASSWORD for legacy environments
+        self.api_key = os.getenv("DATAFORSEO_API_KEY") or os.getenv("DATAFORSEO_API_LOGIN")
+        self.api_secret = os.getenv("DATAFORSEO_API_SECRET") or os.getenv("DATAFORSEO_API_PASSWORD")
         if self.api_key and self.api_secret:
             self.is_configured = True
             logger.warning("DataforSEO credentials loaded from environment variables. Consider using credential service.")
         else:
             self.is_configured = False
             logger.error("DataforSEO API credentials not found.")
+
+    @monitor_performance("dataforseo_get_keyword_overview")
+    async def get_keyword_overview(self, keywords: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, Any]:
+        """Keyword overview with rich metrics (intent, monthly searches, SERP features)."""
+        try:
+            cache_key = f"kw_overview_{hash(tuple(keywords))}"
+            if cache_key in self._cache:
+                data, ts = self._cache[cache_key]
+                if datetime.now().timestamp() - ts < self._cache_ttl:
+                    return data
+            payload = [{
+                "keywords": keywords,
+                "location_name": location_name,
+                "language_code": language_code
+            }]
+            data = await self._make_request("dataforseo_labs/google/keyword_overview/live", payload, tenant_id)
+            self._cache[cache_key] = (data, datetime.now().timestamp())
+            return data
+        except Exception as e:
+            logger.error(f"Error getting keyword overview: {e}")
+            return {}
+
+    @monitor_performance("dataforseo_get_related_keywords")
+    async def get_related_keywords(self, keyword: str, location_name: str, language_code: str, tenant_id: str, depth: int = 2, limit: int = 100) -> Dict[str, Any]:
+        """Related keywords (graph/depth-first)."""
+        try:
+            cache_key = f"related_{keyword}_{depth}_{limit}"
+            if cache_key in self._cache:
+                data, ts = self._cache[cache_key]
+                if datetime.now().timestamp() - ts < self._cache_ttl:
+                    return data
+            payload = [{
+                "keyword": keyword,
+                "depth": depth,
+                "location_name": location_name,
+                "language_code": language_code,
+                "limit": limit
+            }]
+            data = await self._make_request("dataforseo_labs/google/related_keywords/live", payload, tenant_id)
+            self._cache[cache_key] = (data, datetime.now().timestamp())
+            return data
+        except Exception as e:
+            logger.error(f"Error getting related keywords: {e}")
+            return {}
+
+    @monitor_performance("dataforseo_get_top_searches")
+    async def get_top_searches(self, location_name: str, language_code: str, tenant_id: str, limit: int = 100) -> Dict[str, Any]:
+        """Top searches discovery in the target market."""
+        try:
+            cache_key = f"top_searches_{location_name}_{language_code}_{limit}"
+            if cache_key in self._cache:
+                data, ts = self._cache[cache_key]
+                if datetime.now().timestamp() - ts < self._cache_ttl:
+                    return data
+            payload = [{
+                "location_name": location_name,
+                "language_code": language_code,
+                "limit": limit
+            }]
+            data = await self._make_request("dataforseo_labs/google/top_searches/live", payload, tenant_id)
+            self._cache[cache_key] = (data, datetime.now().timestamp())
+            return data
+        except Exception as e:
+            logger.error(f"Error getting top searches: {e}")
+            return {}
+
+    @monitor_performance("dataforseo_get_search_intent")
+    async def get_search_intent(self, keywords: List[str], language_code: str, tenant_id: str) -> Dict[str, Any]:
+        """Search intent probabilities per keyword."""
+        try:
+            cache_key = f"intent_{hash(tuple(keywords))}_{language_code}"
+            if cache_key in self._cache:
+                data, ts = self._cache[cache_key]
+                if datetime.now().timestamp() - ts < self._cache_ttl:
+                    return data
+            payload = [{
+                "keywords": keywords,
+                "language_code": language_code
+            }]
+            data = await self._make_request("dataforseo_labs/search_intent/live", payload, tenant_id)
+            self._cache[cache_key] = (data, datetime.now().timestamp())
+            return data
+        except Exception as e:
+            logger.error(f"Error getting search intent: {e}")
+            return {}
     
     async def _make_request(self, endpoint: str, payload: List[Dict[str, Any]], tenant_id: str) -> Dict[str, Any]:
         if not self.is_configured or not self.api_key or not self.api_secret:
