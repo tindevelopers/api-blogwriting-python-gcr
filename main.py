@@ -377,7 +377,7 @@ app = FastAPI(
     
     ## Key Features
     
-    ### 🚀 Enhanced Blog Generation (v1.2.0)
+    ### 🚀 Enhanced Blog Generation (v1.2.0) - NEW
     - **Multi-Stage Pipeline**: 4-stage generation (Research → Draft → Enhancement → SEO)
     - **Intent-Based Optimization**: Automatic search intent detection and content optimization
     - **Few-Shot Learning**: Learns from top-ranking content examples
@@ -385,42 +385,7 @@ app = FastAPI(
     - **Multi-Model Consensus**: Optional GPT-4o + Claude synthesis for higher quality
     - **Knowledge Graph Integration**: Entity recognition and structured data
     - **Semantic Keywords**: Natural integration of related keywords
-    - **Quality Scoring**: 6-dimensional quality assessment
-    
-    ### 🤖 AI Provider Management
-    - Dynamic provider configuration without restarts
-    - Multi-provider support (OpenAI, Anthropic, Azure OpenAI)
-    - Real-time health monitoring and usage statistics
-    - Secure API key management
-    
-    ### 🎨 Image Generation
-    - Multi-provider image generation (Stability AI)
-    - Text-to-image, variations, upscaling, editing
-    - Asynchronous batch processing
-    
-    ### 📝 Content Generation
-    - AI-powered blog writing with multiple providers
-    - SEO optimization and keyword analysis
-    - Multiple content types (posts, FAQs, introductions, etc.)
-    - Quality assurance and improvement suggestions
-    
-    ### 🌐 Platform Publishing
-    - Multi-platform support (Webflow, Shopify, WordPress)
-    - Direct CMS publishing with media uploads
-    
-    ## API Endpoints
-    
-    - `POST /api/v1/blog/generate-enhanced` - High-quality multi-stage blog generation (NEW in v1.2.0)
-    - `POST /api/v1/generate` - Standard blog generation
-    - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis
-    - `POST /api/v1/integrations/connect-and-recommend` - Backlink/interlink recommendations
-    
-    See [Enhanced Blog Generation Guide](https://github.com/tindevelopers/api-blogwriting-python-gcr/blob/develop/ENHANCED_BLOG_GENERATION_GUIDE.md) for detailed documentation.
-    """,
-    description="""
-    A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features.
-    
-    ## Key Features
+    - **Quality Scoring**: 6-dimensional quality assessment (readability, SEO, structure, factual, uniqueness, engagement)
     
     ### 🤖 AI Provider Management
     - **Dynamic Provider Configuration**: Add, update, and remove AI providers without service restarts
@@ -463,24 +428,27 @@ app = FastAPI(
     - **Monitoring**: Comprehensive metrics and health monitoring
     - **Multi-Environment**: Support for dev, staging, and production environments
     
+    ## API Endpoints
+    
+    ### Enhanced Blog Generation (v1.2.0)
+    - `POST /api/v1/blog/generate-enhanced` - High-quality multi-stage blog generation with advanced optimizations
+    
+    ### Standard Endpoints
+    - `POST /api/v1/generate` - Standard blog generation
+    - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis with DataForSEO
+    - `POST /api/v1/integrations/connect-and-recommend` - Backlink/interlink recommendations
+    
     ## Quick Start
     
     1. **Configure AI Providers**: Use `/api/v1/ai/providers/configure` to add your AI provider credentials
-    2. **Configure Image Providers**: Use `/api/v1/images/providers/configure` to add image generation providers
-    3. **Generate Content**: Use `/api/v1/blog/generate` to create blog posts
-    4. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
-    5. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
-    6. **Upload Media**: Use `/api/v1/media/upload/{provider}` to upload to Cloudinary or Cloudflare R2
-    7. **Analyze Keywords**: Use `/api/v1/keywords/suggest` for keyword research
-    8. **Monitor Usage**: Use `/api/v1/ai/providers/stats` to track usage and costs
+    2. **Generate Enhanced Content**: Use `/api/v1/blog/generate-enhanced` for high-quality blog posts
+    3. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
+    4. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
+    5. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
     
-    ## Authentication
+    ## Documentation
     
-    API keys are managed securely through the provider management system. No additional authentication is required for basic usage.
-    
-    ## Support
-    
-    - 📚 **Documentation**: Complete API documentation available at `/docs`
+    - 📚 **Enhanced Blog Generation Guide**: See [ENHANCED_BLOG_GENERATION_GUIDE.md](https://github.com/tindevelopers/api-blogwriting-python-gcr/blob/develop/ENHANCED_BLOG_GENERATION_GUIDE.md)
     - 🔧 **Health Checks**: Monitor service health at `/health`
     - 📊 **Metrics**: View usage statistics at `/api/v1/metrics`
     """,
