@@ -17,8 +17,8 @@ from contextlib import asynccontextmanager
 startup_time = time.time()
 
 # Deployment trigger - updated timestamp
-deployment_version = "2024-12-19-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.1.0")
+deployment_version = "2025-01-10-001"
+APP_VERSION = os.getenv("APP_VERSION", "1.2.0")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -372,6 +372,51 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="Blog Writer SDK API",
+    description="""
+    A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features.
+    
+    ## Key Features
+    
+    ### 🚀 Enhanced Blog Generation (v1.2.0)
+    - **Multi-Stage Pipeline**: 4-stage generation (Research → Draft → Enhancement → SEO)
+    - **Intent-Based Optimization**: Automatic search intent detection and content optimization
+    - **Few-Shot Learning**: Learns from top-ranking content examples
+    - **Content Length Optimization**: Dynamically adjusts based on SERP competition
+    - **Multi-Model Consensus**: Optional GPT-4o + Claude synthesis for higher quality
+    - **Knowledge Graph Integration**: Entity recognition and structured data
+    - **Semantic Keywords**: Natural integration of related keywords
+    - **Quality Scoring**: 6-dimensional quality assessment
+    
+    ### 🤖 AI Provider Management
+    - Dynamic provider configuration without restarts
+    - Multi-provider support (OpenAI, Anthropic, Azure OpenAI)
+    - Real-time health monitoring and usage statistics
+    - Secure API key management
+    
+    ### 🎨 Image Generation
+    - Multi-provider image generation (Stability AI)
+    - Text-to-image, variations, upscaling, editing
+    - Asynchronous batch processing
+    
+    ### 📝 Content Generation
+    - AI-powered blog writing with multiple providers
+    - SEO optimization and keyword analysis
+    - Multiple content types (posts, FAQs, introductions, etc.)
+    - Quality assurance and improvement suggestions
+    
+    ### 🌐 Platform Publishing
+    - Multi-platform support (Webflow, Shopify, WordPress)
+    - Direct CMS publishing with media uploads
+    
+    ## API Endpoints
+    
+    - `POST /api/v1/blog/generate-enhanced` - High-quality multi-stage blog generation (NEW in v1.2.0)
+    - `POST /api/v1/generate` - Standard blog generation
+    - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis
+    - `POST /api/v1/integrations/connect-and-recommend` - Backlink/interlink recommendations
+    
+    See [Enhanced Blog Generation Guide](https://github.com/tindevelopers/api-blogwriting-python-gcr/blob/develop/ENHANCED_BLOG_GENERATION_GUIDE.md) for detailed documentation.
+    """,
     description="""
     A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features.
     
