@@ -269,6 +269,21 @@ class MultiStageGenerationPipeline:
         meta_title = seo_metadata.get("meta_title", "")
         meta_description = seo_metadata.get("meta_description", "")
         
+        # Add intent analysis to metadata
+        if intent_analysis:
+            seo_metadata["search_intent"] = {
+                "primary_intent": intent_analysis.primary_intent.value,
+                "confidence": intent_analysis.confidence,
+                "probabilities": intent_analysis.intent_probabilities
+            }
+        
+        # Add freshness signal to content
+        from datetime import datetime
+        current_year = datetime.now().year
+        # Add "Last updated" note if not already present
+        if "last updated" not in enhanced_content.lower() and "updated" not in enhanced_content.lower():
+            enhanced_content += f"\n\n*Last updated: {datetime.now().strftime('%B %Y')}*"
+        
         # Phase 3: Semantic keyword integration
         if self.semantic_integrator:
             logger.info("Integrating semantic keywords (Phase 3)")
