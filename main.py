@@ -459,17 +459,18 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Note: FastAPI CORSMiddleware doesn't support wildcard patterns
+# Use allow_origin_regex for pattern matching or list exact origins
+import re
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # Next.js development
         "http://localhost:3001",  # Alternative Next.js port
-        "https://*.vercel.app",   # Vercel deployments
-        "https://*.netlify.app",  # Netlify deployments
         "https://blogwriter.develop.tinconnect.com",  # Development frontend
-        "https://*.tinconnect.com",  # All tinconnect.com subdomains
         # Add your production domains here
     ],
+    allow_origin_regex=r"https://.*\.(vercel\.app|netlify\.app|tinconnect\.com)$",  # Pattern matching for subdomains
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
