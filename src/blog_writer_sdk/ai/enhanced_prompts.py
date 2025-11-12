@@ -76,6 +76,10 @@ Focus on creating content that provides genuine value, unique insights, and acti
                 prompt += f"\nTARGET AUDIENCE: {context['target_audience']}"
             if context.get("competitor_analysis"):
                 prompt += f"\n\nCOMPETITOR INSIGHTS:\n{context['competitor_analysis']}"
+            if context.get("brand_recommendations"):
+                brand_data = context['brand_recommendations']
+                brands_list = ", ".join(brand_data.get("brands", [])[:10])
+                prompt += f"\n\nPRODUCT BRAND RECOMMENDATIONS:\nThe following brands/models are frequently mentioned in top-ranking content:\n{brands_list}\n\nIMPORTANT: Include specific brand recommendations and comparisons in your outline. Create sections that compare different brands, highlight top-rated products, and provide detailed brand-specific information. Include pros/cons for each major brand."
         
         return prompt
     

@@ -921,6 +921,65 @@ async def generate_blog_enhanced(
             additional_context=additional_context
         )
         
+        # Generate images if this is a product-related topic
+        generated_images = []
+        if request.use_google_search:  # Only if Google Search is enabled (indicates research was done)
+            try:
+                from src.blog_writer_sdk.api.image_generation import image_provider_manager
+                from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
+                
+                # Check if topic suggests product content
+                product_indicators = ["best", "top", "review", "compare", "guide"]
+                is_product_topic = any(indicator in request.topic.lower() for indicator in product_indicators)
+                
+                if is_product_topic and image_provider_manager and image_provider_manager.providers:
+                    logger.info("Generating images for product blog post")
+                    
+                    # Generate featured image
+                    try:
+                        featured_image_request = ImageGenerationRequest(
+                            prompt=f"Professional product photography: {request.topic}. High quality, clean background, professional lighting",
+                            style=ImageStyle.PHOTOGRAPHIC,
+                            aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
+                            quality=ImageQuality.HIGH
+                        )
+                        featured_image_response = await image_provider_manager.generate_image(featured_image_request)
+                        if featured_image_response.success and featured_image_response.images:
+                            generated_images.append({
+                                "type": "featured",
+                                "prompt": featured_image_request.prompt,
+                                "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
+                                "alt_text": f"Featured image for {request.topic}"
+                            })
+                            logger.info("Featured image generated successfully")
+                    except Exception as e:
+                        logger.warning(f"Featured image generation failed: {e}")
+                    
+                    # Generate section images (if brand recommendations exist)
+                    if additional_context.get("brand_recommendations"):
+                        brands = additional_context["brand_recommendations"].get("brands", [])[:3]
+                        for brand in brands:
+                            try:
+                                brand_image_request = ImageGenerationRequest(
+                                    prompt=f"Professional product image: {brand} {request.keywords[0] if request.keywords else ''}. Clean, professional, product photography style",
+                                    style=ImageStyle.PHOTOGRAPHIC,
+                                    aspect_ratio=ImageAspectRatio.FOUR_THREE,
+                                    quality=ImageQuality.STANDARD
+                                )
+                                brand_image_response = await image_provider_manager.generate_image(brand_image_request)
+                                if brand_image_response.success and brand_image_response.images:
+                                    generated_images.append({
+                                        "type": "product",
+                                        "brand": brand,
+                                        "prompt": brand_image_request.prompt,
+                                        "image_url": brand_image_response.images[0].get("image_url") or brand_image_response.images[0].get("image_data"),
+                                        "alt_text": f"{brand} product image"
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Brand image generation failed for {brand}: {e}")
+            except Exception as e:
+                logger.warning(f"Image generation integration failed: {e}")
+        
         # Add citations if enabled
         citations = []
         final_content = pipeline_result.final_content
@@ -964,6 +1023,11 @@ async def generate_blog_enhanced(
         # Extract semantic keywords (Phase 3)
         semantic_keywords = pipeline_result.seo_metadata.get("semantic_keywords", [])
         
+        # Extract brand recommendations from context
+        brand_recommendations = None
+        if additional_context.get("brand_recommendations"):
+            brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
+        
         # Prepare stage results for response
         stage_results_data = [
             {
@@ -1002,6 +1066,8 @@ async def generate_blog_enhanced(
             quality_dimensions=quality_dimensions,
             structured_data=pipeline_result.structured_data,
             semantic_keywords=semantic_keywords,
+            generated_images=generated_images if generated_images else None,
+            brand_recommendations=brand_recommendations,
             success=True,
             warnings=[]
         )

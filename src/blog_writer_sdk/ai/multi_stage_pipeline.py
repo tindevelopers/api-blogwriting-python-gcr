@@ -385,10 +385,36 @@ class MultiStageGenerationPipeline:
             except Exception as e:
                 logger.warning(f"Competitor analysis failed: {e}")
         
+        # Extract product brands if this is a product-related topic
+        brand_recommendations = None
+        if self.google_search and keywords:
+            try:
+                # Check if topic/keywords suggest product research
+                product_indicators = ["best", "top", "review", "compare", "buy", "product"]
+                is_product_topic = any(indicator in topic.lower() or any(indicator in kw.lower() for kw in keywords) for indicator in product_indicators)
+                
+                if is_product_topic:
+                    logger.info("Detected product topic, searching for brand recommendations")
+                    brands = await self.google_search.search_product_brands(
+                        product_query=f"{topic} {keywords[0]}",
+                        num_results=10
+                    )
+                    if brands:
+                        brand_list = [b["brand"] for b in brands[:8]]  # Top 8 brands
+                        brand_recommendations = {
+                            "brands": brand_list,
+                            "sources": [{"brand": b["brand"], "source": b["source_title"], "url": b["source_url"]} for b in brands[:5]]
+                        }
+                        logger.info(f"Found {len(brand_list)} brand recommendations: {', '.join(brand_list[:5])}")
+            except Exception as e:
+                logger.warning(f"Brand extraction failed: {e}")
+        
         # Build research prompt
         research_context = context or {}
         if competitor_analysis:
             research_context["competitor_analysis"] = competitor_analysis
+        if brand_recommendations:
+            research_context["brand_recommendations"] = brand_recommendations
         
         prompt = self.prompt_builder.build_research_prompt(
             topic, keywords, research_context
