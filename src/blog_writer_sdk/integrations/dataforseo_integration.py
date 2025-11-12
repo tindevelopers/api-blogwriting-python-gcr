@@ -32,25 +32,34 @@ class DataForSEOClient:
     search volume, keyword difficulty, and competitor analysis.
     """
     
-    def __init__(self, credential_service: Any = None):
+    def __init__(self, credential_service: Any = None, api_key: Optional[str] = None, api_secret: Optional[str] = None, location: Optional[str] = None, language_code: Optional[str] = None):
         """
         Initialize DataForSEO client.
         
         Args:
-            api_key: DataForSEO API key
-            api_secret: DataForSEO API secret
+            credential_service: Optional credential service for multi-tenant support
+            api_key: DataForSEO API key (optional, can also use env vars)
+            api_secret: DataForSEO API secret (optional, can also use env vars)
             location: Location for search data (e.g., "United States", "United Kingdom")
             language_code: Language code for search data (e.g., "en", "es")
         """
         self.base_url = "https://api.dataforseo.com/v3"
         self.credential_service = credential_service
-        self.api_key: Optional[str] = None
-        self.api_secret: Optional[str] = None
-        self.is_configured = False
+        # Accept credentials directly or from env vars
+        self.api_key = api_key or os.getenv("DATAFORSEO_API_KEY")
+        self.api_secret = api_secret or os.getenv("DATAFORSEO_API_SECRET")
+        self.location = location or os.getenv("DATAFORSEO_LOCATION", "United States")
+        self.language_code = language_code or os.getenv("DATAFORSEO_LANGUAGE", "en")
+        self.is_configured = bool(self.api_key and self.api_secret)
         self._cache = {}
         self._cache_ttl = 3600  # 1 hour cache
     
     async def initialize_credentials(self, tenant_id: str):
+        # If already configured from constructor, skip re-initialization
+        if self.is_configured and self.api_key and self.api_secret:
+            logger.debug(f"DataforSEO credentials already configured, skipping initialization for tenant {tenant_id}")
+            return
+            
         if self.credential_service:
             credentials = await self.credential_service.get_credentials(tenant_id, "dataforseo")
             if credentials:
@@ -62,8 +71,10 @@ class DataForSEOClient:
         
         # Fallback to environment variables if credential service is not used or no credentials found
         # Prefer KEY/SECRET, fallback to LOGIN/PASSWORD for legacy environments
-        self.api_key = os.getenv("DATAFORSEO_API_KEY") or os.getenv("DATAFORSEO_API_LOGIN")
-        self.api_secret = os.getenv("DATAFORSEO_API_SECRET") or os.getenv("DATAFORSEO_API_PASSWORD")
+        if not self.api_key:
+            self.api_key = os.getenv("DATAFORSEO_API_KEY") or os.getenv("DATAFORSEO_API_LOGIN")
+        if not self.api_secret:
+            self.api_secret = os.getenv("DATAFORSEO_API_SECRET") or os.getenv("DATAFORSEO_API_PASSWORD")
         if self.api_key and self.api_secret:
             self.is_configured = True
             logger.warning("DataforSEO credentials loaded from environment variables. Consider using credential service.")
@@ -334,7 +345,12 @@ class DataForSEOClient:
                 "keyword": seed_keyword,
                 "location_name": location_name,
                 "language_code": language_code,
-                "limit": limit
+                "limit": limit,
+                # Explicitly request all monetization and difficulty metrics
+                "include_search_volume": True,
+                "include_difficulty": True,
+                "include_competition": True,
+                "include_cpc": True,
             }]
             
             data = await self._make_request("dataforseo_labs/google/keyword_suggestions/live", payload, tenant_id)

@@ -1202,10 +1202,25 @@ async def analyze_keywords(
                 logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
         
         # Fallback to standard analysis
-        results = {}
+        results: Dict[str, Dict[str, Any]] = {}
         for keyword in request.keywords:
             analysis = await writer.keyword_analyzer.analyze_keyword(keyword)
-            results[keyword] = analysis
+            
+            # Normalize analysis to plain dict with numeric defaults
+            analysis_dict = analysis.model_dump()
+            difficulty_value = analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty)
+            
+            results[keyword] = {
+                "difficulty": difficulty_value,
+                "search_volume": analysis_dict.get("search_volume") or 0,
+                "competition": analysis_dict.get("competition") or 0.0,
+                "cpc": analysis_dict.get("cpc") or 0.0,
+                "trend_score": analysis_dict.get("trend_score") or 0.0,
+                "recommended": analysis_dict.get("recommended", False),
+                "reason": analysis_dict.get("reason"),
+                "related_keywords": analysis_dict.get("related_keywords", []),
+                "long_tail_keywords": analysis_dict.get("long_tail_keywords", []),
+            }
         
         return {"keyword_analysis": results}
         
