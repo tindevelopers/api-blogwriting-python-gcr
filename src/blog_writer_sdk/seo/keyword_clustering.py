@@ -305,6 +305,10 @@ class KeywordClustering:
         processed_keywords = set()
         
         for cluster in filtered:
+            # Ensure cluster.keywords is a list
+            if not isinstance(cluster.keywords, list):
+                cluster.keywords = list(cluster.keywords) if hasattr(cluster.keywords, '__iter__') else []
+            
             # Check if cluster keywords are already in a merged cluster
             if any(kw in processed_keywords for kw in cluster.keywords):
                 continue
@@ -316,6 +320,10 @@ class KeywordClustering:
             for other_cluster in filtered:
                 if other_cluster == cluster:
                     continue
+                
+                # Ensure other_cluster.keywords is a list
+                if not isinstance(other_cluster.keywords, list):
+                    other_cluster.keywords = list(other_cluster.keywords) if hasattr(other_cluster.keywords, '__iter__') else []
                 
                 other_keywords = set(other_cluster.keywords)
                 overlap = len(cluster_keywords.intersection(other_keywords))
