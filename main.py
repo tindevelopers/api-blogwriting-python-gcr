@@ -48,6 +48,10 @@ from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
 from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_logging, get_blog_logger, log_blog_generation, log_api_request
+
+# Initialize logger
+logger = get_blog_logger()
+
 # Credential services not implemented yet - using direct environment variables
 # from src.blog_writer_sdk.services.credential_service import TenantCredentialService
 # from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
