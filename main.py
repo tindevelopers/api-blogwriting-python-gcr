@@ -168,6 +168,13 @@ class KeywordDifficultyRequest(BaseModel):
     language: str = Field(default="en", description="Language code")
 
 
+class SetQuotaLimitsRequest(BaseModel):
+    """Request model for setting quota limits."""
+    monthly_limit: Optional[int] = Field(None, ge=1, description="Monthly quota limit")
+    daily_limit: Optional[int] = Field(None, ge=1, description="Daily quota limit")
+    hourly_limit: Optional[int] = Field(None, ge=1, description="Hourly quota limit")
+
+
 class PlatformPublishRequest(BaseModel):
     """Request model for platform publishing."""
     blog_result: BlogGenerationResult = Field(..., description="Generated blog content to publish")
