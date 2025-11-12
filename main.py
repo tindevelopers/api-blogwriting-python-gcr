@@ -326,10 +326,21 @@ async def lifespan(app: FastAPI):
 
     # Initialize EnhancedKeywordAnalyzer
     global enhanced_keyword_analyzer, dataforseo_client_global
-    enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
-        use_dataforseo=True, # Assuming we always want to use DataforSEO if available
-        credential_service=dataforseo_credential_service
-    )
+    # Get DataForSEO credentials from environment (loaded from secrets)
+    dataforseo_api_key = os.getenv("DATAFORSEO_API_KEY")
+    dataforseo_api_secret = os.getenv("DATAFORSEO_API_SECRET")
+    if dataforseo_api_key and dataforseo_api_secret:
+        enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
+            use_dataforseo=True,
+            api_key=dataforseo_api_key,
+            api_secret=dataforseo_api_secret,
+            location=os.getenv("DATAFORSEO_LOCATION", "United States"),
+            language_code=os.getenv("DATAFORSEO_LANGUAGE", "en"),
+        )
+    else:
+        enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
+            use_dataforseo=False  # Disable if credentials not available
+        )
     
     # Initialize DataForSEO client for semantic integration (Phase 3)
     # Note: DataForSEO client will be initialized synchronously when needed
