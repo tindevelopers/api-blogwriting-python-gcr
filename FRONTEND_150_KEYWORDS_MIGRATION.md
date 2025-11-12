@@ -242,3 +242,13 @@ After updating your frontend:
 
 The API is backward compatible - if you don't pass `limit` or `max_suggestions_per_keyword`, it will default to 20 (current behavior). To get 150+ keywords like AHREFs, you must explicitly request it.
 
+---
+
+## Longtail Keywords
+
+For accessing longtail keyword suggestions specifically, see **[FRONTEND_LONGTAIL_KEYWORDS_GUIDE.md](./FRONTEND_LONGTAIL_KEYWORDS_GUIDE.md)** for:
+- How to extract longtail keywords from responses
+- Filtering strategies
+- React component examples
+- Best practices
+
