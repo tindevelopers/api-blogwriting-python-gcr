@@ -158,6 +158,16 @@ class TopicRecommendationRequest(BaseModel):
     include_ai_suggestions: bool = Field(default=True, description="Use Claude AI for intelligent topic generation")
 
 
+class KeywordDifficultyRequest(BaseModel):
+    """Request model for keyword difficulty analysis."""
+    keyword: str = Field(..., min_length=1, description="Keyword to analyze")
+    search_volume: int = Field(default=0, ge=0, description="Monthly search volume")
+    difficulty: float = Field(default=50.0, ge=0, le=100, description="Basic difficulty score")
+    competition: float = Field(default=0.5, ge=0, le=1, description="Competition index")
+    location: str = Field(default="United States", description="Location for analysis")
+    language: str = Field(default="en", description="Language code")
+
+
 class PlatformPublishRequest(BaseModel):
     """Request model for platform publishing."""
     blog_result: BlogGenerationResult = Field(..., description="Generated blog content to publish")
