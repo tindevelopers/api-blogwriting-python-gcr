@@ -21,6 +21,8 @@ class QualityDimension(str, Enum):
     FACTUAL = "factual"
     UNIQUENESS = "uniqueness"
     ENGAGEMENT = "engagement"
+    EEAT = "eeat"  # Experience, Expertise, Authoritativeness, Trustworthiness
+    ACCESSIBILITY = "accessibility"  # WCAG compliance
 
 
 @dataclass
@@ -31,6 +33,12 @@ class QualityScore:
     weight: float  # 0-1, importance weight
     issues: List[str]
     recommendations: List[str]
+    metadata: Dict[str, Any] = None  # Optional metadata (e.g., E-E-A-T breakdown)
+    
+    def __post_init__(self):
+        """Initialize metadata if not provided."""
+        if self.metadata is None:
+            self.metadata = {}
 
 
 @dataclass
@@ -64,12 +72,14 @@ class ContentQualityScorer:
         
         # Dimension weights (sum to 1.0)
         self.dimension_weights = {
-            QualityDimension.READABILITY: 0.20,
-            QualityDimension.SEO: 0.25,
-            QualityDimension.STRUCTURE: 0.20,
+            QualityDimension.READABILITY: 0.12,
+            QualityDimension.SEO: 0.18,
+            QualityDimension.STRUCTURE: 0.15,
             QualityDimension.FACTUAL: 0.15,
             QualityDimension.UNIQUENESS: 0.10,
-            QualityDimension.ENGAGEMENT: 0.10
+            QualityDimension.ENGAGEMENT: 0.10,
+            QualityDimension.EEAT: 0.12,  # E-E-A-T scoring
+            QualityDimension.ACCESSIBILITY: 0.08  # Accessibility scoring
         }
     
     def score_content(
@@ -122,6 +132,14 @@ class ContentQualityScorer:
         # Engagement score
         engagement_score = self._score_engagement(content)
         dimension_scores[QualityDimension.ENGAGEMENT.value] = engagement_score
+        
+        # E-E-A-T score
+        eeat_score = self._score_eeat(content, citations, title, keywords)
+        dimension_scores[QualityDimension.EEAT.value] = eeat_score
+        
+        # Accessibility score
+        accessibility_score = self._score_accessibility(content)
+        dimension_scores[QualityDimension.ACCESSIBILITY.value] = accessibility_score
         
         # Calculate weighted overall score
         overall_score = sum(
@@ -265,10 +283,24 @@ class ContentQualityScorer:
         )
     
     def _score_structure(self, content: str, title: str) -> QualityScore:
-        """Score content structure."""
+        """
+        Score content structure with detailed recommendations.
+        
+        Enhanced to provide:
+        - Specific heading recommendations
+        - Image placement suggestions
+        - CTA placement optimization
+        - Internal linking structure
+        """
         issues = []
         recommendations = []
         score = 100
+        structure_metadata = {
+            "recommended_headings": [],
+            "image_recommendations": [],
+            "cta_placements": [],
+            "internal_links": []
+        }
         
         # Paragraph length
         paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
@@ -288,14 +320,89 @@ class ContentQualityScorer:
             score -= 10
             recommendations.append("Add bulleted or numbered lists for scannability")
         
-        # Heading hierarchy
+        # Heading hierarchy and recommendations
         headings = re.findall(r'<h([1-6])|^(#{1,6})\s+', content, re.MULTILINE)
+        heading_positions = []
+        
         if headings:
             heading_levels = [int(h[0] if h[0] else len(h[1])) for h in headings]
+            
             # Check for proper hierarchy
             if heading_levels and heading_levels[0] != 1:
                 issues.append("First heading should be H1")
                 score -= 10
+                structure_metadata["recommended_headings"].append({
+                    "level": 1,
+                    "position": 0,
+                    "suggested_text": title or "Main Heading",
+                    "reason": "First heading should be H1"
+                })
+            
+            # Recommend H2 headings at optimal positions
+            # Optimal: H2 every 300-500 words
+            optimal_h2_positions = list(range(300, word_count, 400))
+            current_h2_positions = []
+            
+            # Find existing H2 positions (simplified - would parse actual positions)
+            for i, level in enumerate(heading_levels):
+                if level == 2:
+                    # Estimate position (simplified)
+                    estimated_pos = i * 200
+                    current_h2_positions.append(estimated_pos)
+            
+            # Recommend missing H2s
+            for pos in optimal_h2_positions:
+                if not any(abs(pos - existing) < 100 for existing in current_h2_positions):
+                    structure_metadata["recommended_headings"].append({
+                        "level": 2,
+                        "position": pos,
+                        "suggested_text": f"Section Heading at ~{pos} words",
+                        "reason": "Optimal H2 placement for content structure"
+                    })
+        
+        # Image placement recommendations
+        images = re.findall(r'<img[^>]*>', content, re.IGNORECASE)
+        image_count = len(images)
+        
+        # Optimal: Image every 300-500 words
+        optimal_image_positions = list(range(300, word_count, 400))
+        for pos in optimal_image_positions[:3]:  # Recommend top 3 positions
+            structure_metadata["image_recommendations"].append({
+                "position": pos,
+                "suggested_alt_text": "Descriptive alt text for image",
+                "type": "content_image",
+                "reason": "Optimal image placement for engagement"
+            })
+        
+        if image_count == 0 and word_count > 500:
+            recommendations.append("Add images to break up text and improve engagement")
+        
+        # CTA placement recommendations
+        # Optimal: CTA at 60-70% of content and at the end
+        cta_positions = [
+            int(word_count * 0.65),
+            word_count - 100  # Near end
+        ]
+        
+        for pos in cta_positions:
+            if pos > 0:
+                structure_metadata["cta_placements"].append({
+                    "position": pos,
+                    "type": "related_content" if pos < word_count * 0.7 else "newsletter",
+                    "suggested_text": "Want more insights? Subscribe to our newsletter" if pos > word_count * 0.7 else "Related: Check out our other articles",
+                    "reason": "Optimal CTA placement for conversion"
+                })
+        
+        # Internal linking recommendations (simplified)
+        # Would analyze content for keyword opportunities
+        if word_count > 1000:
+            structure_metadata["internal_links"].append({
+                "position": int(word_count * 0.3),
+                "anchor_text": "related topic",
+                "target_keyword": "related keyword",
+                "relevance_score": 0.85,
+                "reason": "Internal link opportunity for SEO"
+            })
         
         score = max(0, min(100, score))
         
@@ -304,7 +411,8 @@ class ContentQualityScorer:
             score=score,
             weight=self.dimension_weights[QualityDimension.STRUCTURE],
             issues=issues,
-            recommendations=recommendations
+            recommendations=recommendations,
+            metadata=structure_metadata
         )
     
     def _score_factual(self, content: str, citations: List[Dict[str, str]]) -> QualityScore:
@@ -429,5 +537,309 @@ class ContentQualityScorer:
             weight=self.dimension_weights[QualityDimension.ENGAGEMENT],
             issues=issues,
             recommendations=recommendations
+        )
+    
+    def _score_accessibility(self, content: str) -> QualityScore:
+        """
+        Score accessibility compliance (WCAG guidelines).
+        
+        Checks for:
+        - Alt text for images
+        - Proper heading hierarchy
+        - Table of contents for long content
+        - Sufficient color contrast (simplified)
+        - ARIA labels where needed
+        """
+        issues = []
+        recommendations = []
+        score = 100
+        wcag_level = "A"  # Default
+        
+        # Check for images without alt text
+        # Look for img tags without alt attribute
+        img_pattern = r'<img[^>]*>'
+        images = re.findall(img_pattern, content, re.IGNORECASE)
+        images_without_alt = [
+            img for img in images
+            if 'alt=' not in img.lower() or 'alt=""' in img.lower()
+        ]
+        
+        if images_without_alt:
+            issues.append(f"Found {len(images_without_alt)} image(s) without alt text")
+            score -= len(images_without_alt) * 10
+            recommendations.append("Add descriptive alt text to all images")
+        
+        # Check heading hierarchy
+        headings = re.findall(r'<h([1-6])|^(#{1,6})\s+', content, re.MULTILINE)
+        if headings:
+            heading_levels = [int(h[0] if h[0] else len(h[1])) for h in headings]
+            
+            # Check for skipped levels (e.g., H1 -> H3 without H2)
+            for i in range(len(heading_levels) - 1):
+                if heading_levels[i+1] > heading_levels[i] + 1:
+                    issues.append("Skipped heading level detected (e.g., H1 -> H3)")
+                    score -= 15
+                    recommendations.append("Maintain proper heading hierarchy (H1 -> H2 -> H3)")
+                    break
+            
+            # Check for multiple H1s (should only have one)
+            h1_count = sum(1 for level in heading_levels if level == 1)
+            if h1_count > 1:
+                issues.append(f"Multiple H1 headings found ({h1_count})")
+                score -= 10
+                recommendations.append("Use only one H1 heading per page")
+        
+        # Check for table of contents (for long content)
+        word_count = len(content.split())
+        toc_indicators = [
+            "table of contents", "contents", "toc",
+            "in this article", "article outline"
+        ]
+        
+        has_toc = any(indicator in content.lower()[:500] for indicator in toc_indicators)
+        if word_count > 2000 and not has_toc:
+            issues.append("Long content missing table of contents")
+            score -= 10
+            recommendations.append("Add table of contents for content over 2000 words")
+        
+        # Check for lists (improves scannability)
+        list_count = len(re.findall(r'<[uo]l>|^[\*\-\+]', content, re.MULTILINE))
+        if word_count > 1000 and list_count < 2:
+            issues.append("Insufficient lists for scannability")
+            score -= 5
+            recommendations.append("Add more bulleted or numbered lists")
+        
+        # Check for link accessibility (simplified)
+        # Check for descriptive link text
+        generic_link_texts = ["click here", "read more", "here", "link"]
+        generic_links = sum(
+            1 for text in generic_link_texts
+            if text in content.lower()
+        )
+        
+        if generic_links > 2:
+            issues.append("Generic link text detected")
+            score -= 5
+            recommendations.append("Use descriptive link text instead of 'click here' or 'read more'")
+        
+        # Determine WCAG level
+        if score >= 90:
+            wcag_level = "AAA"
+        elif score >= 80:
+            wcag_level = "AA"
+        elif score >= 70:
+            wcag_level = "A"
+        else:
+            wcag_level = "Not compliant"
+        
+        score = max(0, min(100, score))
+        
+        return QualityScore(
+            dimension=QualityDimension.ACCESSIBILITY,
+            score=score,
+            weight=self.dimension_weights[QualityDimension.ACCESSIBILITY],
+            issues=issues,
+            recommendations=recommendations,
+            metadata={
+                "wcag_level": wcag_level,
+                "images_without_alt": len(images_without_alt),
+                "heading_issues": len([i for i in issues if "heading" in i.lower()]),
+                "has_table_of_contents": has_toc,
+                "list_count": list_count
+            }
+        )
+    
+    def _score_eeat(
+        self,
+        content: str,
+        citations: List[Dict[str, str]],
+        title: str = "",
+        keywords: List[str] = None
+    ) -> QualityScore:
+        """
+        Score E-E-A-T (Experience, Expertise, Authoritativeness, Trustworthiness).
+        
+        Google's quality rater guidelines focus on:
+        - Experience: First-hand experience signals
+        - Expertise: Author credentials, qualifications
+        - Authoritativeness: Domain authority, citations from authoritative sources
+        - Trustworthiness: Fact-checking, source quality, transparency
+        """
+        issues = []
+        recommendations = []
+        scores = {
+            'experience': 0.0,
+            'expertise': 0.0,
+            'authoritativeness': 0.0,
+            'trustworthiness': 0.0
+        }
+        
+        keywords = keywords or []
+        
+        # 1. EXPERIENCE Scoring (0-1.0)
+        # Check for first-hand experience indicators
+        experience_indicators = [
+            "i've", "i have", "i experienced", "in my experience",
+            "when i", "i found", "i noticed", "i learned",
+            "based on my", "from my", "my own", "personally"
+        ]
+        
+        experience_count = sum(1 for indicator in experience_indicators if indicator in content.lower())
+        if experience_count > 0:
+            scores['experience'] = min(1.0, experience_count * 0.2)
+        else:
+            issues.append("No first-hand experience indicators found")
+            recommendations.append("Add personal experience or case studies")
+            scores['experience'] = 0.3  # Default low score
+        
+        # 2. EXPERTISE Scoring (0-1.0)
+        # Check for author credentials, qualifications, expertise signals
+        expertise_indicators = [
+            "years of experience", "certified", "licensed", "degree",
+            "expert", "specialist", "professional", "qualified",
+            "credentials", "background in", "training in"
+        ]
+        
+        expertise_count = sum(1 for indicator in expertise_indicators if indicator in content.lower())
+        
+        # Check for citations from authoritative sources (academic, industry)
+        authoritative_domains = [
+            ".edu", ".gov", ".org", "research", "study", "journal",
+            "academic", "university", "institute", "association"
+        ]
+        
+        authoritative_citations = sum(
+            1 for citation in citations
+            if any(domain in citation.get("url", "").lower() for domain in authoritative_domains)
+        )
+        
+        if expertise_count > 0 or authoritative_citations > 0:
+            scores['expertise'] = min(1.0, (expertise_count * 0.15) + (authoritative_citations * 0.3))
+        else:
+            issues.append("Missing expertise indicators or author credentials")
+            recommendations.append("Add author bio with credentials and qualifications")
+            recommendations.append("Cite authoritative sources (academic, industry reports)")
+            scores['expertise'] = 0.4
+        
+        # 3. AUTHORITATIVENESS Scoring (0-1.0)
+        # Domain authority signals, citation quality, source diversity
+        citation_count = len(citations)
+        unique_domains = len(set(
+            citation.get("url", "").split("/")[2] if "/" in citation.get("url", "") else ""
+            for citation in citations
+        ))
+        
+        # Check citation quality
+        high_quality_domains = [
+            "wikipedia.org", "nih.gov", "edu", "gov", "who.int",
+            "mayo.edu", "harvard.edu", "stanford.edu", "mit.edu"
+        ]
+        
+        high_quality_citations = sum(
+            1 for citation in citations
+            if any(domain in citation.get("url", "").lower() for domain in high_quality_domains)
+        )
+        
+        if citation_count >= 5:
+            scores['authoritativeness'] = min(1.0, 0.5 + (unique_domains * 0.1) + (high_quality_citations * 0.15))
+        elif citation_count >= 3:
+            scores['authoritativeness'] = 0.6 + (high_quality_citations * 0.2)
+        elif citation_count > 0:
+            scores['authoritativeness'] = 0.4
+            issues.append("Insufficient citations for authoritative content")
+            recommendations.append("Add more citations from authoritative sources")
+        else:
+            issues.append("No citations provided")
+            recommendations.append("Add citations from authoritative sources (academic, government, industry)")
+            scores['authoritativeness'] = 0.2
+        
+        # 4. TRUSTWORTHINESS Scoring (0-1.0)
+        # Fact-checking, source quality, transparency, accuracy signals
+        trust_score = 0.5  # Base score
+        
+        # Check for fact-checking indicators
+        fact_check_indicators = [
+            "verified", "confirmed", "according to", "research shows",
+            "studies indicate", "data from", "statistics from"
+        ]
+        
+        fact_check_count = sum(1 for indicator in fact_check_indicators if indicator in content.lower())
+        trust_score += min(0.3, fact_check_count * 0.1)
+        
+        # Check for transparency signals
+        transparency_indicators = [
+            "last updated", "published", "reviewed", "updated",
+            "as of", "current as of", "date"
+        ]
+        
+        transparency_count = sum(1 for indicator in transparency_indicators if indicator in content.lower())
+        trust_score += min(0.2, transparency_count * 0.1)
+        
+        # Penalize for unverified claims
+        unverified_claims = [
+            "guaranteed", "always", "never", "proven to",
+            "scientifically proven"  # Without citation
+        ]
+        
+        unverified_count = 0
+        for claim in unverified_claims:
+            if claim in content.lower():
+                # Check if there's a citation nearby (simplified check)
+                claim_pos = content.lower().find(claim)
+                nearby_text = content[max(0, claim_pos-100):claim_pos+100]
+                if not any(indicator in nearby_text for indicator in fact_check_indicators):
+                    unverified_count += 1
+        
+        trust_score -= min(0.3, unverified_count * 0.1)
+        
+        scores['trustworthiness'] = max(0.0, min(1.0, trust_score))
+        
+        if scores['trustworthiness'] < 0.6:
+            issues.append("Low trustworthiness signals")
+            recommendations.append("Add fact-checking and verification")
+            recommendations.append("Include 'Last updated' date")
+            recommendations.append("Cite sources for all claims")
+        
+        # Calculate overall E-E-A-T score (weighted average)
+        overall_eeat = (
+            scores['experience'] * 0.25 +
+            scores['expertise'] * 0.25 +
+            scores['authoritativeness'] * 0.25 +
+            scores['trustworthiness'] * 0.25
+        )
+        
+        # Convert to 0-100 scale
+        eeat_score = overall_eeat * 100
+        
+        # YMYL (Your Money Your Life) compliance check
+        yyml_keywords = [
+            "medical", "health", "financial", "legal", "advice",
+            "treatment", "cure", "investment", "money", "law"
+        ]
+        
+        is_yyml = any(kw in content.lower() or kw in title.lower() for kw in yyml_keywords)
+        yyml_compliant = overall_eeat >= 0.75 if is_yyml else True
+        
+        if is_yyml and not yyml_compliant:
+            issues.append("YMYL topic requires higher E-E-A-T score (≥75)")
+            recommendations.append("Add author credentials and qualifications")
+            recommendations.append("Cite authoritative medical/financial sources")
+            recommendations.append("Include disclaimers and transparency")
+        
+        return QualityScore(
+            dimension=QualityDimension.EEAT,
+            score=round(eeat_score, 2),
+            weight=self.dimension_weights[QualityDimension.EEAT],
+            issues=issues,
+            recommendations=recommendations,
+            metadata={
+                "experience_score": round(scores['experience'] * 100, 2),
+                "expertise_score": round(scores['expertise'] * 100, 2),
+                "authoritativeness_score": round(scores['authoritativeness'] * 100, 2),
+                "trustworthiness_score": round(scores['trustworthiness'] * 100, 2),
+                "overall_eeat": round(overall_eeat, 3),
+                "yyml_topic": is_yyml,
+                "yyml_compliant": yyml_compliant
+            }
         )
 

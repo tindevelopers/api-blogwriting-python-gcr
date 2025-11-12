@@ -444,13 +444,23 @@ class TopicRecommendationEngine:
     
     async def _find_content_gaps(
         self,
-        seed_keywords: List[str]
+        seed_keywords: List[str],
+        competitor_domains: List[str] = None
     ) -> List[RecommendedTopic]:
-        """Find content gaps using Google Search."""
+        """
+        Find content gaps using Google Search with competitor analysis.
+        
+        Enhanced to include:
+        - Competitor coverage analysis
+        - Your coverage vs competitor coverage
+        - Opportunity scoring based on gaps
+        """
         gap_topics = []
         
         if not self.google_search:
             return gap_topics
+        
+        competitor_domains = competitor_domains or []
         
         try:
             for keyword in seed_keywords[:3]:  # Limit to avoid rate limits
@@ -460,23 +470,77 @@ class TopicRecommendationEngine:
                     num_results=10
                 )
                 
-                # Analyze what's missing
-                # (Simplified - in production, would analyze content depth, freshness, etc.)
-                if len(results) < 5:
-                    # Few results = content gap opportunity
+                # Analyze competitor coverage
+                competitor_coverage = {}
+                your_coverage = 0
+                
+                for result in results:
+                    domain = result.get("display_link", "").replace("www.", "")
+                    if domain:
+                        # Check if it's a competitor
+                        is_competitor = any(
+                            comp_domain.replace("www.", "") in domain 
+                            for comp_domain in competitor_domains
+                        )
+                        
+                        if is_competitor:
+                            competitor_coverage[domain] = competitor_coverage.get(domain, 0) + 1
+                        # In production, would check if domain is yours
+                        # your_coverage += 1 if domain == your_domain else 0
+                
+                # Calculate coverage percentages
+                total_results = len(results)
+                competitor_count = sum(competitor_coverage.values())
+                competitor_coverage_pct = (competitor_count / total_results * 100) if total_results > 0 else 0
+                your_coverage_pct = (your_coverage / total_results * 100) if total_results > 0 else 0
+                
+                # Calculate opportunity score
+                opportunity_score = self._calculate_gap_opportunity_score(
+                    competitor_coverage_pct,
+                    your_coverage_pct,
+                    total_results
+                )
+                
+                # Identify specific gaps
+                content_gaps = await self._identify_content_gaps(keyword, results, competitor_domains)
+                
+                # Only recommend if there's a significant gap
+                if opportunity_score >= 60 or len(content_gaps) > 0:
+                    # Get keyword metrics if available
+                    search_volume = 500  # Default estimate
+                    difficulty = 50.0
+                    competition = competitor_coverage_pct / 100.0
+                    
+                    if self.df_client:
+                        try:
+                            overview = await self.df_client.get_keyword_overview(
+                                keywords=[keyword],
+                                location_name="United States",
+                                language_code="en",
+                                tenant_id="default"
+                            )
+                            if overview:
+                                # Parse overview data
+                                if isinstance(overview, dict):
+                                    data = overview.get(keyword) or (overview.get("items", [{}])[0] if overview.get("items") else {})
+                                    search_volume = data.get("search_volume", 500) or data.get("monthly_searches", 500)
+                                    difficulty = data.get("keyword_difficulty", 50.0) or data.get("difficulty", 50.0)
+                        except Exception:
+                            pass
+                    
                     topic = RecommendedTopic(
                         topic=keyword.title(),
                         primary_keyword=keyword,
-                        search_volume=500,  # Estimate
-                        difficulty=50.0,
-                        competition=0.5,
+                        search_volume=search_volume,
+                        difficulty=difficulty,
+                        competition=competition,
                         cpc=1.0,
-                        ranking_score=60.0,
-                        opportunity_score=70.0,
+                        ranking_score=self._calculate_ranking_score(search_volume, difficulty, competition, 1.0),
+                        opportunity_score=opportunity_score,
                         related_keywords=[],
-                        content_gaps=["Limited content available"],
-                        estimated_traffic=50,
-                        reason="Content gap identified - limited existing content"
+                        content_gaps=content_gaps,
+                        estimated_traffic=int(search_volume * 0.1),
+                        reason=f"Content gap: {competitor_coverage_pct:.0f}% competitor coverage, {your_coverage_pct:.0f}% your coverage"
                     )
                     gap_topics.append(topic)
                     
@@ -485,25 +549,121 @@ class TopicRecommendationEngine:
         
         return gap_topics
     
-    async def _identify_content_gaps(self, keyword: str) -> List[str]:
-        """Identify specific content gaps for a keyword."""
+    def _calculate_gap_opportunity_score(
+        self,
+        competitor_coverage_pct: float,
+        your_coverage_pct: float,
+        total_results: int
+    ) -> float:
+        """
+        Calculate opportunity score based on content gaps.
+        
+        Higher score = better opportunity (competitors rank but you don't).
+        """
+        score = 0.0
+        
+        # Gap size component (40 points)
+        gap_size = competitor_coverage_pct - your_coverage_pct
+        if gap_size >= 50:
+            score += 40
+        elif gap_size >= 30:
+            score += 30
+        elif gap_size >= 10:
+            score += 20
+        else:
+            score += 10
+        
+        # Competition level component (30 points)
+        # Lower competition = higher opportunity
+        if competitor_coverage_pct <= 30:
+            score += 30
+        elif competitor_coverage_pct <= 50:
+            score += 20
+        elif competitor_coverage_pct <= 70:
+            score += 10
+        
+        # SERP saturation component (30 points)
+        # Fewer results = less saturated = better opportunity
+        if total_results < 5:
+            score += 30
+        elif total_results < 8:
+            score += 20
+        else:
+            score += 10
+        
+        return min(100.0, score)
+    
+    async def _identify_content_gaps(
+        self,
+        keyword: str,
+        search_results: List[Dict[str, Any]] = None,
+        competitor_domains: List[str] = None
+    ) -> List[str]:
+        """
+        Identify specific content gaps for a keyword.
+        
+        Enhanced to include:
+        - Competitor content analysis
+        - Content freshness gaps
+        - Content depth gaps
+        - SERP feature opportunities
+        """
         gaps = []
         
-        if not self.google_search:
+        if not self.google_search and not search_results:
             return gaps
         
+        competitor_domains = competitor_domains or []
+        
         try:
-            results = await self.google_search.search(
-                query=keyword,
-                num_results=5
-            )
+            if not search_results:
+                search_results = await self.google_search.search(
+                    query=keyword,
+                    num_results=10
+                )
             
             # Check for common gaps
-            if len(results) < 3:
-                gaps.append("Limited content available")
+            if len(search_results) < 3:
+                gaps.append("Limited content available - low competition")
             
-            # Check freshness (simplified)
-            # In production, would analyze publication dates
+            # Analyze competitor content depth
+            competitor_results = [
+                r for r in search_results
+                if any(comp_domain.replace("www.", "") in r.get("display_link", "").replace("www.", "") 
+                      for comp_domain in competitor_domains)
+            ]
+            
+            if len(competitor_results) > len(search_results) * 0.5:
+                gaps.append(f"Competitors dominate SERP ({len(competitor_results)}/{len(search_results)} results)")
+            
+            # Check content freshness (simplified - would parse dates in production)
+            # Look for "recent" indicators in snippets
+            recent_indicators = ["2024", "2025", "recent", "new", "updated", "latest"]
+            recent_count = sum(
+                1 for result in search_results
+                if any(indicator in result.get("snippet", "").lower() for indicator in recent_indicators)
+            )
+            
+            if recent_count < len(search_results) * 0.3:
+                gaps.append("Content freshness gap - most results are older")
+            
+            # Check for SERP feature opportunities
+            # Look for question-based queries
+            if any(q_word in keyword.lower() for q_word in ["how", "what", "why", "when", "where"]):
+                gaps.append("Featured snippet opportunity - question-based query")
+            
+            # Check content type gaps
+            content_types = {
+                "video": sum(1 for r in search_results if "youtube.com" in r.get("display_link", "")),
+                "image": sum(1 for r in search_results if any(ext in r.get("link", "") for ext in [".jpg", ".png", ".gif"])),
+                "guide": sum(1 for r in search_results if any(word in r.get("snippet", "").lower() for word in ["guide", "tutorial", "how to"]))
+            }
+            
+            if content_types["guide"] < 3:
+                gaps.append("Comprehensive guide opportunity - few detailed guides")
+            
+            if content_types["video"] == 0:
+                gaps.append("Video content gap - no video results")
             
         except Exception as e:
             logger.warning(f"Failed to identify content gaps for {keyword}: {e}")

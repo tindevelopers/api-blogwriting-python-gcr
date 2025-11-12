@@ -92,6 +92,9 @@ from src.blog_writer_sdk.seo.few_shot_learning import FewShotLearningExtractor
 from src.blog_writer_sdk.seo.content_length_optimizer import ContentLengthOptimizer
 from src.blog_writer_sdk.seo.topic_recommender import TopicRecommendationEngine
 from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
+from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficultyAnalyzer
+from src.blog_writer_sdk.services.quota_manager import QuotaManager
+from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 
 
 # API Request/Response Models
@@ -386,6 +389,13 @@ async def lifespan(app: FastAPI):
         keyword_clustering=keyword_clustering
     )
     print("✅ Topic Recommendation Engine initialized.")
+    
+    # Initialize Phase 1-3 services
+    global quota_manager, keyword_difficulty_analyzer
+    quota_manager = QuotaManager()  # In-memory for now, can be extended with database backend
+    keyword_difficulty_analyzer = KeywordDifficultyAnalyzer(dataforseo_client=dataforseo_client_global)
+    print("✅ Quota Manager initialized.")
+    print("✅ Keyword Difficulty Analyzer initialized.")
 
     yield
     
@@ -612,6 +622,10 @@ blog_writer = BlogWriter(
     ai_content_generator=ai_generator,
     enable_ai_enhancement=ai_generator is not None,
 )
+
+# Phase 1-3 global services (initialized in lifespan)
+quota_manager = None
+keyword_difficulty_analyzer = None
 
 
 # Dependency to get blog writer instance
@@ -1237,6 +1251,131 @@ async def analyze_keywords_enhanced(
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/difficulty")
+async def analyze_keyword_difficulty(
+    keyword: str = Field(..., description="Keyword to analyze"),
+    search_volume: int = Field(default=0, description="Monthly search volume"),
+    difficulty: float = Field(default=50.0, ge=0, le=100, description="Basic difficulty score"),
+    competition: float = Field(default=0.5, ge=0, le=1, description="Competition index"),
+    location: str = Field(default="United States", description="Location for analysis"),
+    language: str = Field(default="en", description="Language code")
+):
+    """
+    Analyze keyword difficulty with multi-factor analysis.
+    
+    Provides:
+    - Domain authority requirements
+    - Backlink requirements
+    - Content length needs
+    - Competition level
+    - Time-to-rank estimates
+    - Ranking probability over time
+    """
+    try:
+        global keyword_difficulty_analyzer
+        if not keyword_difficulty_analyzer:
+            raise HTTPException(status_code=503, detail="Difficulty analyzer not available")
+        
+        analysis = await keyword_difficulty_analyzer.analyze_difficulty(
+            keyword=keyword,
+            search_volume=search_volume,
+            difficulty=difficulty,
+            competition=competition,
+            location=location,
+            language=language
+        )
+        
+        return {
+            "keyword": keyword,
+            "overall_difficulty": analysis.overall_difficulty,
+            "domain_authority_required": analysis.factors.domain_authority_required,
+            "backlink_requirements": analysis.factors.backlink_requirements.value,
+            "content_length_needed": analysis.factors.content_length_needed,
+            "competition_level": analysis.factors.competition_level.value,
+            "time_to_rank": analysis.factors.time_to_rank,
+            "ranking_probability": analysis.factors.ranking_probability,
+            "recommendations": analysis.recommendations,
+            "metadata": analysis.metadata
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Difficulty analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Difficulty analysis failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/quota/{organization_id}")
+async def get_quota_info(organization_id: str):
+    """
+    Get quota information for an organization.
+    
+    Returns:
+    - Monthly, daily, and hourly limits
+    - Current usage
+    - Remaining quota
+    - Warnings if approaching limits
+    """
+    try:
+        global quota_manager
+        if not quota_manager:
+            raise HTTPException(status_code=503, detail="Quota manager not available")
+        
+        quota_info = await quota_manager.get_quota_info(organization_id)
+        if not quota_info:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        
+        return quota_info.to_dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Quota info retrieval failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Quota info retrieval failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/quota/{organization_id}/set-limits")
+async def set_quota_limits(
+    organization_id: str,
+    monthly_limit: Optional[int] = Field(None, description="Monthly limit"),
+    daily_limit: Optional[int] = Field(None, description="Daily limit"),
+    hourly_limit: Optional[int] = Field(None, description="Hourly limit")
+):
+    """
+    Set custom quota limits for an organization.
+    
+    Only updates provided limits, leaves others unchanged.
+    """
+    try:
+        global quota_manager
+        if not quota_manager:
+            raise HTTPException(status_code=503, detail="Quota manager not available")
+        
+        await quota_manager.set_quota_limits(
+            organization_id=organization_id,
+            monthly_limit=monthly_limit,
+            daily_limit=daily_limit,
+            hourly_limit=hourly_limit
+        )
+        
+        return {"message": "Quota limits updated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Quota limit update failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Quota limit update failed: {str(e)}"
         )
 
 # Topic recommendation endpoint
