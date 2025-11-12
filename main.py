@@ -1024,18 +1024,56 @@ async def analyze_keywords_enhanced(
 ):
     """
     Enhanced keyword analysis leveraging DataForSEO when available.
+    Includes keyword clustering and parent topic extraction.
     Falls back gracefully if credentials are not configured.
     """
     try:
+        from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+        
         if not enhanced_analyzer:
             raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
         results = await enhanced_analyzer.analyze_keywords_comprehensive(
             keywords=request.keywords,
             tenant_id=os.getenv("TENANT_ID", "default")
         )
-        # Shape into a simple dict for API response
-        out = {
-            k: {
+        
+        # Cluster keywords by parent topics
+        # Use global knowledge graph client if available
+        kg_client = None
+        try:
+            kg_client = google_knowledge_graph_client if 'google_knowledge_graph_client' in globals() else None
+        except:
+            pass
+        
+        clustering = KeywordClustering(knowledge_graph_client=kg_client)
+        clustering_result = clustering.cluster_keywords(
+            keywords=request.keywords,
+            min_cluster_size=1,
+            max_clusters=None
+        )
+        
+        # Shape into a simple dict for API response with parent topics
+        out = {}
+        for k, v in results.items():
+            # Find parent topic for this keyword
+            parent_topic = None
+            category_type = None
+            cluster_score = None
+            
+            for cluster in clustering_result.clusters:
+                if k in cluster.keywords:
+                    parent_topic = cluster.parent_topic
+                    category_type = cluster.category_type
+                    cluster_score = cluster.cluster_score
+                    break
+            
+            # If not found in cluster, extract from keyword itself
+            if not parent_topic:
+                parent_topic = clustering._extract_parent_topic_from_keyword(k)
+                category_type = clustering._classify_keyword_type(k)
+                cluster_score = 0.5
+            
+            out[k] = {
                 "search_volume": v.search_volume,
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
                 "competition": v.competition,
@@ -1044,14 +1082,34 @@ async def analyze_keywords_enhanced(
                 "recommended": v.recommended,
                 "reason": v.reason,
                 "related_keywords": v.related_keywords,
-                "long_tail_keywords": v.long_tail_keywords
+                "long_tail_keywords": v.long_tail_keywords,
+                "parent_topic": parent_topic,
+                "category_type": category_type,
+                "cluster_score": cluster_score
             }
-            for k, v in results.items()
+        
+        return {
+            "enhanced_analysis": out,
+            "clusters": [
+                {
+                    "parent_topic": c.parent_topic,
+                    "keywords": c.keywords,
+                    "cluster_score": c.cluster_score,
+                    "category_type": c.category_type,
+                    "keyword_count": len(c.keywords)
+                }
+                for c in clustering_result.clusters
+            ],
+            "cluster_summary": {
+                "total_keywords": clustering_result.total_keywords,
+                "cluster_count": clustering_result.cluster_count,
+                "unclustered_count": len(clustering_result.unclustered)
+            }
         }
-        return {"enhanced_analysis": out}
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Enhanced keyword analysis failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
@@ -1064,14 +1122,19 @@ async def extract_keywords(
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
-    Extract potential keywords from existing content.
+    Extract potential keywords from existing content with clustering.
     
     Uses advanced NLP techniques to identify:
     - High-value keywords
     - Relevant phrases
     - Content themes
+    - Parent topics (clustered keywords)
+    
+    Returns keywords grouped by parent topics for better organization.
     """
     try:
+        from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+        
         keywords = await writer.keyword_analyzer.extract_keywords_from_content(
             content=request.content,
             max_keywords=request.max_keywords,
@@ -1079,9 +1142,64 @@ async def extract_keywords(
             dedup_lim=request.dedup_lim
         )
         
-        return {"extracted_keywords": keywords}
+        # Cluster keywords by parent topics
+        # Use global knowledge graph client if available
+        kg_client = None
+        try:
+            kg_client = google_knowledge_graph_client if 'google_knowledge_graph_client' in globals() else None
+        except:
+            pass
+        
+        clustering = KeywordClustering(knowledge_graph_client=kg_client)
+        clustering_result = clustering.cluster_keywords(
+            keywords=keywords,
+            min_cluster_size=1,  # Allow single keywords to have parent topics
+            max_clusters=None  # No limit
+        )
+        
+        # Build response with parent topics
+        keywords_with_topics = []
+        for cluster in clustering_result.clusters:
+            for keyword in cluster.keywords:
+                keywords_with_topics.append({
+                    "keyword": keyword,
+                    "parent_topic": cluster.parent_topic,
+                    "cluster_score": cluster.cluster_score,
+                    "category_type": cluster.category_type
+                })
+        
+        # Add unclustered keywords with extracted parent topics
+        for keyword in clustering_result.unclustered:
+            parent_topic = clustering._extract_parent_topic_from_keyword(keyword)
+            keywords_with_topics.append({
+                "keyword": keyword,
+                "parent_topic": parent_topic,
+                "cluster_score": 0.5,
+                "category_type": clustering._classify_keyword_type(keyword)
+            })
+        
+        return {
+            "extracted_keywords": keywords,
+            "keywords_with_topics": keywords_with_topics,
+            "clusters": [
+                {
+                    "parent_topic": c.parent_topic,
+                    "keywords": c.keywords,
+                    "cluster_score": c.cluster_score,
+                    "category_type": c.category_type,
+                    "keyword_count": len(c.keywords)
+                }
+                for c in clustering_result.clusters
+            ],
+            "cluster_summary": {
+                "total_keywords": clustering_result.total_keywords,
+                "cluster_count": clustering_result.cluster_count,
+                "unclustered_count": len(clustering_result.unclustered)
+            }
+        }
         
     except Exception as e:
+        logger.error(f"Keyword extraction failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Keyword extraction failed: {str(e)}"
