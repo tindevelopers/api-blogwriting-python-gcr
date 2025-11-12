@@ -1276,12 +1276,7 @@ async def analyze_keywords_enhanced(
 
 @app.post("/api/v1/keywords/difficulty")
 async def analyze_keyword_difficulty(
-    keyword: str = Field(..., description="Keyword to analyze"),
-    search_volume: int = Field(default=0, description="Monthly search volume"),
-    difficulty: float = Field(default=50.0, ge=0, le=100, description="Basic difficulty score"),
-    competition: float = Field(default=0.5, ge=0, le=1, description="Competition index"),
-    location: str = Field(default="United States", description="Location for analysis"),
-    language: str = Field(default="en", description="Language code")
+    request: KeywordDifficultyRequest
 ):
     """
     Analyze keyword difficulty with multi-factor analysis.
@@ -1300,16 +1295,16 @@ async def analyze_keyword_difficulty(
             raise HTTPException(status_code=503, detail="Difficulty analyzer not available")
         
         analysis = await keyword_difficulty_analyzer.analyze_difficulty(
-            keyword=keyword,
-            search_volume=search_volume,
-            difficulty=difficulty,
-            competition=competition,
-            location=location,
-            language=language
+            keyword=request.keyword,
+            search_volume=request.search_volume,
+            difficulty=request.difficulty,
+            competition=request.competition,
+            location=request.location,
+            language=request.language
         )
         
         return {
-            "keyword": keyword,
+            "keyword": request.keyword,
             "overall_difficulty": analysis.overall_difficulty,
             "domain_authority_required": analysis.factors.domain_authority_required,
             "backlink_requirements": analysis.factors.backlink_requirements.value,
