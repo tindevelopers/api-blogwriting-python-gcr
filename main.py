@@ -1378,9 +1378,7 @@ async def get_quota_info(organization_id: str):
 @app.post("/api/v1/quota/{organization_id}/set-limits")
 async def set_quota_limits(
     organization_id: str,
-    monthly_limit: Optional[int] = Field(None, description="Monthly limit"),
-    daily_limit: Optional[int] = Field(None, description="Daily limit"),
-    hourly_limit: Optional[int] = Field(None, description="Hourly limit")
+    request: SetQuotaLimitsRequest
 ):
     """
     Set custom quota limits for an organization.
@@ -1394,9 +1392,9 @@ async def set_quota_limits(
         
         await quota_manager.set_quota_limits(
             organization_id=organization_id,
-            monthly_limit=monthly_limit,
-            daily_limit=daily_limit,
-            hourly_limit=hourly_limit
+            monthly_limit=request.monthly_limit,
+            daily_limit=request.daily_limit,
+            hourly_limit=request.hourly_limit
         )
         
         return {"message": "Quota limits updated successfully"}
