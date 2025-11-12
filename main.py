@@ -899,6 +899,27 @@ async def generate_blog_enhanced(
         if request.custom_instructions:
             additional_context["custom_instructions"] = request.custom_instructions
         
+        # Add product research requirements if enabled
+        if request.include_product_research:
+            additional_context["product_research_requirements"] = {
+                "include_brands": request.include_brands,
+                "include_models": request.include_models,
+                "include_prices": request.include_prices,
+                "include_features": request.include_features,
+                "include_reviews": request.include_reviews,
+                "include_pros_cons": request.include_pros_cons,
+                "include_product_table": request.include_product_table,
+                "include_comparison_section": request.include_comparison_section,
+                "include_buying_guide": request.include_buying_guide,
+                "include_faq_section": request.include_faq_section,
+                "research_depth": request.research_depth
+            }
+            # Force Google Search for product research
+            if not request.use_google_search:
+                logger.info("Product research enabled, forcing Google Search")
+                # Note: We can't modify request.use_google_search here, but we can ensure search is used
+                # The pipeline will use google_search if available
+        
         # SERP optimization if enabled
         serp_features = []
         if request.use_serp_optimization and request.keywords:

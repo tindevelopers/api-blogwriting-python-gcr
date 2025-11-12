@@ -31,8 +31,26 @@ class EnhancedBlogGenerationRequest(BaseModel):
     
     # Additional context
     target_audience: Optional[str] = Field(None, description="Target audience")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=2000, description="Additional instructions for content generation")
     template_type: Optional[str] = Field(None, description="Prompt template type (expert_authority, how_to_guide, etc.)")
+    
+    # Product research options (for product review/comparison content)
+    include_product_research: bool = Field(default=False, description="Enable comprehensive product research (brands, models, prices, features)")
+    include_brands: bool = Field(default=True, description="Include specific brand recommendations")
+    include_models: bool = Field(default=True, description="Include specific product models")
+    include_prices: bool = Field(default=False, description="Include current pricing information")
+    include_features: bool = Field(default=True, description="Include product features and specifications")
+    include_reviews: bool = Field(default=True, description="Include review summaries and ratings")
+    include_pros_cons: bool = Field(default=True, description="Include pros and cons for each product")
+    
+    # Content structure options
+    include_product_table: bool = Field(default=False, description="Include product comparison table")
+    include_comparison_section: bool = Field(default=True, description="Include detailed comparison section")
+    include_buying_guide: bool = Field(default=True, description="Include buying guide section")
+    include_faq_section: bool = Field(default=True, description="Include FAQ section based on common questions")
+    
+    # Research depth
+    research_depth: Optional[str] = Field(default="standard", description="Research depth: 'basic', 'standard', or 'comprehensive'")
 
 
 class EnhancedBlogGenerationResponse(BaseModel):

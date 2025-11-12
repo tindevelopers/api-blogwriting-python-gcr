@@ -175,6 +175,36 @@ Generate comprehensive, well-researched content that readers will find valuable 
                     prompt += f"\nINTENT-BASED RECOMMENDATIONS:\n{chr(10).join(f'- {r}' for r in recommendations[:3])}"
             if context.get("adjusted_word_count"):
                 prompt += f"\n\nADJUSTED TARGET LENGTH: {context['adjusted_word_count']} words (optimized based on competition)"
+            if context.get("brand_recommendations"):
+                brand_data = context['brand_recommendations']
+                brands_list = brand_data.get("brands", [])
+                if brands_list:
+                    prompt += f"\n\nPRODUCT BRAND RECOMMENDATIONS:\nInclude detailed information about these brands/models: {', '.join(brands_list[:10])}\n\nFor each brand, include:\n- Key features and specifications\n- Pros and cons\n- Best use cases\n- Price range (if available)\n- User ratings/reviews summary\n- Where to buy\n\nCreate a dedicated comparison section or integrate brand recommendations throughout relevant sections."
+            if context.get("custom_instructions"):
+                prompt += f"\n\nADDITIONAL INSTRUCTIONS:\n{context['custom_instructions']}"
+            if context.get("product_research_requirements"):
+                req = context['product_research_requirements']
+                prompt += f"\n\nPRODUCT RESEARCH REQUIREMENTS:\n"
+                if req.get("include_brands"):
+                    prompt += "- Include specific brand names and recommendations\n"
+                if req.get("include_models"):
+                    prompt += "- Include specific product model names\n"
+                if req.get("include_prices"):
+                    prompt += "- Include current pricing information where available\n"
+                if req.get("include_features"):
+                    prompt += "- Include detailed features and specifications\n"
+                if req.get("include_reviews"):
+                    prompt += "- Include review summaries and user ratings\n"
+                if req.get("include_pros_cons"):
+                    prompt += "- Include pros and cons for each recommended product\n"
+                if req.get("include_product_table"):
+                    prompt += "\nCONTENT STRUCTURE:\n- Create a product comparison table with key specifications\n"
+                if req.get("include_comparison_section"):
+                    prompt += "- Include a detailed comparison section\n"
+                if req.get("include_buying_guide"):
+                    prompt += "- Include a buying guide section with key considerations\n"
+                if req.get("include_faq_section"):
+                    prompt += "- Include an FAQ section addressing common questions\n"
         
         return prompt
     
