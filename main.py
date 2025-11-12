@@ -1095,11 +1095,16 @@ async def analyze_keywords(
                 # Convert to expected format
                 keyword_analysis = {}
                 for kw, analysis in results.items():
+                    # Ensure search_volume and cpc are always numeric (never None)
+                    search_volume = analysis.search_volume if analysis.search_volume is not None else 0
+                    cpc_value = analysis.cpc if analysis.cpc is not None else 0.0
+                    competition_value = analysis.competition if analysis.competition is not None else 0.0
+                    
                     keyword_analysis[kw] = {
                         "difficulty": analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty),
-                        "search_volume": analysis.search_volume,
-                        "competition": analysis.competition,
-                        "cpc": analysis.cpc,
+                        "search_volume": search_volume,  # Always numeric
+                        "competition": competition_value,
+                        "cpc": cpc_value,  # Always numeric
                         "recommended": analysis.recommended,
                         "reason": analysis.reason,
                         "related_keywords": analysis.related_keywords[:10],
@@ -1229,12 +1234,18 @@ async def analyze_keywords_enhanced(
                 category_type = clustering._classify_keyword_type(k)
                 cluster_score = 0.5
             
+            # Ensure search_volume and cpc are always numeric (never None)
+            search_volume = v.search_volume if v.search_volume is not None else 0
+            cpc_value = v.cpc if v.cpc is not None else 0.0
+            competition_value = v.competition if v.competition is not None else 0.0
+            trend_score_value = v.trend_score if v.trend_score is not None else 0.0
+            
             out[k] = {
-                "search_volume": v.search_volume,
+                "search_volume": search_volume,  # Always numeric
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
-                "competition": v.competition,
-                "cpc": v.cpc,
-                "trend_score": v.trend_score,
+                "competition": competition_value,
+                "cpc": cpc_value,  # Always numeric
+                "trend_score": trend_score_value,
                 "recommended": v.recommended,
                 "reason": v.reason,
                 "related_keywords": v.related_keywords,
