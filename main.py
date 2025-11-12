@@ -132,10 +132,11 @@ class KeywordAnalysisRequest(BaseModel):
 
 class EnhancedKeywordAnalysisRequest(BaseModel):
     """Request model for enhanced keyword analysis with DataForSEO."""
-    keywords: List[str] = Field(..., max_length=50, description="Keywords to analyze")
+    keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200 for comprehensive research)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
+    max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
 
 
 class PlatformPublishRequest(BaseModel):
