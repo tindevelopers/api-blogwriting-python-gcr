@@ -139,6 +139,28 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         
         return results
     
+    async def analyze_keywords_comprehensive(self, keywords: List[str], tenant_id: str = "default") -> Dict[str, KeywordAnalysis]:
+        """
+        Perform comprehensive keyword analysis with real SEO data.
+        This is an alias for analyze_keywords_batch that includes tenant_id for credential initialization.
+        
+        Args:
+            keywords: List of keywords to analyze
+            tenant_id: Tenant ID for credential initialization
+            
+        Returns:
+            Dictionary mapping keywords to their comprehensive analysis
+        """
+        # Ensure credentials are initialized if using DataForSEO
+        if self.use_dataforseo and self._df_client:
+            try:
+                await self._df_client.initialize_credentials(tenant_id)
+            except Exception as e:
+                print(f"Warning: Failed to initialize DataForSEO credentials: {e}")
+        
+        # Use batch analysis which handles DataForSEO integration
+        return await self.analyze_keywords_batch(keywords)
+    
     async def get_keyword_trends(self, keywords: List[str], days: int = 90) -> Dict[str, Any]:
         """
         Get keyword trend data from DataForSEO.
