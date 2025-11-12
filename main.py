@@ -1183,9 +1183,13 @@ async def analyze_keywords_enhanced(
         clustering = KeywordClustering(knowledge_graph_client=kg_client)
         clustering_result = clustering.cluster_keywords(
             keywords=all_keywords,
-            min_cluster_size=1,
+            min_cluster_size=1,  # Allow single keywords to form clusters
             max_clusters=None
         )
+        
+        # Log clustering results for debugging
+        logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")
+        logger.info(f"Clusters: {[c.parent_topic for c in clustering_result.clusters[:5]]}")
         
         # Shape into a simple dict for API response with parent topics
         out = {}
@@ -1223,25 +1227,41 @@ async def analyze_keywords_enhanced(
                 "cluster_score": cluster_score
             }
         
+        # Ensure clusters are always returned, even if empty
+        clusters_list = [
+            {
+                "parent_topic": c.parent_topic,
+                "keywords": c.keywords,
+                "cluster_score": c.cluster_score,
+                "category_type": c.category_type,
+                "keyword_count": len(c.keywords)
+            }
+            for c in clustering_result.clusters
+        ]
+        
+        # If no clusters found, create single-keyword clusters from all keywords
+        if not clusters_list and all_keywords:
+            logger.warning(f"No clusters found for {len(all_keywords)} keywords, creating single-keyword clusters")
+            for kw in all_keywords[:50]:  # Limit to first 50 to avoid huge responses
+                parent_topic = clustering._extract_parent_topic_from_keyword(kw)
+                clusters_list.append({
+                    "parent_topic": parent_topic,
+                    "keywords": [kw],
+                    "cluster_score": 0.5,
+                    "category_type": clustering._classify_keyword_type(kw),
+                    "keyword_count": 1
+                })
+        
         return {
             "enhanced_analysis": out,
             "total_keywords": len(all_keywords),
             "original_keywords": request.keywords,
             "suggested_keywords": all_keywords[len(request.keywords):] if len(all_keywords) > len(request.keywords) else [],
-            "clusters": [
-                {
-                    "parent_topic": c.parent_topic,
-                    "keywords": c.keywords,
-                    "cluster_score": c.cluster_score,
-                    "category_type": c.category_type,
-                    "keyword_count": len(c.keywords)
-                }
-                for c in clustering_result.clusters
-            ],
+            "clusters": clusters_list,
             "cluster_summary": {
-                "total_keywords": clustering_result.total_keywords,
-                "cluster_count": clustering_result.cluster_count,
-                "unclustered_count": len(clustering_result.unclustered)
+                "total_keywords": clustering_result.total_keywords if clustering_result else len(all_keywords),
+                "cluster_count": len(clusters_list),
+                "unclustered_count": len(clustering_result.unclustered) if clustering_result else 0
             }
         }
     except HTTPException:
