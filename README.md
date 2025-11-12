@@ -6,8 +6,8 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Version**: 1.2.0  
-**Publish date**: 2025-01-10  
+**Version**: 1.2.1  
+**Publish date**: 2025-11-12  
 See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ## 🚀 Features
@@ -421,6 +421,15 @@ See [Enhanced Blog Generation Guide](PHASE1_PHASE2_IMPLEMENTATION.md) for detail
 - `POST /api/v1/keywords/extract` - Extract keywords from content (phrase-mode via `max_ngram`, `dedup_lim`)
 - `POST /api/v1/keywords/suggest` - Get keyword suggestions
 - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis using DataForSEO (intent, volume, difficulty, CPC; graceful fallback)
+
+### Topic Recommendations
+- `POST /api/v1/topics/recommend` - **NEW**: Recommend high-ranking blog topics based on seed keywords
+  - Uses DataForSEO for keyword metrics (search volume, difficulty, competition)
+  - Uses Google Custom Search for content gap analysis
+  - Uses Claude 3.5 Sonnet for AI-powered topic generation
+  - Returns topics with ranking scores (0-100) and opportunity scores (0-100)
+  - Categorizes topics: high priority, trending, low competition
+  - Includes content gaps, related keywords, and estimated traffic potential
 
 ### Integrations (Target-Agnostic)
 - `POST /api/v1/integrations/connect-and-recommend`  

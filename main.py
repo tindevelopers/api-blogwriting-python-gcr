@@ -17,8 +17,8 @@ from contextlib import asynccontextmanager
 startup_time = time.time()
 
 # Deployment trigger - updated timestamp
-deployment_version = "2025-01-10-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.2.0")
+deployment_version = "2025-11-12-001"
+APP_VERSION = os.getenv("APP_VERSION", "1.2.1")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -90,6 +90,7 @@ from src.blog_writer_sdk.seo.content_quality_scorer import ContentQualityScorer
 from src.blog_writer_sdk.seo.intent_analyzer import IntentAnalyzer
 from src.blog_writer_sdk.seo.few_shot_learning import FewShotLearningExtractor
 from src.blog_writer_sdk.seo.content_length_optimizer import ContentLengthOptimizer
+from src.blog_writer_sdk.seo.topic_recommender import TopicRecommendationEngine
 from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
 
 
@@ -137,6 +138,16 @@ class EnhancedKeywordAnalysisRequest(BaseModel):
     language: Optional[str] = Field("en", description="Language code for analysis")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
     max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
+
+class TopicRecommendationRequest(BaseModel):
+    """Request model for topic recommendations."""
+    seed_keywords: List[str] = Field(..., min_items=1, max_length=10, description="Seed keywords to base recommendations on")
+    location: Optional[str] = Field("United States", description="Location for search volume analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    max_topics: int = Field(default=20, ge=5, le=50, description="Maximum number of topics to return")
+    min_search_volume: int = Field(default=100, ge=0, description="Minimum monthly search volume")
+    max_difficulty: float = Field(default=70.0, ge=0, le=100, description="Maximum keyword difficulty (0-100)")
+    include_ai_suggestions: bool = Field(default=True, description="Use Claude AI for intelligent topic generation")
 
 
 class PlatformPublishRequest(BaseModel):
@@ -358,6 +369,18 @@ async def lifespan(app: FastAPI):
     )
     print("✅ Phase 3 components initialized.")
     print("✅ Additional enhancements initialized (intent analysis, few-shot learning, length optimization).")
+    
+    # Initialize Topic Recommendation Engine
+    global topic_recommender
+    from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+    keyword_clustering = KeywordClustering(knowledge_graph_client=google_knowledge_graph_client)
+    topic_recommender = TopicRecommendationEngine(
+        dataforseo_client=dataforseo_client_global,
+        google_search_client=google_custom_search_client,
+        ai_generator=ai_generator,
+        keyword_clustering=keyword_clustering
+    )
+    print("✅ Topic Recommendation Engine initialized.")
 
     yield
     
@@ -1160,6 +1183,104 @@ async def analyze_keywords_enhanced(
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
+# Topic recommendation endpoint
+@app.post("/api/v1/topics/recommend")
+async def recommend_topics(
+    request: TopicRecommendationRequest
+):
+    """
+    Recommend high-ranking blog topics based on seed keywords.
+    
+    Uses:
+    - DataForSEO for keyword metrics (search volume, difficulty, competition)
+    - Google Custom Search for content gap analysis
+    - Claude AI (3.5 Sonnet) for intelligent topic generation
+    
+    Returns topics with ranking scores, opportunity scores, and content gap analysis.
+    """
+    try:
+        global topic_recommender, ai_generator
+        
+        if not topic_recommender:
+            raise HTTPException(
+                status_code=503,
+                detail="Topic recommendation engine not available"
+            )
+        
+        # Get recommendations
+        result = await topic_recommender.recommend_topics(
+            seed_keywords=request.seed_keywords,
+            location=request.location or "United States",
+            language=request.language or "en",
+            max_topics=request.max_topics,
+            min_search_volume=request.min_search_volume,
+            max_difficulty=request.max_difficulty,
+            include_ai_suggestions=request.include_ai_suggestions
+        )
+        
+        # Convert to response format
+        return {
+            "recommended_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "search_volume": t.search_volume,
+                    "difficulty": t.difficulty,
+                    "competition": t.competition,
+                    "cpc": t.cpc,
+                    "ranking_score": t.ranking_score,
+                    "opportunity_score": t.opportunity_score,
+                    "related_keywords": t.related_keywords,
+                    "content_gaps": t.content_gaps,
+                    "estimated_traffic": t.estimated_traffic,
+                    "reason": t.reason
+                }
+                for t in result.recommended_topics
+            ],
+            "high_priority_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "ranking_score": t.ranking_score,
+                    "search_volume": t.search_volume,
+                    "difficulty": t.difficulty,
+                    "reason": t.reason
+                }
+                for t in result.high_priority_topics
+            ],
+            "trending_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "search_volume": t.search_volume,
+                    "difficulty": t.difficulty,
+                    "reason": t.reason
+                }
+                for t in result.trending_topics
+            ],
+            "low_competition_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "difficulty": t.difficulty,
+                    "competition": t.competition,
+                    "reason": t.reason
+                }
+                for t in result.low_competition_topics
+            ],
+            "total_opportunities": result.total_opportunities,
+            "analysis_date": result.analysis_date
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Topic recommendation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Topic recommendation failed: {str(e)}"
         )
 
 # Extract keywords from content endpoint
