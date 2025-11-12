@@ -4,6 +4,8 @@
 
 The API now returns keywords with **parent topics** and clustering information. This guide explains how the frontend should handle this data for optimal display and user experience.
 
+**Important:** The API now supports up to **150 keyword derivatives** per seed keyword, similar to AHREFs-style comprehensive keyword research.
+
 ---
 
 ## API Response Structure
@@ -43,6 +45,8 @@ The API now returns keywords with **parent topics** and clustering information. 
   }
 }
 ```
+
+**Note:** `max_keywords` parameter now supports up to **200 keywords** (increased from 50).
 
 ### `/api/v1/keywords/enhanced` Response
 

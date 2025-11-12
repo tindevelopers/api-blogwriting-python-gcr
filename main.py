@@ -161,7 +161,7 @@ class MediaUploadRequest(BaseModel):
 class KeywordExtractionRequest(BaseModel):
     """Request model for keyword extraction API."""
     content: str = Field(..., min_length=100, description="Content to extract keywords from")
-    max_keywords: int = Field(default=20, ge=5, le=50, description="Maximum keywords to extract")
+    max_keywords: int = Field(default=20, ge=5, le=200, description="Maximum keywords to extract (up to 200 for comprehensive research)")
     max_ngram: int = Field(default=3, ge=1, le=5, description="Maximum words per keyphrase (phrase mode)")
     dedup_lim: float = Field(default=0.7, ge=0.1, le=0.99, description="Deduplication threshold for phrases")
 
@@ -169,6 +169,7 @@ class KeywordExtractionRequest(BaseModel):
 class KeywordSuggestionRequest(BaseModel):
     """Request model for keyword suggestions."""
     keyword: str = Field(..., min_length=2, max_length=100, description="Base keyword for suggestions")
+    limit: int = Field(default=20, ge=5, le=150, description="Maximum number of keyword suggestions to return (up to 150 for comprehensive research)")
 
 
 class ContentOptimizationRequest(BaseModel):
@@ -1037,6 +1038,48 @@ async def analyze_keywords_enhanced(
             tenant_id=os.getenv("TENANT_ID", "default")
         )
         
+        # Get additional keyword suggestions using DataForSEO if available
+        all_keywords = list(request.keywords)
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                # Get suggestions for each seed keyword
+                for seed_keyword in request.keywords[:5]:  # Limit to top 5 seed keywords to avoid too many API calls
+                    if len(all_keywords) >= 200:  # Max limit
+                        break
+                    
+                    try:
+                        df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
+                            seed_keyword=seed_keyword,
+                            location_name=request.location or "United States",
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            limit=min(request.max_suggestions_per_keyword, 150)
+                        )
+                        
+                        # Add new keywords that aren't already in the list
+                        for suggestion in df_suggestions:
+                            kw = suggestion.get("keyword", "").strip()
+                            if kw and kw not in all_keywords and len(all_keywords) < 200:
+                                all_keywords.append(kw)
+                    except Exception as e:
+                        logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
+                        continue
+            except Exception as e:
+                logger.warning(f"DataForSEO suggestions failed: {e}")
+        
+        # Analyze all keywords (original + suggestions)
+        if len(all_keywords) > len(request.keywords):
+            # Analyze additional keywords
+            additional_results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                keywords=all_keywords[len(request.keywords):],
+                tenant_id=os.getenv("TENANT_ID", "default")
+            )
+            # Merge results
+            results.update(additional_results)
+        
         # Cluster keywords by parent topics
         # Use global knowledge graph client if available
         kg_client = None
@@ -1047,7 +1090,7 @@ async def analyze_keywords_enhanced(
         
         clustering = KeywordClustering(knowledge_graph_client=kg_client)
         clustering_result = clustering.cluster_keywords(
-            keywords=request.keywords,
+            keywords=all_keywords,
             min_cluster_size=1,
             max_clusters=None
         )
@@ -1090,6 +1133,9 @@ async def analyze_keywords_enhanced(
         
         return {
             "enhanced_analysis": out,
+            "total_keywords": len(all_keywords),
+            "original_keywords": request.keywords,
+            "suggested_keywords": all_keywords[len(request.keywords):] if len(all_keywords) > len(request.keywords) else [],
             "clusters": [
                 {
                     "parent_topic": c.parent_topic,

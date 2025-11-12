@@ -87,7 +87,8 @@ class KeywordClustering:
         self,
         keywords: List[str],
         min_cluster_size: int = 2,
-        max_clusters: Optional[int] = None
+        max_clusters: Optional[int] = None,
+        max_keywords_per_cluster: Optional[int] = None
     ) -> ClusteringResult:
         """
         Cluster keywords into groups with parent topics.
@@ -96,6 +97,7 @@ class KeywordClustering:
             keywords: List of keywords to cluster
             min_cluster_size: Minimum keywords per cluster
             max_clusters: Maximum number of clusters (None = unlimited)
+            max_keywords_per_cluster: Maximum keywords per cluster (None = unlimited)
         
         Returns:
             ClusteringResult with clusters and parent topics
@@ -110,6 +112,11 @@ class KeywordClustering:
         
         # Normalize keywords
         normalized_keywords = [self._normalize_keyword(kw) for kw in keywords]
+        
+        # Limit keywords if too many (for performance)
+        if len(normalized_keywords) > 500:
+            logger.warning(f"Too many keywords ({len(normalized_keywords)}), limiting to 500 for performance")
+            normalized_keywords = normalized_keywords[:500]
         
         # Strategy 1: Group by question words
         question_clusters = self._cluster_by_question_words(normalized_keywords)
