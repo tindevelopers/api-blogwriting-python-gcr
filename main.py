@@ -1320,15 +1320,31 @@ async def analyze_keywords_enhanced(
             pass
         
         clustering = KeywordClustering(knowledge_graph_client=kg_client)
-        clustering_result = clustering.cluster_keywords(
-            keywords=all_keywords,
-            min_cluster_size=1,  # Allow single keywords to form clusters
-            max_clusters=None
-        )
-        
-        # Log clustering results for debugging
-        logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")
-        logger.info(f"Clusters: {[c.parent_topic for c in clustering_result.clusters[:5]]}")
+        try:
+            clustering_result = clustering.cluster_keywords(
+                keywords=all_keywords,
+                min_cluster_size=1,  # Allow single keywords to form clusters
+                max_clusters=None
+            )
+            # Log clustering results for debugging
+            logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")
+            logger.info(f"Clusters: {[c.parent_topic for c in clustering_result.clusters[:5]]}")
+        except Exception as e:
+            logger.warning(f"Clustering failed: {e}, continuing without clustering")
+            # Create a fallback clustering result
+            from src.blog_writer_sdk.seo.keyword_clustering import ClusteringResult, KeywordCluster
+            clustering_result = ClusteringResult(
+                clusters=[KeywordCluster(
+                    parent_topic=kw,
+                    keywords=[kw],
+                    cluster_score=0.5,
+                    dominant_words=kw.split()[:3],
+                    category_type="topic"
+                ) for kw in all_keywords[:50]],
+                unclustered=all_keywords[50:] if len(all_keywords) > 50 else [],
+                total_keywords=len(all_keywords),
+                cluster_count=min(len(all_keywords), 50)
+            )
         
         # Shape into a simple dict for API response with parent topics
         out = {}
