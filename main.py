@@ -52,7 +52,7 @@ from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_loggin
 # from src.blog_writer_sdk.services.credential_service import TenantCredentialService
 # from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
 # from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
-from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient, EnhancedKeywordAnalyzer
+from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient
 
 # Global DataForSEO client for Phase 3 semantic integration
 dataforseo_client_global = None
