@@ -88,7 +88,9 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         
         try:
             # Get enhanced metrics from DataForSEO (direct API if available)
-            enhanced_data = await self._get_dataforseo_metrics(keyword)
+            # Use default tenant_id if not provided
+            tenant_id = getattr(self, '_tenant_id', 'default')
+            enhanced_data = await self._get_dataforseo_metrics(keyword, tenant_id=tenant_id)
             
             # Cache the results
             self._keyword_cache[cache_key] = {

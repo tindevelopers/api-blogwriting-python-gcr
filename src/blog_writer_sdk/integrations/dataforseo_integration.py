@@ -646,16 +646,22 @@ class EnhancedKeywordAnalyzer:
                     seo_data = search_data.get(keyword, {})
                     difficulty_score = difficulty_data.get(keyword, 50.0)
                     
+                    # Ensure search_volume and cpc are always numeric (never None)
+                    search_volume = seo_data.get("search_volume", 0) or 0
+                    cpc_value = seo_data.get("cpc", 0.0) or 0.0
+                    competition_value = seo_data.get("competition", 0.5) or 0.5
+                    trend_value = seo_data.get("trend", 0.0) or 0.0
+                    
                     # Create comprehensive analysis
                     analysis = KeywordAnalysis(
                         keyword=keyword,
-                        search_volume=seo_data.get("search_volume"),
+                        search_volume=search_volume,  # Always numeric
                         difficulty=self._score_to_difficulty(difficulty_score),
-                        competition=seo_data.get("competition", 0.5),
+                        competition=competition_value,
                         related_keywords=self._generate_related_keywords(keyword),
                         long_tail_keywords=self._generate_long_tail_keywords(keyword),
-                        cpc=seo_data.get("cpc"),
-                        trend_score=seo_data.get("trend", 0.0),
+                        cpc=cpc_value,  # Always numeric
+                        trend_score=trend_value,
                         recommended=self._evaluate_recommendation(keyword, seo_data, difficulty_score),
                         reason=self._get_recommendation_reason(keyword, seo_data, difficulty_score),
                     )
