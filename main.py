@@ -127,9 +127,14 @@ class ContentAnalysisRequest(BaseModel):
 
 class KeywordAnalysisRequest(BaseModel):
     """Request model for keyword analysis."""
-    keywords: List[str] = Field(..., max_length=50, description="Keywords to analyze")
+    keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
+    text: Optional[str] = Field(None, description="Optional text content (ignored if keywords provided)")
+    max_suggestions_per_keyword: Optional[int] = Field(None, description="Optional: if provided, routes to enhanced analysis")
+    
+    class Config:
+        extra = "ignore"  # Ignore extra fields to be more flexible with frontend requests
 
 class EnhancedKeywordAnalysisRequest(BaseModel):
     """Request model for enhanced keyword analysis with DataForSEO."""
@@ -1018,16 +1023,62 @@ async def analyze_keywords(
     """
     Analyze keywords for SEO potential and difficulty.
     
+    If `max_suggestions_per_keyword` is provided (even if 0), automatically routes to enhanced analysis
+    for better results with search volume, difficulty, and competition data.
+    
     Returns analysis for each keyword including:
     - Estimated difficulty
+    - Search volume (if enhanced analysis available)
+    - Competition metrics
     - Related keywords
     - Long-tail variations
     - Recommendations
     """
     try:
         if not request.keywords:
-            raise HTTPException(status_code=400, detail="No keywords provided")
+            raise HTTPException(
+                status_code=400,
+                detail="No keywords provided. Please provide at least one keyword in the 'keywords' array."
+            )
         
+        # If max_suggestions_per_keyword is provided (even if 0), use enhanced analysis for better results
+        if request.max_suggestions_per_keyword is not None:
+            # Convert to EnhancedKeywordAnalysisRequest format
+            enhanced_request = EnhancedKeywordAnalysisRequest(
+                keywords=request.keywords,
+                location=request.location,
+                language=request.language,
+                include_serp=False,
+                max_suggestions_per_keyword=max(5, min(request.max_suggestions_per_keyword, 150)) if request.max_suggestions_per_keyword > 0 else 20
+            )
+            # Route to enhanced endpoint for better results
+            return await analyze_keywords_enhanced(enhanced_request)
+        
+        # Standard analysis - but prefer enhanced if available
+        if enhanced_analyzer:
+            try:
+                results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                    keywords=request.keywords,
+                    tenant_id=os.getenv("TENANT_ID", "default")
+                )
+                # Convert to expected format
+                keyword_analysis = {}
+                for kw, analysis in results.items():
+                    keyword_analysis[kw] = {
+                        "difficulty": analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty),
+                        "search_volume": analysis.search_volume,
+                        "competition": analysis.competition,
+                        "cpc": analysis.cpc,
+                        "recommended": analysis.recommended,
+                        "reason": analysis.reason,
+                        "related_keywords": analysis.related_keywords[:10],
+                        "long_tail_keywords": analysis.long_tail_keywords[:10]
+                    }
+                return {"keyword_analysis": keyword_analysis}
+            except Exception as e:
+                logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
+        
+        # Fallback to standard analysis
         results = {}
         for keyword in request.keywords:
             analysis = await writer.keyword_analyzer.analyze_keyword(keyword)
@@ -1035,7 +1086,10 @@ async def analyze_keywords(
         
         return {"keyword_analysis": results}
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Keyword analysis failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Keyword analysis failed: {str(e)}"
