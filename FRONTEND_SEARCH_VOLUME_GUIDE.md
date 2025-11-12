@@ -1,7 +1,7 @@
 # Frontend Guide: Getting Search Volume Data
 
 **Version**: 1.2.0  
-**Date**: 2025-01-10
+**Date**: 2025-11-12
 
 ---
 
