@@ -304,18 +304,24 @@ class DataForSEOClient:
             }
     
     @monitor_performance("dataforseo_get_keyword_suggestions")
-    async def get_keyword_suggestions(self, seed_keyword: str, location_name: str, language_code: str, tenant_id: str) -> List[Dict[str, Any]]:
+    async def get_keyword_suggestions(self, seed_keyword: str, location_name: str, language_code: str, tenant_id: str, limit: int = 150) -> List[Dict[str, Any]]:
         """
         Get keyword suggestions using DataForSEO keyword ideas API.
         
         Args:
             seed_keyword: Base keyword to get suggestions for
-            limit: Maximum number of suggestions to return
+            location_name: Location for keyword data
+            language_code: Language code
+            tenant_id: Tenant ID for credentials
+            limit: Maximum number of suggestions to return (default: 150, max: 1000)
             
         Returns:
             List of keyword suggestions with metrics
         """
         try:
+            # Ensure limit is within API constraints
+            limit = min(limit, 1000)  # DataForSEO API max limit
+            
             # Check cache first
             cache_key = f"suggestions_{seed_keyword}_{limit}"
             if cache_key in self._cache:
@@ -353,10 +359,10 @@ class DataForSEOClient:
             # Cache the results
             self._cache[cache_key] = (suggestions, datetime.now().timestamp())
             
-            return suggestions
+            return suggestions[:limit]  # Ensure we don't exceed limit
             
         except Exception as e:
-            print(f"Error getting keyword suggestions: {e}")
+            logger.warning(f"Error getting keyword suggestions from DataForSEO: {e}")
             # Return fallback suggestions
             return self._generate_fallback_suggestions(seed_keyword, limit)
     

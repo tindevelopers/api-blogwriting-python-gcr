@@ -525,3 +525,4 @@ class ShopifyPublisher:
         except Exception as e:
             self.logger.error(f"Failed to publish blog with recommendations to Shopify: {str(e)}")
             raise
+

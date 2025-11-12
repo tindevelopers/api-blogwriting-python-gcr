@@ -143,15 +143,16 @@ class KeywordAnalyzer:
         
         return density_map
     
-    async def suggest_keyword_variations(self, keyword: str) -> List[str]:
+    async def suggest_keyword_variations(self, keyword: str, limit: int = 150) -> List[str]:
         """
         Suggest keyword variations and synonyms.
         
         Args:
             keyword: Base keyword
+            limit: Maximum number of variations to return (default: 150)
             
         Returns:
-            List of keyword variations
+            List of keyword variations (up to limit)
         """
         variations = []
         
@@ -161,24 +162,54 @@ class KeywordAnalyzer:
         else:
             variations.append(keyword + 's')  # Add 's'
         
-        # Add common prefixes and suffixes
-        prefixes = ['best', 'top', 'how to', 'what is', 'guide to']
-        suffixes = ['guide', 'tips', 'tutorial', 'examples', 'benefits']
+        # Extended prefixes for comprehensive coverage
+        prefixes = [
+            'best', 'top', 'how to', 'what is', 'guide to', 'ultimate', 'complete',
+            'professional', 'affordable', 'cheap', 'expensive', 'free', 'paid',
+            'online', 'local', 'near me', 'nearby', 'in', 'for', 'with', 'without',
+            'beginner', 'advanced', 'expert', 'essential', 'latest', 'new', 'popular',
+            'trending', '2024', '2025', 'review', 'reviews', 'comparison', 'vs',
+            'alternatives', 'buy', 'find', 'get', 'learn', 'discover', 'explore'
+        ]
         
+        # Extended suffixes
+        suffixes = [
+            'guide', 'tips', 'tutorial', 'examples', 'benefits', 'services',
+            'company', 'provider', 'business', 'center', 'clinic', 'hospital',
+            'near me', 'local', 'nearby', 'online', 'reviews', 'prices', 'cost',
+            'costs', 'pricing', 'plans', 'options', 'solutions', 'software', 'tools'
+        ]
+        
+        # Add prefix variations
         for prefix in prefixes:
+            if len(variations) >= limit:
+                break
             variations.append(f"{prefix} {keyword}")
         
+        # Add suffix variations
         for suffix in suffixes:
+            if len(variations) >= limit:
+                break
             variations.append(f"{keyword} {suffix}")
         
         # Add question variations
-        question_starters = ['how to', 'what is', 'why', 'when', 'where']
+        question_starters = ['how to', 'what is', 'why', 'when', 'where', 'who', 'which', 'can', 'should', 'will']
         for starter in question_starters:
+            if len(variations) >= limit:
+                break
             if starter not in keyword.lower():
                 variations.append(f"{starter} {keyword}")
         
-        # Remove duplicates and return
-        return list(set(variations))
+        # Add location-based variations
+        locations = ['near me', 'local', 'nearby', 'in', 'for']
+        for location in locations:
+            if len(variations) >= limit:
+                break
+            variations.append(f"{keyword} {location}")
+        
+        # Remove duplicates and return up to limit
+        unique_variations = list(dict.fromkeys(variations))  # Preserves order while removing duplicates
+        return unique_variations[:limit]
     
     async def analyze_competitor_keywords(self, competitor_content: str) -> List[str]:
         """

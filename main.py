@@ -17,8 +17,8 @@ from contextlib import asynccontextmanager
 startup_time = time.time()
 
 # Deployment trigger - updated timestamp
-deployment_version = "2024-12-19-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.1.0")
+deployment_version = "2025-01-10-001"
+APP_VERSION = os.getenv("APP_VERSION", "1.2.0")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +53,9 @@ from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_loggin
 # from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
 # from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
 from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient, EnhancedKeywordAnalyzer
+
+# Global DataForSEO client for Phase 3 semantic integration
+dataforseo_client_global = None
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
@@ -71,6 +74,23 @@ from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
+from src.blog_writer_sdk.models.enhanced_blog_models import (
+    EnhancedBlogGenerationRequest,
+    EnhancedBlogGenerationResponse
+)
+from src.blog_writer_sdk.ai.multi_stage_pipeline import MultiStageGenerationPipeline
+from src.blog_writer_sdk.ai.enhanced_prompts import PromptTemplate
+from src.blog_writer_sdk.integrations.google_custom_search import GoogleCustomSearchClient
+from src.blog_writer_sdk.integrations.google_knowledge_graph import GoogleKnowledgeGraphClient
+from src.blog_writer_sdk.seo.readability_analyzer import ReadabilityAnalyzer
+from src.blog_writer_sdk.seo.citation_generator import CitationGenerator
+from src.blog_writer_sdk.seo.serp_analyzer import SERPAnalyzer
+from src.blog_writer_sdk.seo.semantic_keyword_integrator import SemanticKeywordIntegrator
+from src.blog_writer_sdk.seo.content_quality_scorer import ContentQualityScorer
+from src.blog_writer_sdk.seo.intent_analyzer import IntentAnalyzer
+from src.blog_writer_sdk.seo.few_shot_learning import FewShotLearningExtractor
+from src.blog_writer_sdk.seo.content_length_optimizer import ContentLengthOptimizer
+from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
 
 
 # API Request/Response Models
@@ -112,10 +132,11 @@ class KeywordAnalysisRequest(BaseModel):
 
 class EnhancedKeywordAnalysisRequest(BaseModel):
     """Request model for enhanced keyword analysis with DataForSEO."""
-    keywords: List[str] = Field(..., max_length=50, description="Keywords to analyze")
+    keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200 for comprehensive research)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
+    max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
 
 
 class PlatformPublishRequest(BaseModel):
@@ -141,7 +162,7 @@ class MediaUploadRequest(BaseModel):
 class KeywordExtractionRequest(BaseModel):
     """Request model for keyword extraction API."""
     content: str = Field(..., min_length=100, description="Content to extract keywords from")
-    max_keywords: int = Field(default=20, ge=5, le=50, description="Maximum keywords to extract")
+    max_keywords: int = Field(default=20, ge=5, le=200, description="Maximum keywords to extract (up to 200 for comprehensive research)")
     max_ngram: int = Field(default=3, ge=1, le=5, description="Maximum words per keyphrase (phrase mode)")
     dedup_lim: float = Field(default=0.7, ge=0.1, le=0.99, description="Deduplication threshold for phrases")
 
@@ -149,6 +170,7 @@ class KeywordExtractionRequest(BaseModel):
 class KeywordSuggestionRequest(BaseModel):
     """Request model for keyword suggestions."""
     keyword: str = Field(..., min_length=2, max_length=100, description="Base keyword for suggestions")
+    limit: int = Field(default=20, ge=5, le=150, description="Maximum number of keyword suggestions to return (up to 150 for comprehensive research)")
 
 
 class ContentOptimizationRequest(BaseModel):
@@ -267,12 +289,75 @@ async def lifespan(app: FastAPI):
     print("⚠️ DataforSEO Credential Service not implemented yet. Using direct environment variables.")
 
     # Initialize EnhancedKeywordAnalyzer
-    global enhanced_keyword_analyzer
+    global enhanced_keyword_analyzer, dataforseo_client_global
     enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
         use_dataforseo=True, # Assuming we always want to use DataforSEO if available
         credential_service=dataforseo_credential_service
     )
+    
+    # Initialize DataForSEO client for semantic integration (Phase 3)
+    # Note: DataForSEO client will be initialized synchronously when needed
+    dataforseo_client_global = None  # Will be initialized on first use if credentials available
+    
     print("✅ EnhancedKeywordAnalyzer initialized.")
+    
+    # Initialize Google Custom Search client (Phase 1)
+    global google_custom_search_client
+    google_api_key = os.getenv("GOOGLE_CUSTOM_SEARCH_API_KEY")
+    google_engine_id = os.getenv("GOOGLE_CUSTOM_SEARCH_ENGINE_ID")
+    if google_api_key and google_engine_id:
+        google_custom_search_client = GoogleCustomSearchClient(
+            api_key=google_api_key,
+            search_engine_id=google_engine_id
+        )
+        print("✅ Google Custom Search client initialized.")
+    else:
+        google_custom_search_client = None
+        print("⚠️ Google Custom Search not configured (GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID)")
+    
+    # Initialize Google Search Console client (Phase 2)
+    global google_search_console_client
+    gsc_site_url = os.getenv("GSC_SITE_URL")
+    if gsc_site_url:
+        google_search_console_client = GoogleSearchConsoleClient(site_url=gsc_site_url)
+        print("✅ Google Search Console client initialized.")
+    else:
+        google_search_console_client = None
+        print("⚠️ Google Search Console not configured (GSC_SITE_URL)")
+    
+    # Initialize multi-stage pipeline components
+    global readability_analyzer, citation_generator, serp_analyzer
+    global google_knowledge_graph_client, semantic_integrator, quality_scorer
+    global intent_analyzer, few_shot_extractor, length_optimizer
+    readability_analyzer = ReadabilityAnalyzer()
+    citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
+    serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
+    
+    # Phase 3: Google Knowledge Graph
+    kg_api_key = os.getenv("GOOGLE_KNOWLEDGE_GRAPH_API_KEY")
+    if kg_api_key:
+        google_knowledge_graph_client = GoogleKnowledgeGraphClient(api_key=kg_api_key)
+        print("✅ Google Knowledge Graph client initialized.")
+    else:
+        google_knowledge_graph_client = None
+        print("⚠️ Google Knowledge Graph not configured (GOOGLE_KNOWLEDGE_GRAPH_API_KEY)")
+    
+    # Phase 3: Semantic keyword integrator (uses DataForSEO if available)
+    semantic_integrator = SemanticKeywordIntegrator(dataforseo_client=dataforseo_client_global)
+    quality_scorer = ContentQualityScorer(readability_analyzer=readability_analyzer)
+    
+    # Additional enhancements: Intent analysis, few-shot learning, length optimization
+    intent_analyzer = IntentAnalyzer(dataforseo_client=dataforseo_client_global)
+    few_shot_extractor = FewShotLearningExtractor(
+        google_search_client=google_custom_search_client,
+        dataforseo_client=dataforseo_client_global
+    )
+    length_optimizer = ContentLengthOptimizer(
+        google_search_client=google_custom_search_client,
+        dataforseo_client=dataforseo_client_global
+    )
+    print("✅ Phase 3 components initialized.")
+    print("✅ Additional enhancements initialized (intent analysis, few-shot learning, length optimization).")
 
     yield
     
@@ -293,6 +378,16 @@ app = FastAPI(
     A powerful REST API for AI-driven blog writing with advanced SEO optimization, intelligent routing, and enterprise features.
     
     ## Key Features
+    
+    ### 🚀 Enhanced Blog Generation (v1.2.0) - NEW
+    - **Multi-Stage Pipeline**: 4-stage generation (Research → Draft → Enhancement → SEO)
+    - **Intent-Based Optimization**: Automatic search intent detection and content optimization
+    - **Few-Shot Learning**: Learns from top-ranking content examples
+    - **Content Length Optimization**: Dynamically adjusts based on SERP competition
+    - **Multi-Model Consensus**: Optional GPT-4o + Claude synthesis for higher quality
+    - **Knowledge Graph Integration**: Entity recognition and structured data
+    - **Semantic Keywords**: Natural integration of related keywords
+    - **Quality Scoring**: 6-dimensional quality assessment (readability, SEO, structure, factual, uniqueness, engagement)
     
     ### 🤖 AI Provider Management
     - **Dynamic Provider Configuration**: Add, update, and remove AI providers without service restarts
@@ -335,24 +430,27 @@ app = FastAPI(
     - **Monitoring**: Comprehensive metrics and health monitoring
     - **Multi-Environment**: Support for dev, staging, and production environments
     
+    ## API Endpoints
+    
+    ### Enhanced Blog Generation (v1.2.0)
+    - `POST /api/v1/blog/generate-enhanced` - High-quality multi-stage blog generation with advanced optimizations
+    
+    ### Standard Endpoints
+    - `POST /api/v1/generate` - Standard blog generation
+    - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis with DataForSEO
+    - `POST /api/v1/integrations/connect-and-recommend` - Backlink/interlink recommendations
+    
     ## Quick Start
     
     1. **Configure AI Providers**: Use `/api/v1/ai/providers/configure` to add your AI provider credentials
-    2. **Configure Image Providers**: Use `/api/v1/images/providers/configure` to add image generation providers
-    3. **Generate Content**: Use `/api/v1/blog/generate` to create blog posts
-    4. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
-    5. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
-    6. **Upload Media**: Use `/api/v1/media/upload/{provider}` to upload to Cloudinary or Cloudflare R2
-    7. **Analyze Keywords**: Use `/api/v1/keywords/suggest` for keyword research
-    8. **Monitor Usage**: Use `/api/v1/ai/providers/stats` to track usage and costs
+    2. **Generate Enhanced Content**: Use `/api/v1/blog/generate-enhanced` for high-quality blog posts
+    3. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
+    4. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
+    5. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
     
-    ## Authentication
+    ## Documentation
     
-    API keys are managed securely through the provider management system. No additional authentication is required for basic usage.
-    
-    ## Support
-    
-    - 📚 **Documentation**: Complete API documentation available at `/docs`
+    - 📚 **Enhanced Blog Generation Guide**: See [ENHANCED_BLOG_GENERATION_GUIDE.md](https://github.com/tindevelopers/api-blogwriting-python-gcr/blob/develop/ENHANCED_BLOG_GENERATION_GUIDE.md)
     - 🔧 **Health Checks**: Monitor service health at `/health`
     - 📊 **Metrics**: View usage statistics at `/api/v1/metrics`
     """,
@@ -363,15 +461,18 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Note: FastAPI CORSMiddleware doesn't support wildcard patterns
+# Use allow_origin_regex for pattern matching or list exact origins
+import re
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # Next.js development
         "http://localhost:3001",  # Alternative Next.js port
-        "https://*.vercel.app",   # Vercel deployments
-        "https://*.netlify.app",  # Netlify deployments
+        "https://blogwriter.develop.tinconnect.com",  # Development frontend
         # Add your production domains here
     ],
+    allow_origin_regex=r"https://.*\.(vercel\.app|netlify\.app|tinconnect\.com)$",  # Pattern matching for subdomains
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -685,6 +786,175 @@ async def generate_blog(
         )
 
 
+# Enhanced blog generation endpoint (Phase 1 & 2)
+@app.post("/api/v1/blog/generate-enhanced", response_model=EnhancedBlogGenerationResponse)
+async def generate_blog_enhanced(
+    request: EnhancedBlogGenerationRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Generate high-quality blog content using multi-stage pipeline (Phase 1, 2 & 3).
+    
+    This endpoint uses:
+    - Multi-stage generation pipeline (Research → Draft → Enhancement → SEO)
+    - Google Custom Search for research and fact-checking
+    - Readability optimization
+    - SERP feature optimization
+    - Citation integration
+    - Phase 3: Multi-model consensus, Knowledge Graph, semantic keywords, quality scoring
+    
+    Returns significantly higher-quality content optimized for ranking.
+    """
+    try:
+        # Get global clients
+        global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
+        global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
+        global intent_analyzer, few_shot_extractor, length_optimizer
+        
+        # Initialize pipeline with Phase 3 components and additional enhancements
+        pipeline = MultiStageGenerationPipeline(
+            ai_generator=ai_generator,
+            google_search=google_custom_search_client if request.use_google_search else None,
+            readability_analyzer=readability_analyzer,
+            knowledge_graph=google_knowledge_graph_client if request.use_knowledge_graph else None,
+            semantic_integrator=semantic_integrator if request.use_semantic_keywords else None,
+            quality_scorer=quality_scorer if request.use_quality_scoring else None,
+            intent_analyzer=intent_analyzer,  # Always enabled for better content
+            few_shot_extractor=few_shot_extractor if request.use_google_search else None,
+            length_optimizer=length_optimizer if request.use_google_search else None,
+            use_consensus=request.use_consensus_generation
+        )
+        
+        # Determine template type
+        template = None
+        if request.template_type:
+            try:
+                template = PromptTemplate(request.template_type)
+            except ValueError:
+                template = PromptTemplate.EXPERT_AUTHORITY
+        
+        # Prepare additional context
+        additional_context = {}
+        if request.target_audience:
+            additional_context["target_audience"] = request.target_audience
+        if request.custom_instructions:
+            additional_context["custom_instructions"] = request.custom_instructions
+        
+        # SERP optimization if enabled
+        serp_features = []
+        if request.use_serp_optimization and request.keywords:
+            try:
+                serp_analysis = await serp_analyzer.analyze_serp_features(
+                    request.keywords[0]
+                )
+                serp_features = [f.type for f in serp_analysis.features]
+                additional_context["serp_features"] = serp_features
+            except Exception as e:
+                logger.warning(f"SERP analysis failed: {e}")
+        
+        # Generate using multi-stage pipeline
+        pipeline_result = await pipeline.generate(
+            topic=request.topic,
+            keywords=request.keywords,
+            tone=request.tone,
+            length=request.length,
+            template=template,
+            additional_context=additional_context
+        )
+        
+        # Add citations if enabled
+        citations = []
+        final_content = pipeline_result.final_content
+        if request.use_citations and google_custom_search_client:
+            try:
+                citation_result = await citation_generator.generate_citations(
+                    final_content,
+                    request.topic,
+                    request.keywords
+                )
+                citations = [
+                    {
+                        "text": c.text[:100],
+                        "url": c.source_url,
+                        "title": c.source_title
+                    }
+                    for c in citation_result.citations
+                ]
+                # Integrate citations into content
+                final_content = citation_generator.integrate_citations(
+                    final_content,
+                    citation_result.citations
+                )
+                # Add references section
+                if citation_result.sources_used:
+                    final_content += citation_generator.generate_references_section(
+                        citation_result.sources_used
+                    )
+            except Exception as e:
+                logger.warning(f"Citation generation failed: {e}")
+        
+        # Calculate SEO score (simplified)
+        seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
+        
+        # Extract quality scores (Phase 3)
+        quality_dimensions = {}
+        if pipeline_result.quality_score is not None:
+            quality_report = pipeline_result.seo_metadata.get("quality_report", {})
+            quality_dimensions = quality_report.get("dimension_scores", {})
+        
+        # Extract semantic keywords (Phase 3)
+        semantic_keywords = pipeline_result.seo_metadata.get("semantic_keywords", [])
+        
+        # Prepare stage results for response
+        stage_results_data = [
+            {
+                "stage": s.stage,
+                "provider": s.provider_used,
+                "tokens": s.tokens_used,
+                "cost": s.cost
+            }
+            for s in pipeline_result.stage_results
+        ]
+        
+        # Log generation
+        background_tasks.add_task(
+            log_generation,
+            topic=request.topic,
+            success=True,
+            word_count=len(final_content.split()),
+            generation_time=pipeline_result.generation_time
+        )
+        
+        return EnhancedBlogGenerationResponse(
+            title=pipeline_result.meta_title or request.topic,
+            content=final_content,
+            meta_title=pipeline_result.meta_title,
+            meta_description=pipeline_result.meta_description,
+            readability_score=pipeline_result.readability_score,
+            seo_score=seo_score,
+            stage_results=stage_results_data,
+            citations=citations,
+            total_tokens=pipeline_result.total_tokens,
+            total_cost=pipeline_result.total_cost,
+            generation_time=pipeline_result.generation_time,
+            seo_metadata=pipeline_result.seo_metadata,
+            internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+            quality_score=pipeline_result.quality_score,
+            quality_dimensions=quality_dimensions,
+            structured_data=pipeline_result.structured_data,
+            semantic_keywords=semantic_keywords,
+            success=True,
+            warnings=[]
+        )
+        
+    except Exception as e:
+        logger.error(f"Enhanced blog generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Enhanced blog generation failed: {str(e)}"
+        )
+
+
 # Content analysis endpoint
 @app.post("/api/v1/analyze")
 async def analyze_content(
@@ -756,18 +1026,98 @@ async def analyze_keywords_enhanced(
 ):
     """
     Enhanced keyword analysis leveraging DataForSEO when available.
+    Includes keyword clustering and parent topic extraction.
     Falls back gracefully if credentials are not configured.
     """
     try:
+        from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+        
         if not enhanced_analyzer:
             raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
         results = await enhanced_analyzer.analyze_keywords_comprehensive(
             keywords=request.keywords,
             tenant_id=os.getenv("TENANT_ID", "default")
         )
-        # Shape into a simple dict for API response
-        out = {
-            k: {
+        
+        # Get additional keyword suggestions using DataForSEO if available
+        all_keywords = list(request.keywords)
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                # Get suggestions for each seed keyword
+                for seed_keyword in request.keywords[:5]:  # Limit to top 5 seed keywords to avoid too many API calls
+                    if len(all_keywords) >= 200:  # Max limit
+                        break
+                    
+                    try:
+                        df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
+                            seed_keyword=seed_keyword,
+                            location_name=request.location or "United States",
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            limit=min(request.max_suggestions_per_keyword, 150)
+                        )
+                        
+                        # Add new keywords that aren't already in the list
+                        for suggestion in df_suggestions:
+                            kw = suggestion.get("keyword", "").strip()
+                            if kw and kw not in all_keywords and len(all_keywords) < 200:
+                                all_keywords.append(kw)
+                    except Exception as e:
+                        logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
+                        continue
+            except Exception as e:
+                logger.warning(f"DataForSEO suggestions failed: {e}")
+        
+        # Analyze all keywords (original + suggestions)
+        if len(all_keywords) > len(request.keywords):
+            # Analyze additional keywords
+            additional_results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                keywords=all_keywords[len(request.keywords):],
+                tenant_id=os.getenv("TENANT_ID", "default")
+            )
+            # Merge results
+            results.update(additional_results)
+        
+        # Cluster keywords by parent topics
+        # Use global knowledge graph client if available
+        kg_client = None
+        try:
+            kg_client = google_knowledge_graph_client if 'google_knowledge_graph_client' in globals() else None
+        except:
+            pass
+        
+        clustering = KeywordClustering(knowledge_graph_client=kg_client)
+        clustering_result = clustering.cluster_keywords(
+            keywords=all_keywords,
+            min_cluster_size=1,
+            max_clusters=None
+        )
+        
+        # Shape into a simple dict for API response with parent topics
+        out = {}
+        for k, v in results.items():
+            # Find parent topic for this keyword
+            parent_topic = None
+            category_type = None
+            cluster_score = None
+            
+            for cluster in clustering_result.clusters:
+                if k in cluster.keywords:
+                    parent_topic = cluster.parent_topic
+                    category_type = cluster.category_type
+                    cluster_score = cluster.cluster_score
+                    break
+            
+            # If not found in cluster, extract from keyword itself
+            if not parent_topic:
+                parent_topic = clustering._extract_parent_topic_from_keyword(k)
+                category_type = clustering._classify_keyword_type(k)
+                cluster_score = 0.5
+            
+            out[k] = {
                 "search_volume": v.search_volume,
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
                 "competition": v.competition,
@@ -776,14 +1126,37 @@ async def analyze_keywords_enhanced(
                 "recommended": v.recommended,
                 "reason": v.reason,
                 "related_keywords": v.related_keywords,
-                "long_tail_keywords": v.long_tail_keywords
+                "long_tail_keywords": v.long_tail_keywords,
+                "parent_topic": parent_topic,
+                "category_type": category_type,
+                "cluster_score": cluster_score
             }
-            for k, v in results.items()
+        
+        return {
+            "enhanced_analysis": out,
+            "total_keywords": len(all_keywords),
+            "original_keywords": request.keywords,
+            "suggested_keywords": all_keywords[len(request.keywords):] if len(all_keywords) > len(request.keywords) else [],
+            "clusters": [
+                {
+                    "parent_topic": c.parent_topic,
+                    "keywords": c.keywords,
+                    "cluster_score": c.cluster_score,
+                    "category_type": c.category_type,
+                    "keyword_count": len(c.keywords)
+                }
+                for c in clustering_result.clusters
+            ],
+            "cluster_summary": {
+                "total_keywords": clustering_result.total_keywords,
+                "cluster_count": clustering_result.cluster_count,
+                "unclustered_count": len(clustering_result.unclustered)
+            }
         }
-        return {"enhanced_analysis": out}
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Enhanced keyword analysis failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
@@ -796,14 +1169,19 @@ async def extract_keywords(
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
-    Extract potential keywords from existing content.
+    Extract potential keywords from existing content with clustering.
     
     Uses advanced NLP techniques to identify:
     - High-value keywords
     - Relevant phrases
     - Content themes
+    - Parent topics (clustered keywords)
+    
+    Returns keywords grouped by parent topics for better organization.
     """
     try:
+        from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+        
         keywords = await writer.keyword_analyzer.extract_keywords_from_content(
             content=request.content,
             max_keywords=request.max_keywords,
@@ -811,9 +1189,64 @@ async def extract_keywords(
             dedup_lim=request.dedup_lim
         )
         
-        return {"extracted_keywords": keywords}
+        # Cluster keywords by parent topics
+        # Use global knowledge graph client if available
+        kg_client = None
+        try:
+            kg_client = google_knowledge_graph_client if 'google_knowledge_graph_client' in globals() else None
+        except:
+            pass
+        
+        clustering = KeywordClustering(knowledge_graph_client=kg_client)
+        clustering_result = clustering.cluster_keywords(
+            keywords=keywords,
+            min_cluster_size=1,  # Allow single keywords to have parent topics
+            max_clusters=None  # No limit
+        )
+        
+        # Build response with parent topics
+        keywords_with_topics = []
+        for cluster in clustering_result.clusters:
+            for keyword in cluster.keywords:
+                keywords_with_topics.append({
+                    "keyword": keyword,
+                    "parent_topic": cluster.parent_topic,
+                    "cluster_score": cluster.cluster_score,
+                    "category_type": cluster.category_type
+                })
+        
+        # Add unclustered keywords with extracted parent topics
+        for keyword in clustering_result.unclustered:
+            parent_topic = clustering._extract_parent_topic_from_keyword(keyword)
+            keywords_with_topics.append({
+                "keyword": keyword,
+                "parent_topic": parent_topic,
+                "cluster_score": 0.5,
+                "category_type": clustering._classify_keyword_type(keyword)
+            })
+        
+        return {
+            "extracted_keywords": keywords,
+            "keywords_with_topics": keywords_with_topics,
+            "clusters": [
+                {
+                    "parent_topic": c.parent_topic,
+                    "keywords": c.keywords,
+                    "cluster_score": c.cluster_score,
+                    "category_type": c.category_type,
+                    "keyword_count": len(c.keywords)
+                }
+                for c in clustering_result.clusters
+            ],
+            "cluster_summary": {
+                "total_keywords": clustering_result.total_keywords,
+                "cluster_count": clustering_result.cluster_count,
+                "unclustered_count": len(clustering_result.unclustered)
+            }
+        }
         
     except Exception as e:
+        logger.error(f"Keyword extraction failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Keyword extraction failed: {str(e)}"
