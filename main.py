@@ -466,6 +466,8 @@ app.add_middleware(
         "http://localhost:3001",  # Alternative Next.js port
         "https://*.vercel.app",   # Vercel deployments
         "https://*.netlify.app",  # Netlify deployments
+        "https://blogwriter.develop.tinconnect.com",  # Development frontend
+        "https://*.tinconnect.com",  # All tinconnect.com subdomains
         # Add your production domains here
     ],
     allow_credentials=True,
