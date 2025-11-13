@@ -138,9 +138,11 @@ class MultiStageGenerationPipeline:
                 # Add intent to context
                 if additional_context is None:
                     additional_context = {}
-                additional_context["search_intent"] = intent_analysis.primary_intent.value
+                # Handle both enum and string types for primary_intent
+                intent_value = intent_analysis.primary_intent.value if hasattr(intent_analysis.primary_intent, 'value') else str(intent_analysis.primary_intent)
+                additional_context["search_intent"] = intent_value
                 additional_context["intent_recommendations"] = intent_analysis.recommendations
-                logger.info(f"Detected intent: {intent_analysis.primary_intent.value} (confidence: {intent_analysis.confidence:.2f})")
+                logger.info(f"Detected intent: {intent_value} (confidence: {intent_analysis.confidence:.2f})")
             except Exception as e:
                 logger.warning(f"Intent analysis failed: {e}")
         
