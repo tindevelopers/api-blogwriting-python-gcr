@@ -1019,9 +1019,23 @@ async def generate_blog_enhanced(
             except Exception as e:
                 logger.warning(f"Image generation integration failed: {e}")
         
+        # Auto-insert generated images into content
+        if generated_images and len(generated_images) > 0:
+            try:
+                from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
+                final_content = insert_images_into_markdown(
+                    pipeline_result.final_content,
+                    generated_images
+                )
+                logger.info(f"Inserted {len(generated_images)} images into content")
+            except Exception as e:
+                logger.warning(f"Failed to insert images into content: {e}")
+                final_content = pipeline_result.final_content
+        else:
+            final_content = pipeline_result.final_content
+        
         # Add citations if enabled
         citations = []
-        final_content = pipeline_result.final_content
         if request.use_citations and google_custom_search_client:
             try:
                 citation_result = await citation_generator.generate_citations(

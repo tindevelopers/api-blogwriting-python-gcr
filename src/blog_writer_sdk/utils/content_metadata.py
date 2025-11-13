@@ -203,6 +203,55 @@ def _slugify(text: str) -> str:
     return text
 
 
+def insert_images_into_markdown(content: str, images: List[Dict[str, Any]]) -> str:
+    """
+    Insert generated images into markdown content at appropriate locations.
+    
+    Args:
+        content: Markdown content string
+        images: List of image dictionaries with keys: type, image_url, alt_text
+        
+    Returns:
+        Markdown content with images inserted
+    """
+    if not images:
+        return content
+    
+    import re
+    
+    # Insert featured image after H1
+    featured_image = next((img for img in images if img.get("type") == "featured"), None)
+    if featured_image:
+        h1_pattern = r'^(# .+)$'
+        h1_match = re.search(h1_pattern, content, re.MULTILINE)
+        if h1_match:
+            # Insert after H1 and first paragraph
+            h1_end = h1_match.end()
+            # Find end of first paragraph after H1
+            next_paragraph_end = content.find('\n\n', h1_end)
+            if next_paragraph_end == -1:
+                next_paragraph_end = len(content)
+            else:
+                next_paragraph_end += 2  # Include the \n\n
+            
+            image_markdown = f"\n\n![{featured_image.get('alt_text', 'Featured image')}]({featured_image.get('image_url', '')})\n\n"
+            content = content[:next_paragraph_end] + image_markdown + content[next_paragraph_end:]
+    
+    # Insert section images before H2 headings (skip first H2, insert before 2nd, 3rd, etc.)
+    section_images = [img for img in images if img.get("type") != "featured"]
+    if section_images:
+        h2_matches = list(re.finditer(r'^(## .+)$', content, re.MULTILINE))
+        
+        # Insert images before H2 sections (skip first H2, insert before 2nd, 3rd, etc.)
+        for i, image in enumerate(section_images[:len(h2_matches)]):
+            if i < len(h2_matches) - 1:  # Don't insert after last H2
+                insert_pos = h2_matches[i + 1].start()
+                image_markdown = f"\n\n![{image.get('alt_text', 'Section image')}]({image.get('image_url', '')})\n\n"
+                content = content[:insert_pos] + image_markdown + content[insert_pos:]
+    
+    return content
+
+
 def generate_table_of_contents_structure(headings: List[Dict[str, Any]], max_level: int = 3) -> List[Dict[str, Any]]:
     """
     Generate hierarchical table of contents structure.
