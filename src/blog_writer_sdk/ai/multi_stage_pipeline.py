@@ -273,8 +273,9 @@ class MultiStageGenerationPipeline:
         
         # Add intent analysis to metadata
         if intent_analysis:
+            intent_value = intent_analysis.primary_intent.value if hasattr(intent_analysis.primary_intent, 'value') else str(intent_analysis.primary_intent)
             seo_metadata["search_intent"] = {
-                "primary_intent": intent_analysis.primary_intent.value,
+                "primary_intent": intent_value,
                 "confidence": intent_analysis.confidence,
                 "probabilities": intent_analysis.intent_probabilities
             }
