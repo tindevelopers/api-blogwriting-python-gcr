@@ -285,9 +285,24 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 language_code=self.language_code,
                 tenant_id=tenant_id
             )
+            # Get AI optimization data (critical for AI-optimized content)
+            ai_data = {}
+            try:
+                ai_data = await self._df_client.get_ai_search_volume(
+                    keywords=keywords,
+                    location_name=self.location,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                print(f"Warning: Failed to get AI optimization data: {e}")
+                # Continue without AI data
+            
             combined: Dict[str, Dict[str, Any]] = {}
             for kw in keywords:
                 m = sv_data.get(kw, {})
+                ai_metrics = ai_data.get(kw, {})
+                
                 # Ensure all values are properly converted to numeric types
                 search_vol = m.get("search_volume", 0)
                 try:
@@ -319,12 +334,28 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 except (ValueError, TypeError):
                     difficulty_score = 50.0
                 
+                # Extract AI optimization metrics
+                ai_search_vol = ai_metrics.get("ai_search_volume", 0)
+                try:
+                    ai_search_volume = int(float(ai_search_vol)) if ai_search_vol is not None else 0
+                except (ValueError, TypeError):
+                    ai_search_volume = 0
+                
+                ai_trend_val = ai_metrics.get("ai_trend", 0.0)
+                try:
+                    ai_trend = float(ai_trend_val) if ai_trend_val is not None else 0.0
+                except (ValueError, TypeError):
+                    ai_trend = 0.0
+                
                 combined[kw] = {
                     "search_volume": search_volume,
                     "cpc": cpc,
                     "competition": competition,
                     "trend_score": trend_score,
                     "difficulty_score": difficulty_score,
+                    "ai_search_volume": ai_search_volume,
+                    "ai_monthly_searches": ai_metrics.get("ai_monthly_searches", []),
+                    "ai_trend": ai_trend,
                 }
             return combined
         except Exception as e:
@@ -337,6 +368,9 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                     "competition": 0.0,
                     "trend_score": 0.0,
                     "difficulty_score": 50.0,
+                    "ai_search_volume": 0,
+                    "ai_monthly_searches": [],
+                    "ai_trend": 0.0,
                 }
                 for kw in keywords
             }

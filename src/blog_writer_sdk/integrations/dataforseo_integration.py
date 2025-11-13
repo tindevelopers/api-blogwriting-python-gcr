@@ -382,6 +382,100 @@ class DataForSEOClient:
             # Return fallback suggestions
             return self._generate_fallback_suggestions(seed_keyword, limit)
     
+    @monitor_performance("dataforseo_get_ai_search_volume")
+    async def get_ai_search_volume(self, keywords: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, Any]:
+        """
+        Get AI optimization search volume data for keywords using DataForSEO API.
+        
+        This endpoint provides data on how keywords appear in AI LLM queries/responses,
+        which is critical for AI-optimized content strategy.
+        
+        Args:
+            keywords: List of keywords to analyze
+            location_name: Location for keyword data (e.g., "United States")
+            language_code: Language code (e.g., "en")
+            tenant_id: Tenant ID for credentials
+            
+        Returns:
+            Dictionary with AI search volume data for each keyword including:
+            - ai_search_volume: Current month's estimated volume in AI queries
+            - ai_monthly_searches: Historical trend over past 12 months
+        """
+        try:
+            # Check cache first
+            cache_key = f"ai_search_volume_{hash(tuple(keywords))}"
+            if cache_key in self._cache:
+                cached_data, timestamp = self._cache[cache_key]
+                if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    return cached_data
+            
+            # Prepare API request for AI optimization endpoint
+            payload = [{
+                "keywords": keywords,
+                "location_name": location_name,
+                "language_code": language_code
+            }]
+            
+            data = await self._make_request("keywords_data/ai_optimization/search_volume/live", payload, tenant_id)
+            
+            # Process response
+            results = {}
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                for item in data["tasks"][0]["result"]:
+                    keyword = item.get("keyword", "")
+                    ai_data = item.get("ai_search_volume", {})
+                    
+                    # Extract AI search volume metrics
+                    ai_search_volume = ai_data.get("search_volume", 0) if isinstance(ai_data, dict) else 0
+                    ai_monthly_searches = item.get("ai_monthly_searches", [])
+                    
+                    results[keyword] = {
+                        "ai_search_volume": ai_search_volume,
+                        "ai_monthly_searches": ai_monthly_searches,
+                        "ai_trend": self._calculate_ai_trend(ai_monthly_searches) if ai_monthly_searches else 0.0
+                    }
+            
+            # Cache the results
+            self._cache[cache_key] = (results, datetime.now().timestamp())
+            
+            return results
+            
+        except Exception as e:
+            logger.warning(f"Error getting AI search volume data from DataForSEO: {e}")
+            # Return fallback data with zeros
+            return {
+                keyword: {
+                    "ai_search_volume": 0,
+                    "ai_monthly_searches": [],
+                    "ai_trend": 0.0
+                }
+                for keyword in keywords
+            }
+    
+    def _calculate_ai_trend(self, monthly_searches: List[Dict[str, Any]]) -> float:
+        """
+        Calculate AI search trend from monthly searches data.
+        
+        Returns a trend score (-1.0 to 1.0) indicating if AI volume is increasing or decreasing.
+        """
+        if not monthly_searches or len(monthly_searches) < 2:
+            return 0.0
+        
+        try:
+            # Get first and last month's values
+            first_month = monthly_searches[0].get("search_volume", 0) or 0
+            last_month = monthly_searches[-1].get("search_volume", 0) or 0
+            
+            if first_month == 0:
+                return 1.0 if last_month > 0 else 0.0
+            
+            # Calculate percentage change
+            trend = (last_month - first_month) / first_month
+            # Normalize to -1.0 to 1.0 range
+            return max(-1.0, min(1.0, trend))
+        except Exception:
+            return 0.0
+    
     @monitor_performance("dataforseo_get_serp_analysis")
     async def get_serp_analysis(self, keyword: str, location_name: str, language_code: str, tenant_id: str, depth: int = 10) -> Dict[str, Any]:
         """

@@ -10,6 +10,7 @@ import time
 import logging
 import asyncio
 import uuid
+import math
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -1346,6 +1347,22 @@ async def analyze_keywords_enhanced(
                 cluster_count=min(len(all_keywords), 50)
             )
         
+        # Get AI optimization data for all keywords (critical for AI-optimized content)
+        ai_optimization_data = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                ai_optimization_data = await enhanced_analyzer._df_client.get_ai_search_volume(
+                    keywords=list(results.keys()),
+                    location_name=request.location or "United States",
+                    language_code=request.language or "en",
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to get AI optimization data: {e}")
+                # Continue without AI data
+        
         # Shape into a simple dict for API response with parent topics
         out = {}
         for k, v in results.items():
@@ -1373,6 +1390,12 @@ async def analyze_keywords_enhanced(
             competition_value = v.competition if v.competition is not None else 0.0
             trend_score_value = v.trend_score if v.trend_score is not None else 0.0
             
+            # Get AI optimization metrics
+            ai_metrics = ai_optimization_data.get(k, {})
+            ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
+            ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
+            ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
+            
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
@@ -1385,7 +1408,11 @@ async def analyze_keywords_enhanced(
                 "long_tail_keywords": v.long_tail_keywords,
                 "parent_topic": parent_topic,
                 "category_type": category_type,
-                "cluster_score": cluster_score
+                "cluster_score": cluster_score,
+                # AI Optimization metrics (critical for AI-optimized content)
+                "ai_search_volume": ai_search_volume,
+                "ai_trend": ai_trend,
+                "ai_monthly_searches": ai_monthly_searches
             }
         
         # Ensure clusters are always returned, even if empty
@@ -1432,6 +1459,123 @@ async def analyze_keywords_enhanced(
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/ai-optimization")
+async def analyze_keywords_ai_optimization(
+    request: EnhancedKeywordAnalysisRequest
+):
+    """
+    Analyze keywords specifically for AI optimization.
+    
+    This endpoint focuses on AI search volume data, which is critical for creating
+    content that appears in AI LLM responses (ChatGPT, Claude, Gemini, etc.).
+    
+    Returns:
+    - ai_search_volume: Current month's estimated volume in AI queries
+    - ai_monthly_searches: Historical trend over past 12 months
+    - ai_trend: Trend score indicating if AI volume is increasing/decreasing
+    - Comparison with traditional search volume
+    - AI optimization recommendations
+    """
+    try:
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="Enhanced analyzer with DataForSEO not available")
+        
+        tenant_id = os.getenv("TENANT_ID", "default")
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        # Get AI optimization data
+        ai_data = await enhanced_analyzer._df_client.get_ai_search_volume(
+            keywords=request.keywords,
+            location_name=request.location or "United States",
+            language_code=request.language or "en",
+            tenant_id=tenant_id
+        )
+        
+        # Get traditional search volume for comparison
+        traditional_data = await enhanced_analyzer._df_client.get_search_volume_data(
+            keywords=request.keywords,
+            location_name=request.location or "United States",
+            language_code=request.language or "en",
+            tenant_id=tenant_id
+        )
+        
+        # Build comprehensive AI optimization analysis
+        ai_analysis = {}
+        for keyword in request.keywords:
+            ai_metrics = ai_data.get(keyword, {})
+            traditional_metrics = traditional_data.get(keyword, {})
+            
+            ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
+            traditional_search_volume = traditional_metrics.get("search_volume", 0) or 0
+            ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
+            ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
+            
+            # Calculate AI optimization score (0-100)
+            # Higher score = better for AI optimization
+            ai_score = 0
+            if ai_search_volume > 0:
+                # Base score from AI volume (log scale)
+                ai_score += min(50, math.log10(ai_search_volume + 1) * 10)
+            
+            # Trend bonus (positive trend = higher score)
+            if ai_trend > 0:
+                ai_score += min(25, ai_trend * 25)
+            
+            # Volume growth bonus
+            if ai_monthly_searches and len(ai_monthly_searches) >= 2:
+                recent_avg = sum(m.get("search_volume", 0) for m in ai_monthly_searches[-3:]) / 3
+                older_avg = sum(m.get("search_volume", 0) for m in ai_monthly_searches[:3]) / 3
+                if older_avg > 0:
+                    growth = (recent_avg - older_avg) / older_avg
+                    ai_score += min(25, growth * 25)
+            
+            # Determine AI optimization recommendation
+            ai_recommended = ai_score >= 40
+            if ai_score >= 70:
+                ai_reason = "Excellent AI visibility - high volume and positive trend"
+            elif ai_score >= 50:
+                ai_reason = "Good AI visibility - moderate volume with growth potential"
+            elif ai_score >= 30:
+                ai_reason = "Moderate AI visibility - consider optimizing for AI search"
+            else:
+                ai_reason = "Low AI visibility - focus on traditional SEO or emerging AI trends"
+            
+            ai_analysis[keyword] = {
+                "ai_search_volume": ai_search_volume,
+                "traditional_search_volume": traditional_search_volume,
+                "ai_trend": ai_trend,
+                "ai_monthly_searches": ai_monthly_searches,
+                "ai_optimization_score": min(100, max(0, int(ai_score))),
+                "ai_recommended": ai_recommended,
+                "ai_reason": ai_reason,
+                "comparison": {
+                    "ai_to_traditional_ratio": round(ai_search_volume / traditional_search_volume, 3) if traditional_search_volume > 0 else 0.0,
+                    "ai_growth_trend": "increasing" if ai_trend > 0.1 else "decreasing" if ai_trend < -0.1 else "stable"
+                }
+            }
+        
+        return {
+            "ai_optimization_analysis": ai_analysis,
+            "total_keywords": len(request.keywords),
+            "location": request.location or "United States",
+            "language": request.language or "en",
+            "summary": {
+                "keywords_with_ai_volume": sum(1 for k, v in ai_analysis.items() if v["ai_search_volume"] > 0),
+                "average_ai_score": sum(v["ai_optimization_score"] for v in ai_analysis.values()) / len(ai_analysis) if ai_analysis else 0,
+                "recommended_keywords": [k for k, v in ai_analysis.items() if v["ai_recommended"]]
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI optimization analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI optimization analysis failed: {str(e)}"
         )
 
 
