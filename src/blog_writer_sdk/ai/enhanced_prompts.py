@@ -462,7 +462,7 @@ REVIEW TEMPLATE:
             ContentLength.SHORT: 800,
             ContentLength.MEDIUM: 1500,
             ContentLength.LONG: 2500,
-            ContentLength.VERY_LONG: 4000
+            ContentLength.EXTENDED: 4000
         }
         return word_counts.get(length, 1500)
 
