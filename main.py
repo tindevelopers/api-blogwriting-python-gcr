@@ -886,7 +886,20 @@ async def generate_blog_enhanced(
         # Get global clients
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
-        global intent_analyzer, few_shot_extractor, length_optimizer
+        global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
+        
+        # Check if AI generator is available
+        if ai_generator is None:
+            raise HTTPException(
+                status_code=503,
+                detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
+            )
+        
+        # Create progress callback for streaming updates
+        progress_updates = []
+        async def progress_callback(update):
+            """Store progress updates for response."""
+            progress_updates.append(update.dict())
         
         # Initialize pipeline with Phase 3 components and additional enhancements
         pipeline = MultiStageGenerationPipeline(
@@ -899,7 +912,9 @@ async def generate_blog_enhanced(
             intent_analyzer=intent_analyzer,  # Always enabled for better content
             few_shot_extractor=few_shot_extractor if request.use_google_search else None,
             length_optimizer=length_optimizer if request.use_google_search else None,
-            use_consensus=request.use_consensus_generation
+            use_consensus=request.use_consensus_generation,
+            dataforseo_client=dataforseo_client_global,  # Add DataForSEO Labs integration
+            progress_callback=progress_callback  # Add progress callback
         )
         
         # Determine template type
@@ -1019,9 +1034,23 @@ async def generate_blog_enhanced(
             except Exception as e:
                 logger.warning(f"Image generation integration failed: {e}")
         
+        # Auto-insert generated images into content
+        if generated_images and len(generated_images) > 0:
+            try:
+                from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
+                final_content = insert_images_into_markdown(
+                    pipeline_result.final_content,
+                    generated_images
+                )
+                logger.info(f"Inserted {len(generated_images)} images into content")
+            except Exception as e:
+                logger.warning(f"Failed to insert images into content: {e}")
+                final_content = pipeline_result.final_content
+        else:
+            final_content = pipeline_result.final_content
+        
         # Add citations if enabled
         citations = []
-        final_content = pipeline_result.final_content
         if request.use_citations and google_custom_search_client:
             try:
                 citation_result = await citation_generator.generate_citations(
@@ -1175,7 +1204,8 @@ async def generate_blog_enhanced(
             generated_images=generated_images if generated_images else None,
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=[]
+            warnings=[],
+            progress_updates=progress_updates  # Include progress updates for frontend
         )
         
     except Exception as e:

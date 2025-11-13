@@ -94,4 +94,10 @@ class EnhancedBlogGenerationResponse(BaseModel):
     # Success indicators
     success: bool = Field(default=True, description="Whether generation was successful")
     warnings: List[str] = Field(default_factory=list, description="Warnings or issues encountered")
+    
+    # Progress tracking
+    progress_updates: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Progress updates from pipeline stages (for frontend status display)"
+    )
 

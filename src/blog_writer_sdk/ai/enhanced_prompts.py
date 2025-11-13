@@ -5,9 +5,31 @@ This module provides domain-specific prompt templates that guide LLMs
 to produce higher-quality, more authoritative content.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from enum import Enum
 from ..models.blog_models import ContentTone, ContentLength
+
+
+def _safe_enum_to_str(value) -> str:
+    """
+    Safely convert an enum or string to a string value.
+    
+    Args:
+        value: Either an Enum instance or a string
+        
+    Returns:
+        String representation of the value
+    """
+    if isinstance(value, Enum):
+        return value.value
+    elif isinstance(value, str):
+        return value
+    else:
+        # Try to get .value attribute, fallback to str()
+        try:
+            return value.value
+        except AttributeError:
+            return str(value)
 
 
 class PromptTemplate(str, Enum):
@@ -88,8 +110,8 @@ Focus on creating content that provides genuine value, unique insights, and acti
         topic: str,
         outline: str,
         keywords: List[str],
-        tone: ContentTone,
-        length: ContentLength,
+        tone: Union[ContentTone, str],
+        length: Union[ContentLength, str],
         template: Optional[PromptTemplate] = None,
         context: Optional[Dict[str, Any]] = None
     ) -> str:
@@ -116,7 +138,7 @@ Focus on creating content that provides genuine value, unique insights, and acti
 
 TOPIC: {topic}
 PRIMARY KEYWORD: {primary_keyword}
-TONE: {tone.value}
+TONE: {_safe_enum_to_str(tone)}
 TARGET LENGTH: {word_count_target} words
 CURRENT DATE: {current_date}
 CURRENT YEAR: {current_year}
@@ -130,7 +152,7 @@ WRITING REQUIREMENTS:
 1. Write for human readers first, SEO optimization second
 2. Use the primary keyword naturally throughout (aim for 1-2% density)
 3. Integrate related keywords naturally without keyword stuffing
-4. Write in a {tone.value} tone that matches the target audience
+4. Write in a {_safe_enum_to_str(tone)} tone that matches the target audience
 5. Provide specific examples, data points, and actionable insights
 6. Use clear, scannable formatting with proper headings (H2, H3)
 7. Keep paragraphs to 3-4 sentences maximum
@@ -149,12 +171,63 @@ CONTENT QUALITY STANDARDS:
 - Reference recent developments or trends when applicable
 - Add temporal context to show content is up-to-date
 
-STRUCTURE REQUIREMENTS:
-- Start with a compelling introduction that hooks the reader
-- Use proper heading hierarchy (H1 for title, H2 for main sections, H3 for subsections)
-- Include at least one list (bulleted or numbered) per main section
-- Add internal linking opportunities naturally
-- End with a strong conclusion that summarizes key points
+STRUCTURE REQUIREMENTS (MANDATORY):
+1. Content MUST start with exactly ONE H1 heading: # [Title]
+   - This is the main title of the blog post
+   - Only one H1 should exist in the entire content
+   
+2. After H1, write 2-3 introduction paragraphs (3-4 sentences each)
+   - Hook the reader with a compelling opening
+   - Introduce the topic and what readers will learn
+   
+3. Main sections MUST use H2 headings: ## [Section Title]
+   - Minimum 3-5 H2 sections required
+   - Each H2 section should have 3-5 paragraphs
+   - Use descriptive, keyword-rich H2 headings
+   
+4. Subsections MUST use H3 headings: ### [Subsection Title]
+   - Use H3 for detailed points within H2 sections
+   - Maintain proper hierarchy (H1 > H2 > H3)
+   
+5. Use proper markdown formatting:
+   - H1: # Title (only one, at the start)
+   - H2: ## Section Title
+   - H3: ### Subsection Title
+   - H4-H6: Only for deeper nesting if needed
+   
+6. Include at least one list (bulleted or numbered) per H2 section
+   - Use lists for key points, steps, or features
+   - Keep list items concise but informative
+   
+7. End with H2 Conclusion section: ## Conclusion
+   - Summarize key points
+   - Provide actionable next steps
+   - Include a call-to-action if appropriate
+
+LINKING REQUIREMENTS:
+1. Include 3-5 internal links using markdown format: [descriptive anchor text](/related-topic)
+   - Links should be natural and contextual within paragraphs
+   - Use descriptive anchor text (not "click here" or "read more")
+   - Place links where they add value to the reader
+   
+2. Include 2-3 external authoritative links: [source name](https://authoritative-url.com)
+   - Link to reputable sources, studies, or expert content
+   - Use descriptive anchor text that indicates the source
+   - Place external links naturally within relevant paragraphs
+   
+3. Links should enhance content, not distract
+   - Don't over-link (maximum 1-2 links per paragraph)
+   - Ensure links are relevant to the surrounding content
+
+IMAGE PLACEMENT:
+1. Add image placeholder after H1 and introduction: ![Featured image description](image-url)
+   - Use descriptive alt text for SEO
+   - Place after first paragraph following H1
+   
+2. Add image placeholders before major H2 sections: ![Section image description](image-url)
+   - Use relevant images that enhance understanding
+   - Include descriptive alt text
+   - Place before H2 heading, not after
 
 Generate comprehensive, well-researched content that readers will find valuable and search engines will recognize as authoritative."""
         
@@ -405,13 +478,16 @@ REVIEW TEMPLATE:
         return templates.get(template, templates[PromptTemplate.EXPERT_AUTHORITY])
     
     @staticmethod
-    def _get_word_count(length: ContentLength) -> int:
+    def _get_word_count(length: Union[ContentLength, str]) -> int:
         """Get target word count for content length."""
+        # Normalize to string for comparison
+        length_str = _safe_enum_to_str(length)
+        
         word_counts = {
-            ContentLength.SHORT: 800,
-            ContentLength.MEDIUM: 1500,
-            ContentLength.LONG: 2500,
-            ContentLength.VERY_LONG: 4000
+            ContentLength.SHORT.value: 800,
+            ContentLength.MEDIUM.value: 1500,
+            ContentLength.LONG.value: 2500,
+            ContentLength.EXTENDED.value: 4000
         }
-        return word_counts.get(length, 1500)
+        return word_counts.get(length_str, 1500)
 

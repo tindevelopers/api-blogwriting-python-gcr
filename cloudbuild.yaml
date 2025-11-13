@@ -33,7 +33,7 @@ steps:
       '--concurrency', '80',
       '--timeout', '900',
       '--set-env-vars', 'PYTHONUNBUFFERED=1',
-      '--set-secrets', '/secrets/env=blog-writer-env-${_ENV}:latest'
+      '--update-secrets', '/secrets/env=blog-writer-env-${_ENV}:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest'
     ]
 
 # Store images in Container Registry
