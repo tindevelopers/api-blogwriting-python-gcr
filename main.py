@@ -1250,17 +1250,91 @@ async def analyze_keywords(
         )
 
 
+async def detect_location_from_ip(request: Request) -> Optional[str]:
+    """
+    Detect location from client IP address using geolocation service.
+    
+    Returns country name in DataForSEO format (e.g., "United States", "United Kingdom")
+    Falls back to None if detection fails.
+    """
+    try:
+        # Get client IP
+        client_ip = request.client.host if request.client else None
+        forwarded_for = request.headers.get('X-Forwarded-For')
+        if forwarded_for:
+            client_ip = forwarded_for.split(',')[0].strip()
+        
+        if not client_ip or client_ip in ['127.0.0.1', 'localhost', '::1']:
+            return None
+        
+        # Use free geolocation API (ip-api.com - no API key required)
+        # Note: httpx is imported at module level
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.get(f"http://ip-api.com/json/{client_ip}?fields=country")
+            if response.status_code == 200:
+                data = response.json()
+                country = data.get('country')
+                if country:
+                    # Map common country names to DataForSEO format
+                    country_mapping = {
+                        'United States': 'United States',
+                        'United Kingdom': 'United Kingdom',
+                        'Canada': 'Canada',
+                        'Australia': 'Australia',
+                        'Germany': 'Germany',
+                        'France': 'France',
+                        'Spain': 'Spain',
+                        'Italy': 'Italy',
+                        'Netherlands': 'Netherlands',
+                        'Sweden': 'Sweden',
+                        'Norway': 'Norway',
+                        'Denmark': 'Denmark',
+                        'Finland': 'Finland',
+                        'Poland': 'Poland',
+                        'Brazil': 'Brazil',
+                        'Mexico': 'Mexico',
+                        'India': 'India',
+                        'Japan': 'Japan',
+                        'South Korea': 'South Korea',
+                        'China': 'China',
+                        'Singapore': 'Singapore',
+                    }
+                    return country_mapping.get(country, country)
+    except Exception as e:
+        logger.debug(f"IP-based location detection failed: {e}")
+    
+    return None
+
+
 # Enhanced keyword analysis endpoint using DataForSEO (if configured)
 @app.post("/api/v1/keywords/enhanced")
 async def analyze_keywords_enhanced(
-    request: EnhancedKeywordAnalysisRequest
+    request: EnhancedKeywordAnalysisRequest,
+    http_request: Request
 ):
     """
     Enhanced keyword analysis leveraging DataForSEO when available.
     Includes keyword clustering and parent topic extraction.
     Falls back gracefully if credentials are not configured.
+    
+    Location Detection:
+    - If `location` is specified in request, it will be used
+    - If `location` is not specified (or is default "United States"), the API will attempt
+      to detect location from the client's IP address
+    - Falls back to "United States" if IP detection fails or is unavailable
     """
     try:
+        # Detect location from IP if not explicitly specified
+        detected_location = None
+        if not request.location or request.location == "United States":
+            if http_request:
+                detected_location = await detect_location_from_ip(http_request)
+                if detected_location:
+                    logger.info(f"Detected location from IP: {detected_location}")
+        
+        # Use detected location or fall back to request location or default
+        effective_location = detected_location or request.location or "United States"
         from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
         
         if not enhanced_analyzer:
@@ -1285,7 +1359,7 @@ async def analyze_keywords_enhanced(
                     try:
                         df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
                             seed_keyword=seed_keyword,
-                            location_name=request.location or "United States",
+                            location_name=effective_location,
                             language_code=request.language or "en",
                             tenant_id=tenant_id,
                             limit=min(request.max_suggestions_per_keyword, 150)
@@ -1355,7 +1429,7 @@ async def analyze_keywords_enhanced(
                 await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
                 ai_optimization_data = await enhanced_analyzer._df_client.get_ai_search_volume(
                     keywords=list(results.keys()),
-                    location_name=request.location or "United States",
+                    location_name=effective_location,
                     language_code=request.language or "en",
                     tenant_id=tenant_id
                 )
@@ -1450,6 +1524,11 @@ async def analyze_keywords_enhanced(
                 "total_keywords": clustering_result.total_keywords if clustering_result else len(all_keywords),
                 "cluster_count": len(clusters_list),
                 "unclustered_count": len(clustering_result.unclustered) if clustering_result else 0
+            },
+            "location": {
+                "used": effective_location,
+                "detected_from_ip": detected_location is not None,
+                "specified": request.location is not None and request.location != "United States"
             }
         }
     except HTTPException:
