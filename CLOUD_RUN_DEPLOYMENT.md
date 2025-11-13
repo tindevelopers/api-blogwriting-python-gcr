@@ -62,14 +62,19 @@ gcloud services enable cloudbuild.googleapis.com run.googleapis.com secretmanage
 
 ```bash
 # Make scripts executable
-chmod +x scripts/setup-secrets.sh scripts/deploy.sh
+chmod +x scripts/setup-secrets.sh scripts/deploy.sh scripts/setup-ai-provider-secrets.sh
 
-# Setup Google Cloud secrets
+# Setup Google Cloud secrets (general configuration)
 ./scripts/setup-secrets.sh
+
+# Setup AI Provider secrets (CRITICAL for enhanced blog generation)
+./scripts/setup-ai-provider-secrets.sh
 
 # Deploy to Cloud Run
 ./scripts/deploy.sh
 ```
+
+**⚠️ IMPORTANT:** The AI provider secrets setup is **REQUIRED** for the enhanced blog generation endpoint (`/api/v1/blog/generate-enhanced`) to work. Without it, the system falls back to template-based generation.
 
 That's it! Your service will be deployed and accessible at the provided URL.
 
