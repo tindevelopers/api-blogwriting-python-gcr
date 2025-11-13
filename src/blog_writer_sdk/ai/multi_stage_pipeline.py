@@ -444,12 +444,13 @@ class MultiStageGenerationPipeline:
         stage_results.append(outline_result)
         outline = outline_result.content
         
+        outline_sections = len(outline.split('\n'))
         await self._emit_progress(
             PipelineStage.RESEARCH_OUTLINE,
             current_stage,
             total_stages,
             "Stage 1 Complete: Research & Outline",
-            f"Generated comprehensive outline with {len(outline.split('\\n'))} sections"
+            f"Generated comprehensive outline with {outline_sections} sections"
         )
         
         # Stage 2: Draft Generation (GPT-4o or Consensus)
