@@ -350,8 +350,17 @@ async def lifespan(app: FastAPI):
         )
     
     # Initialize DataForSEO client for semantic integration (Phase 3)
-    # Note: DataForSEO client will be initialized synchronously when needed
-    dataforseo_client_global = None  # Will be initialized on first use if credentials available
+    if dataforseo_api_key and dataforseo_api_secret:
+        dataforseo_client_global = DataForSEOClient(
+            api_key=dataforseo_api_key,
+            api_secret=dataforseo_api_secret,
+            location=os.getenv("DATAFORSEO_LOCATION", "United States"),
+            language_code=os.getenv("DATAFORSEO_LANGUAGE", "en"),
+        )
+        print("✅ DataForSEO Labs client initialized.")
+    else:
+        dataforseo_client_global = None
+        print("⚠️ DataForSEO Labs not configured (DATAFORSEO_API_KEY and DATAFORSEO_API_SECRET)")
     
     print("✅ EnhancedKeywordAnalyzer initialized.")
     

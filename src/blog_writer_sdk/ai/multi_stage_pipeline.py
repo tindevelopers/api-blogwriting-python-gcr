@@ -704,6 +704,13 @@ class MultiStageGenerationPipeline:
             "Compiling final content and metadata"
         )
         
+        # Add DataForSEO results to seo_metadata if available
+        if additional_context:
+            if "keyword_analysis" in additional_context:
+                seo_metadata["keyword_analysis"] = additional_context["keyword_analysis"]
+            if "competitor_analysis" in additional_context:
+                seo_metadata["competitor_analysis"] = additional_context["competitor_analysis"]
+        
         # Calculate totals
         total_tokens = sum(s.tokens_used for s in stage_results)
         total_cost = sum(s.cost for s in stage_results)
