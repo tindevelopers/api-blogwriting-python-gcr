@@ -230,8 +230,13 @@ class BlogWriterLogger:
                        duration: float, **kwargs):
         """Log API request with performance metrics."""
         level = 'WARNING' if status_code >= 400 else 'INFO'
+        # Extract 'message' from kwargs to avoid conflict with positional message parameter
+        message_extra = kwargs.pop('message', None)
+        log_message = f"API request {method} {endpoint}"
+        if message_extra:
+            log_message += f": {message_extra}"
         getattr(self, level.lower())(
-            f"API request {method} {endpoint}",
+            log_message,
             event_type='api_request',
             method=method,
             endpoint=endpoint,

@@ -249,4 +249,59 @@ class GoogleCustomSearchClient:
         analysis["common_themes"] = snippets[:5]  # Top 5 snippets
         
         return analysis
+    
+    async def search_product_brands(
+        self,
+        product_query: str,
+        num_results: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for specific product brands and models.
+        
+        Args:
+            product_query: Product search query (e.g., "best blow dryers for dogs")
+            num_results: Number of results to return
+        
+        Returns:
+            List of brand/product recommendations with details
+        """
+        # Search for product reviews and comparisons
+        query = f"{product_query} brands models review comparison"
+        results = await self.search(query, num_results=num_results)
+        
+        # Extract brand names from results
+        brands = []
+        seen_brands = set()
+        
+        for result in results:
+            title = result.get("title", "").lower()
+            snippet = result.get("snippet", "").lower()
+            combined_text = f"{title} {snippet}"
+            
+            # Common brand indicators
+            brand_patterns = [
+                r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:blow\s+dryer|dryer|hair\s+dryer)',
+                r'(?:best|top|review|compare)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+                r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:professional|commercial|industrial)',
+            ]
+            
+            import re
+            for pattern in brand_patterns:
+                matches = re.findall(pattern, combined_text, re.IGNORECASE)
+                for match in matches:
+                    brand_name = match.strip() if isinstance(match, str) else match[0].strip() if match else ""
+                    if brand_name and len(brand_name) > 2 and brand_name not in seen_brands:
+                        seen_brands.add(brand_name)
+                        brands.append({
+                            "brand": brand_name,
+                            "source_title": result.get("title", ""),
+                            "source_url": result.get("link", ""),
+                            "snippet": result.get("snippet", ""),
+                            "relevance_score": 1.0
+                        })
+        
+        # Also search Knowledge Graph for product entities if available
+        # This would require Knowledge Graph client integration
+        
+        return brands[:num_results]
 

@@ -10,6 +10,7 @@ import time
 import logging
 import asyncio
 import uuid
+import math
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -17,8 +18,8 @@ from contextlib import asynccontextmanager
 startup_time = time.time()
 
 # Deployment trigger - updated timestamp
-deployment_version = "2025-01-10-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.2.0")
+deployment_version = "2025-11-12-001"
+APP_VERSION = os.getenv("APP_VERSION", "1.2.1")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,11 +49,15 @@ from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
 from src.blog_writer_sdk.monitoring.cloud_logging import initialize_cloud_logging, get_blog_logger, log_blog_generation, log_api_request
+
+# Initialize logger
+logger = get_blog_logger()
+
 # Credential services not implemented yet - using direct environment variables
 # from src.blog_writer_sdk.services.credential_service import TenantCredentialService
 # from src.blog_writer_sdk.services.dataforseo_credential_service import DataForSEOCredentialService
 # from src.blog_writer_sdk.models.credential_models import DataForSEOCredentials, TenantCredentialStatus
-from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient, EnhancedKeywordAnalyzer
+from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOClient
 
 # Global DataForSEO client for Phase 3 semantic integration
 dataforseo_client_global = None
@@ -90,7 +95,11 @@ from src.blog_writer_sdk.seo.content_quality_scorer import ContentQualityScorer
 from src.blog_writer_sdk.seo.intent_analyzer import IntentAnalyzer
 from src.blog_writer_sdk.seo.few_shot_learning import FewShotLearningExtractor
 from src.blog_writer_sdk.seo.content_length_optimizer import ContentLengthOptimizer
+from src.blog_writer_sdk.seo.topic_recommender import TopicRecommendationEngine
 from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
+from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficultyAnalyzer
+from src.blog_writer_sdk.services.quota_manager import QuotaManager
+from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 
 
 # API Request/Response Models
@@ -126,9 +135,14 @@ class ContentAnalysisRequest(BaseModel):
 
 class KeywordAnalysisRequest(BaseModel):
     """Request model for keyword analysis."""
-    keywords: List[str] = Field(..., max_length=50, description="Keywords to analyze")
+    keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
+    text: Optional[str] = Field(None, description="Optional text content (ignored if keywords provided)")
+    max_suggestions_per_keyword: Optional[int] = Field(None, description="Optional: if provided, routes to enhanced analysis")
+    
+    class Config:
+        extra = "ignore"  # Ignore extra fields to be more flexible with frontend requests
 
 class EnhancedKeywordAnalysisRequest(BaseModel):
     """Request model for enhanced keyword analysis with DataForSEO."""
@@ -137,6 +151,33 @@ class EnhancedKeywordAnalysisRequest(BaseModel):
     language: Optional[str] = Field("en", description="Language code for analysis")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
     max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
+
+class TopicRecommendationRequest(BaseModel):
+    """Request model for topic recommendations."""
+    seed_keywords: List[str] = Field(..., min_items=1, max_length=10, description="Seed keywords to base recommendations on")
+    location: Optional[str] = Field("United States", description="Location for search volume analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    max_topics: int = Field(default=20, ge=5, le=50, description="Maximum number of topics to return")
+    min_search_volume: int = Field(default=100, ge=0, description="Minimum monthly search volume")
+    max_difficulty: float = Field(default=70.0, ge=0, le=100, description="Maximum keyword difficulty (0-100)")
+    include_ai_suggestions: bool = Field(default=True, description="Use Claude AI for intelligent topic generation")
+
+
+class KeywordDifficultyRequest(BaseModel):
+    """Request model for keyword difficulty analysis."""
+    keyword: str = Field(..., min_length=1, description="Keyword to analyze")
+    search_volume: int = Field(default=0, ge=0, description="Monthly search volume")
+    difficulty: float = Field(default=50.0, ge=0, le=100, description="Basic difficulty score")
+    competition: float = Field(default=0.5, ge=0, le=1, description="Competition index")
+    location: str = Field(default="United States", description="Location for analysis")
+    language: str = Field(default="en", description="Language code")
+
+
+class SetQuotaLimitsRequest(BaseModel):
+    """Request model for setting quota limits."""
+    monthly_limit: Optional[int] = Field(None, ge=1, description="Monthly quota limit")
+    daily_limit: Optional[int] = Field(None, ge=1, description="Daily quota limit")
+    hourly_limit: Optional[int] = Field(None, ge=1, description="Hourly quota limit")
 
 
 class PlatformPublishRequest(BaseModel):
@@ -290,10 +331,21 @@ async def lifespan(app: FastAPI):
 
     # Initialize EnhancedKeywordAnalyzer
     global enhanced_keyword_analyzer, dataforseo_client_global
-    enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
-        use_dataforseo=True, # Assuming we always want to use DataforSEO if available
-        credential_service=dataforseo_credential_service
-    )
+    # Get DataForSEO credentials from environment (loaded from secrets)
+    dataforseo_api_key = os.getenv("DATAFORSEO_API_KEY")
+    dataforseo_api_secret = os.getenv("DATAFORSEO_API_SECRET")
+    if dataforseo_api_key and dataforseo_api_secret:
+        enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
+            use_dataforseo=True,
+            api_key=dataforseo_api_key,
+            api_secret=dataforseo_api_secret,
+            location=os.getenv("DATAFORSEO_LOCATION", "United States"),
+            language_code=os.getenv("DATAFORSEO_LANGUAGE", "en"),
+        )
+    else:
+        enhanced_keyword_analyzer = EnhancedKeywordAnalyzer(
+            use_dataforseo=False  # Disable if credentials not available
+        )
     
     # Initialize DataForSEO client for semantic integration (Phase 3)
     # Note: DataForSEO client will be initialized synchronously when needed
@@ -358,6 +410,25 @@ async def lifespan(app: FastAPI):
     )
     print("✅ Phase 3 components initialized.")
     print("✅ Additional enhancements initialized (intent analysis, few-shot learning, length optimization).")
+    
+    # Initialize Topic Recommendation Engine
+    global topic_recommender
+    from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+    keyword_clustering = KeywordClustering(knowledge_graph_client=google_knowledge_graph_client)
+    topic_recommender = TopicRecommendationEngine(
+        dataforseo_client=dataforseo_client_global,
+        google_search_client=google_custom_search_client,
+        ai_generator=ai_generator,
+        keyword_clustering=keyword_clustering
+    )
+    print("✅ Topic Recommendation Engine initialized.")
+    
+    # Initialize Phase 1-3 services
+    global quota_manager, keyword_difficulty_analyzer
+    quota_manager = QuotaManager()  # In-memory for now, can be extended with database backend
+    keyword_difficulty_analyzer = KeywordDifficultyAnalyzer(dataforseo_client=dataforseo_client_global)
+    print("✅ Quota Manager initialized.")
+    print("✅ Keyword Difficulty Analyzer initialized.")
 
     yield
     
@@ -584,6 +655,10 @@ blog_writer = BlogWriter(
     ai_content_generator=ai_generator,
     enable_ai_enhancement=ai_generator is not None,
 )
+
+# Phase 1-3 global services (initialized in lifespan)
+quota_manager = None
+keyword_difficulty_analyzer = None
 
 
 # Dependency to get blog writer instance
@@ -840,6 +915,27 @@ async def generate_blog_enhanced(
         if request.custom_instructions:
             additional_context["custom_instructions"] = request.custom_instructions
         
+        # Add product research requirements if enabled
+        if request.include_product_research:
+            additional_context["product_research_requirements"] = {
+                "include_brands": request.include_brands,
+                "include_models": request.include_models,
+                "include_prices": request.include_prices,
+                "include_features": request.include_features,
+                "include_reviews": request.include_reviews,
+                "include_pros_cons": request.include_pros_cons,
+                "include_product_table": request.include_product_table,
+                "include_comparison_section": request.include_comparison_section,
+                "include_buying_guide": request.include_buying_guide,
+                "include_faq_section": request.include_faq_section,
+                "research_depth": request.research_depth
+            }
+            # Force Google Search for product research
+            if not request.use_google_search:
+                logger.info("Product research enabled, forcing Google Search")
+                # Note: We can't modify request.use_google_search here, but we can ensure search is used
+                # The pipeline will use google_search if available
+        
         # SERP optimization if enabled
         serp_features = []
         if request.use_serp_optimization and request.keywords:
@@ -861,6 +957,65 @@ async def generate_blog_enhanced(
             template=template,
             additional_context=additional_context
         )
+        
+        # Generate images if this is a product-related topic
+        generated_images = []
+        if request.use_google_search:  # Only if Google Search is enabled (indicates research was done)
+            try:
+                from src.blog_writer_sdk.api.image_generation import image_provider_manager
+                from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
+                
+                # Check if topic suggests product content
+                product_indicators = ["best", "top", "review", "compare", "guide"]
+                is_product_topic = any(indicator in request.topic.lower() for indicator in product_indicators)
+                
+                if is_product_topic and image_provider_manager and image_provider_manager.providers:
+                    logger.info("Generating images for product blog post")
+                    
+                    # Generate featured image
+                    try:
+                        featured_image_request = ImageGenerationRequest(
+                            prompt=f"Professional product photography: {request.topic}. High quality, clean background, professional lighting",
+                            style=ImageStyle.PHOTOGRAPHIC,
+                            aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
+                            quality=ImageQuality.HIGH
+                        )
+                        featured_image_response = await image_provider_manager.generate_image(featured_image_request)
+                        if featured_image_response.success and featured_image_response.images:
+                            generated_images.append({
+                                "type": "featured",
+                                "prompt": featured_image_request.prompt,
+                                "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
+                                "alt_text": f"Featured image for {request.topic}"
+                            })
+                            logger.info("Featured image generated successfully")
+                    except Exception as e:
+                        logger.warning(f"Featured image generation failed: {e}")
+                    
+                    # Generate section images (if brand recommendations exist)
+                    if additional_context.get("brand_recommendations"):
+                        brands = additional_context["brand_recommendations"].get("brands", [])[:3]
+                        for brand in brands:
+                            try:
+                                brand_image_request = ImageGenerationRequest(
+                                    prompt=f"Professional product image: {brand} {request.keywords[0] if request.keywords else ''}. Clean, professional, product photography style",
+                                    style=ImageStyle.PHOTOGRAPHIC,
+                                    aspect_ratio=ImageAspectRatio.FOUR_THREE,
+                                    quality=ImageQuality.STANDARD
+                                )
+                                brand_image_response = await image_provider_manager.generate_image(brand_image_request)
+                                if brand_image_response.success and brand_image_response.images:
+                                    generated_images.append({
+                                        "type": "product",
+                                        "brand": brand,
+                                        "prompt": brand_image_request.prompt,
+                                        "image_url": brand_image_response.images[0].get("image_url") or brand_image_response.images[0].get("image_data"),
+                                        "alt_text": f"{brand} product image"
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Brand image generation failed for {brand}: {e}")
+            except Exception as e:
+                logger.warning(f"Image generation integration failed: {e}")
         
         # Add citations if enabled
         citations = []
@@ -905,6 +1060,11 @@ async def generate_blog_enhanced(
         # Extract semantic keywords (Phase 3)
         semantic_keywords = pipeline_result.seo_metadata.get("semantic_keywords", [])
         
+        # Extract brand recommendations from context
+        brand_recommendations = None
+        if additional_context.get("brand_recommendations"):
+            brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
+        
         # Prepare stage results for response
         stage_results_data = [
             {
@@ -943,6 +1103,8 @@ async def generate_blog_enhanced(
             quality_dimensions=quality_dimensions,
             structured_data=pipeline_result.structured_data,
             semantic_keywords=semantic_keywords,
+            generated_images=generated_images if generated_images else None,
+            brand_recommendations=brand_recommendations,
             success=True,
             warnings=[]
         )
@@ -995,41 +1157,184 @@ async def analyze_keywords(
     """
     Analyze keywords for SEO potential and difficulty.
     
+    If `max_suggestions_per_keyword` is provided (even if 0), automatically routes to enhanced analysis
+    for better results with search volume, difficulty, and competition data.
+    
     Returns analysis for each keyword including:
     - Estimated difficulty
+    - Search volume (if enhanced analysis available)
+    - Competition metrics
     - Related keywords
     - Long-tail variations
     - Recommendations
     """
     try:
         if not request.keywords:
-            raise HTTPException(status_code=400, detail="No keywords provided")
+            raise HTTPException(
+                status_code=400,
+                detail="No keywords provided. Please provide at least one keyword in the 'keywords' array."
+            )
         
-        results = {}
+        # If max_suggestions_per_keyword is provided (even if 0), use enhanced analysis for better results
+        if request.max_suggestions_per_keyword is not None:
+            # Convert to EnhancedKeywordAnalysisRequest format
+            enhanced_request = EnhancedKeywordAnalysisRequest(
+                keywords=request.keywords,
+                location=request.location,
+                language=request.language,
+                include_serp=False,
+                max_suggestions_per_keyword=max(5, min(request.max_suggestions_per_keyword, 150)) if request.max_suggestions_per_keyword > 0 else 20
+            )
+            # Route to enhanced endpoint for better results
+            return await analyze_keywords_enhanced(enhanced_request)
+        
+        # Standard analysis - but prefer enhanced if available
+        if enhanced_analyzer:
+            try:
+                results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                    keywords=request.keywords,
+                    tenant_id=os.getenv("TENANT_ID", "default")
+                )
+                # Convert to expected format
+                keyword_analysis = {}
+                for kw, analysis in results.items():
+                    # Ensure search_volume and cpc are always numeric (never None)
+                    search_volume = analysis.search_volume if analysis.search_volume is not None else 0
+                    cpc_value = analysis.cpc if analysis.cpc is not None else 0.0
+                    competition_value = analysis.competition if analysis.competition is not None else 0.0
+                    
+                    keyword_analysis[kw] = {
+                        "difficulty": analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty),
+                        "search_volume": search_volume,  # Always numeric
+                        "competition": competition_value,
+                        "cpc": cpc_value,  # Always numeric
+                        "recommended": analysis.recommended,
+                        "reason": analysis.reason,
+                        "related_keywords": analysis.related_keywords[:10],
+                        "long_tail_keywords": analysis.long_tail_keywords[:10]
+                    }
+                return {"keyword_analysis": keyword_analysis}
+            except Exception as e:
+                logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
+        
+        # Fallback to standard analysis
+        results: Dict[str, Dict[str, Any]] = {}
         for keyword in request.keywords:
             analysis = await writer.keyword_analyzer.analyze_keyword(keyword)
-            results[keyword] = analysis
+            
+            # Normalize analysis to plain dict with numeric defaults
+            analysis_dict = analysis.model_dump()
+            difficulty_value = analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty)
+            
+            results[keyword] = {
+                "difficulty": difficulty_value,
+                "search_volume": analysis_dict.get("search_volume") or 0,
+                "competition": analysis_dict.get("competition") or 0.0,
+                "cpc": analysis_dict.get("cpc") or 0.0,
+                "trend_score": analysis_dict.get("trend_score") or 0.0,
+                "recommended": analysis_dict.get("recommended", False),
+                "reason": analysis_dict.get("reason"),
+                "related_keywords": analysis_dict.get("related_keywords", []),
+                "long_tail_keywords": analysis_dict.get("long_tail_keywords", []),
+            }
         
         return {"keyword_analysis": results}
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Keyword analysis failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Keyword analysis failed: {str(e)}"
         )
 
 
+async def detect_location_from_ip(request: Request) -> Optional[str]:
+    """
+    Detect location from client IP address using geolocation service.
+    
+    Returns country name in DataForSEO format (e.g., "United States", "United Kingdom")
+    Falls back to None if detection fails.
+    """
+    try:
+        # Get client IP
+        client_ip = request.client.host if request.client else None
+        forwarded_for = request.headers.get('X-Forwarded-For')
+        if forwarded_for:
+            client_ip = forwarded_for.split(',')[0].strip()
+        
+        if not client_ip or client_ip in ['127.0.0.1', 'localhost', '::1']:
+            return None
+        
+        # Use free geolocation API (ip-api.com - no API key required)
+        # Note: httpx is imported at module level
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.get(f"http://ip-api.com/json/{client_ip}?fields=country")
+            if response.status_code == 200:
+                data = response.json()
+                country = data.get('country')
+                if country:
+                    # Map common country names to DataForSEO format
+                    country_mapping = {
+                        'United States': 'United States',
+                        'United Kingdom': 'United Kingdom',
+                        'Canada': 'Canada',
+                        'Australia': 'Australia',
+                        'Germany': 'Germany',
+                        'France': 'France',
+                        'Spain': 'Spain',
+                        'Italy': 'Italy',
+                        'Netherlands': 'Netherlands',
+                        'Sweden': 'Sweden',
+                        'Norway': 'Norway',
+                        'Denmark': 'Denmark',
+                        'Finland': 'Finland',
+                        'Poland': 'Poland',
+                        'Brazil': 'Brazil',
+                        'Mexico': 'Mexico',
+                        'India': 'India',
+                        'Japan': 'Japan',
+                        'South Korea': 'South Korea',
+                        'China': 'China',
+                        'Singapore': 'Singapore',
+                    }
+                    return country_mapping.get(country, country)
+    except Exception as e:
+        logger.debug(f"IP-based location detection failed: {e}")
+    
+    return None
+
+
 # Enhanced keyword analysis endpoint using DataForSEO (if configured)
 @app.post("/api/v1/keywords/enhanced")
 async def analyze_keywords_enhanced(
-    request: EnhancedKeywordAnalysisRequest
+    request: EnhancedKeywordAnalysisRequest,
+    http_request: Request
 ):
     """
     Enhanced keyword analysis leveraging DataForSEO when available.
     Includes keyword clustering and parent topic extraction.
     Falls back gracefully if credentials are not configured.
+    
+    Location Detection:
+    - If `location` is specified in request, it will be used
+    - If `location` is not specified (or is default "United States"), the API will attempt
+      to detect location from the client's IP address
+    - Falls back to "United States" if IP detection fails or is unavailable
     """
     try:
+        # Detect location from IP if not explicitly specified
+        detected_location = None
+        if not request.location or request.location == "United States":
+            if http_request:
+                detected_location = await detect_location_from_ip(http_request)
+                if detected_location:
+                    logger.info(f"Detected location from IP: {detected_location}")
+        
+        # Use detected location or fall back to request location or default
+        effective_location = detected_location or request.location or "United States"
         from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
         
         if not enhanced_analyzer:
@@ -1054,7 +1359,7 @@ async def analyze_keywords_enhanced(
                     try:
                         df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
                             seed_keyword=seed_keyword,
-                            location_name=request.location or "United States",
+                            location_name=effective_location,
                             language_code=request.language or "en",
                             tenant_id=tenant_id,
                             limit=min(request.max_suggestions_per_keyword, 150)
@@ -1090,11 +1395,47 @@ async def analyze_keywords_enhanced(
             pass
         
         clustering = KeywordClustering(knowledge_graph_client=kg_client)
-        clustering_result = clustering.cluster_keywords(
-            keywords=all_keywords,
-            min_cluster_size=1,
-            max_clusters=None
-        )
+        try:
+            clustering_result = clustering.cluster_keywords(
+                keywords=all_keywords,
+                min_cluster_size=1,  # Allow single keywords to form clusters
+                max_clusters=None
+            )
+            # Log clustering results for debugging
+            logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")
+            logger.info(f"Clusters: {[c.parent_topic for c in clustering_result.clusters[:5]]}")
+        except Exception as e:
+            logger.warning(f"Clustering failed: {e}, continuing without clustering")
+            # Create a fallback clustering result
+            from src.blog_writer_sdk.seo.keyword_clustering import ClusteringResult, KeywordCluster
+            clustering_result = ClusteringResult(
+                clusters=[KeywordCluster(
+                    parent_topic=kw,
+                    keywords=[kw],
+                    cluster_score=0.5,
+                    dominant_words=kw.split()[:3],
+                    category_type="topic"
+                ) for kw in all_keywords[:50]],
+                unclustered=all_keywords[50:] if len(all_keywords) > 50 else [],
+                total_keywords=len(all_keywords),
+                cluster_count=min(len(all_keywords), 50)
+            )
+        
+        # Get AI optimization data for all keywords (critical for AI-optimized content)
+        ai_optimization_data = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                ai_optimization_data = await enhanced_analyzer._df_client.get_ai_search_volume(
+                    keywords=list(results.keys()),
+                    location_name=effective_location,
+                    language_code=request.language or "en",
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to get AI optimization data: {e}")
+                # Continue without AI data
         
         # Shape into a simple dict for API response with parent topics
         out = {}
@@ -1117,40 +1458,77 @@ async def analyze_keywords_enhanced(
                 category_type = clustering._classify_keyword_type(k)
                 cluster_score = 0.5
             
+            # Ensure search_volume and cpc are always numeric (never None)
+            search_volume = v.search_volume if v.search_volume is not None else 0
+            cpc_value = v.cpc if v.cpc is not None else 0.0
+            competition_value = v.competition if v.competition is not None else 0.0
+            trend_score_value = v.trend_score if v.trend_score is not None else 0.0
+            
+            # Get AI optimization metrics
+            ai_metrics = ai_optimization_data.get(k, {})
+            ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
+            ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
+            ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
+            
             out[k] = {
-                "search_volume": v.search_volume,
+                "search_volume": search_volume,  # Always numeric
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
-                "competition": v.competition,
-                "cpc": v.cpc,
-                "trend_score": v.trend_score,
+                "competition": competition_value,
+                "cpc": cpc_value,  # Always numeric
+                "trend_score": trend_score_value,
                 "recommended": v.recommended,
                 "reason": v.reason,
                 "related_keywords": v.related_keywords,
                 "long_tail_keywords": v.long_tail_keywords,
                 "parent_topic": parent_topic,
                 "category_type": category_type,
-                "cluster_score": cluster_score
+                "cluster_score": cluster_score,
+                # AI Optimization metrics (critical for AI-optimized content)
+                "ai_search_volume": ai_search_volume,
+                "ai_trend": ai_trend,
+                "ai_monthly_searches": ai_monthly_searches
             }
+        
+        # Ensure clusters are always returned, even if empty
+        clusters_list = [
+            {
+                "parent_topic": c.parent_topic,
+                "keywords": c.keywords,
+                "cluster_score": c.cluster_score,
+                "category_type": c.category_type,
+                "keyword_count": len(c.keywords)
+            }
+            for c in clustering_result.clusters
+        ]
+        
+        # If no clusters found, create single-keyword clusters from all keywords
+        if not clusters_list and all_keywords:
+            logger.warning(f"No clusters found for {len(all_keywords)} keywords, creating single-keyword clusters")
+            for kw in all_keywords[:50]:  # Limit to first 50 to avoid huge responses
+                parent_topic = clustering._extract_parent_topic_from_keyword(kw)
+                clusters_list.append({
+                    "parent_topic": parent_topic,
+                    "keywords": [kw],
+                    "cluster_score": 0.5,
+                    "category_type": clustering._classify_keyword_type(kw),
+                    "keyword_count": 1
+                })
         
         return {
             "enhanced_analysis": out,
             "total_keywords": len(all_keywords),
             "original_keywords": request.keywords,
             "suggested_keywords": all_keywords[len(request.keywords):] if len(all_keywords) > len(request.keywords) else [],
-            "clusters": [
-                {
-                    "parent_topic": c.parent_topic,
-                    "keywords": c.keywords,
-                    "cluster_score": c.cluster_score,
-                    "category_type": c.category_type,
-                    "keyword_count": len(c.keywords)
-                }
-                for c in clustering_result.clusters
-            ],
+            "clusters": clusters_list,
             "cluster_summary": {
-                "total_keywords": clustering_result.total_keywords,
-                "cluster_count": clustering_result.cluster_count,
-                "unclustered_count": len(clustering_result.unclustered)
+                "total_keywords": clustering_result.total_keywords if clustering_result else len(all_keywords),
+                "cluster_count": len(clusters_list),
+                "unclustered_count": len(clustering_result.unclustered) if clustering_result else 0
+            },
+            "location": {
+                "used": effective_location,
+                "detected_from_ip": detected_location is not None,
+                "specified": request.location is not None and request.location != "United States"
             }
         }
     except HTTPException:
@@ -1160,6 +1538,339 @@ async def analyze_keywords_enhanced(
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/ai-optimization")
+async def analyze_keywords_ai_optimization(
+    request: EnhancedKeywordAnalysisRequest
+):
+    """
+    Analyze keywords specifically for AI optimization.
+    
+    This endpoint focuses on AI search volume data, which is critical for creating
+    content that appears in AI LLM responses (ChatGPT, Claude, Gemini, etc.).
+    
+    Returns:
+    - ai_search_volume: Current month's estimated volume in AI queries
+    - ai_monthly_searches: Historical trend over past 12 months
+    - ai_trend: Trend score indicating if AI volume is increasing/decreasing
+    - Comparison with traditional search volume
+    - AI optimization recommendations
+    """
+    try:
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="Enhanced analyzer with DataForSEO not available")
+        
+        tenant_id = os.getenv("TENANT_ID", "default")
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        # Get AI optimization data
+        ai_data = await enhanced_analyzer._df_client.get_ai_search_volume(
+            keywords=request.keywords,
+            location_name=request.location or "United States",
+            language_code=request.language or "en",
+            tenant_id=tenant_id
+        )
+        
+        # Get traditional search volume for comparison
+        traditional_data = await enhanced_analyzer._df_client.get_search_volume_data(
+            keywords=request.keywords,
+            location_name=request.location or "United States",
+            language_code=request.language or "en",
+            tenant_id=tenant_id
+        )
+        
+        # Build comprehensive AI optimization analysis
+        ai_analysis = {}
+        for keyword in request.keywords:
+            ai_metrics = ai_data.get(keyword, {})
+            traditional_metrics = traditional_data.get(keyword, {})
+            
+            ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
+            traditional_search_volume = traditional_metrics.get("search_volume", 0) or 0
+            ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
+            ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
+            
+            # Calculate AI optimization score (0-100)
+            # Higher score = better for AI optimization
+            ai_score = 0
+            if ai_search_volume > 0:
+                # Base score from AI volume (log scale)
+                ai_score += min(50, math.log10(ai_search_volume + 1) * 10)
+            
+            # Trend bonus (positive trend = higher score)
+            if ai_trend > 0:
+                ai_score += min(25, ai_trend * 25)
+            
+            # Volume growth bonus
+            if ai_monthly_searches and len(ai_monthly_searches) >= 2:
+                recent_avg = sum(m.get("search_volume", 0) for m in ai_monthly_searches[-3:]) / 3
+                older_avg = sum(m.get("search_volume", 0) for m in ai_monthly_searches[:3]) / 3
+                if older_avg > 0:
+                    growth = (recent_avg - older_avg) / older_avg
+                    ai_score += min(25, growth * 25)
+            
+            # Determine AI optimization recommendation
+            ai_recommended = ai_score >= 40
+            if ai_score >= 70:
+                ai_reason = "Excellent AI visibility - high volume and positive trend"
+            elif ai_score >= 50:
+                ai_reason = "Good AI visibility - moderate volume with growth potential"
+            elif ai_score >= 30:
+                ai_reason = "Moderate AI visibility - consider optimizing for AI search"
+            else:
+                ai_reason = "Low AI visibility - focus on traditional SEO or emerging AI trends"
+            
+            ai_analysis[keyword] = {
+                "ai_search_volume": ai_search_volume,
+                "traditional_search_volume": traditional_search_volume,
+                "ai_trend": ai_trend,
+                "ai_monthly_searches": ai_monthly_searches,
+                "ai_optimization_score": min(100, max(0, int(ai_score))),
+                "ai_recommended": ai_recommended,
+                "ai_reason": ai_reason,
+                "comparison": {
+                    "ai_to_traditional_ratio": round(ai_search_volume / traditional_search_volume, 3) if traditional_search_volume > 0 else 0.0,
+                    "ai_growth_trend": "increasing" if ai_trend > 0.1 else "decreasing" if ai_trend < -0.1 else "stable"
+                }
+            }
+        
+        return {
+            "ai_optimization_analysis": ai_analysis,
+            "total_keywords": len(request.keywords),
+            "location": request.location or "United States",
+            "language": request.language or "en",
+            "summary": {
+                "keywords_with_ai_volume": sum(1 for k, v in ai_analysis.items() if v["ai_search_volume"] > 0),
+                "average_ai_score": sum(v["ai_optimization_score"] for v in ai_analysis.values()) / len(ai_analysis) if ai_analysis else 0,
+                "recommended_keywords": [k for k, v in ai_analysis.items() if v["ai_recommended"]]
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI optimization analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI optimization analysis failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/difficulty")
+async def analyze_keyword_difficulty(
+    request: KeywordDifficultyRequest
+):
+    """
+    Analyze keyword difficulty with multi-factor analysis.
+    
+    Provides:
+    - Domain authority requirements
+    - Backlink requirements
+    - Content length needs
+    - Competition level
+    - Time-to-rank estimates
+    - Ranking probability over time
+    """
+    try:
+        global keyword_difficulty_analyzer
+        if not keyword_difficulty_analyzer:
+            raise HTTPException(status_code=503, detail="Difficulty analyzer not available")
+        
+        analysis = await keyword_difficulty_analyzer.analyze_difficulty(
+            keyword=request.keyword,
+            search_volume=request.search_volume,
+            difficulty=request.difficulty,
+            competition=request.competition,
+            location=request.location,
+            language=request.language
+        )
+        
+        return {
+            "keyword": request.keyword,
+            "overall_difficulty": analysis.overall_difficulty,
+            "domain_authority_required": analysis.factors.domain_authority_required,
+            "backlink_requirements": analysis.factors.backlink_requirements.value,
+            "content_length_needed": analysis.factors.content_length_needed,
+            "competition_level": analysis.factors.competition_level.value,
+            "time_to_rank": analysis.factors.time_to_rank,
+            "ranking_probability": analysis.factors.ranking_probability,
+            "recommendations": analysis.recommendations,
+            "metadata": analysis.metadata
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Difficulty analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Difficulty analysis failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/quota/{organization_id}")
+async def get_quota_info(organization_id: str):
+    """
+    Get quota information for an organization.
+    
+    Returns:
+    - Monthly, daily, and hourly limits
+    - Current usage
+    - Remaining quota
+    - Warnings if approaching limits
+    """
+    try:
+        global quota_manager
+        if not quota_manager:
+            raise HTTPException(status_code=503, detail="Quota manager not available")
+        
+        quota_info = await quota_manager.get_quota_info(organization_id)
+        if not quota_info:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        
+        return quota_info.to_dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Quota info retrieval failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Quota info retrieval failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/quota/{organization_id}/set-limits")
+async def set_quota_limits(
+    organization_id: str,
+    request: SetQuotaLimitsRequest
+):
+    """
+    Set custom quota limits for an organization.
+    
+    Only updates provided limits, leaves others unchanged.
+    """
+    try:
+        global quota_manager
+        if not quota_manager:
+            raise HTTPException(status_code=503, detail="Quota manager not available")
+        
+        await quota_manager.set_quota_limits(
+            organization_id=organization_id,
+            monthly_limit=request.monthly_limit,
+            daily_limit=request.daily_limit,
+            hourly_limit=request.hourly_limit
+        )
+        
+        return {"message": "Quota limits updated successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Quota limit update failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Quota limit update failed: {str(e)}"
+        )
+
+# Topic recommendation endpoint
+@app.post("/api/v1/topics/recommend")
+async def recommend_topics(
+    request: TopicRecommendationRequest
+):
+    """
+    Recommend high-ranking blog topics based on seed keywords.
+    
+    Uses:
+    - DataForSEO for keyword metrics (search volume, difficulty, competition)
+    - Google Custom Search for content gap analysis
+    - Claude AI (3.5 Sonnet) for intelligent topic generation
+    
+    Returns topics with ranking scores, opportunity scores, and content gap analysis.
+    """
+    try:
+        global topic_recommender, ai_generator
+        
+        if not topic_recommender:
+            raise HTTPException(
+                status_code=503,
+                detail="Topic recommendation engine not available"
+            )
+        
+        # Get recommendations
+        result = await topic_recommender.recommend_topics(
+            seed_keywords=request.seed_keywords,
+            location=request.location or "United States",
+            language=request.language or "en",
+            max_topics=request.max_topics,
+            min_search_volume=request.min_search_volume,
+            max_difficulty=request.max_difficulty,
+            include_ai_suggestions=request.include_ai_suggestions
+        )
+        
+        # Convert to response format
+        return {
+            "recommended_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "search_volume": t.search_volume,
+                    "difficulty": t.difficulty,
+                    "competition": t.competition,
+                    "cpc": t.cpc,
+                    "ranking_score": t.ranking_score,
+                    "opportunity_score": t.opportunity_score,
+                    "related_keywords": t.related_keywords,
+                    "content_gaps": t.content_gaps,
+                    "estimated_traffic": t.estimated_traffic,
+                    "reason": t.reason
+                }
+                for t in result.recommended_topics
+            ],
+            "high_priority_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "ranking_score": t.ranking_score,
+                    "search_volume": t.search_volume,
+                    "difficulty": t.difficulty,
+                    "reason": t.reason
+                }
+                for t in result.high_priority_topics
+            ],
+            "trending_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "search_volume": t.search_volume,
+                    "difficulty": t.difficulty,
+                    "reason": t.reason
+                }
+                for t in result.trending_topics
+            ],
+            "low_competition_topics": [
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "difficulty": t.difficulty,
+                    "competition": t.competition,
+                    "reason": t.reason
+                }
+                for t in result.low_competition_topics
+            ],
+            "total_opportunities": result.total_opportunities,
+            "analysis_date": result.analysis_date
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Topic recommendation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Topic recommendation failed: {str(e)}"
         )
 
 # Extract keywords from content endpoint

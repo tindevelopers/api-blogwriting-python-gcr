@@ -1,3 +1,23 @@
+## 1.2.1 (2025-11-12)
+
+### Added
+- **Topic Recommendation Engine**: `POST /api/v1/topics/recommend`
+  - Recommends high-ranking blog topics based on seed keywords
+  - Uses DataForSEO for keyword metrics (search volume, difficulty, competition)
+  - Uses Google Custom Search for content gap analysis
+  - Uses Claude 3.5 Sonnet for AI-powered topic generation
+  - Returns topics with ranking scores (0-100) and opportunity scores (0-100)
+  - Categorizes topics: high priority, trending, low competition
+  - Includes content gaps, related keywords, and estimated traffic potential
+- **New Component**: `TopicRecommendationEngine` module for intelligent topic discovery
+
+### Notes
+- Topic recommendations leverage Claude AI for intelligent topic suggestions
+- Requires DataForSEO credentials for full functionality
+- Google Custom Search integration recommended for content gap analysis
+
+---
+
 ## 1.2.0 (2025-01-10)
 
 ### Added

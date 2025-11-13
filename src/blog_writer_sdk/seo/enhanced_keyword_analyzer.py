@@ -88,7 +88,9 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         
         try:
             # Get enhanced metrics from DataForSEO (direct API if available)
-            enhanced_data = await self._get_dataforseo_metrics(keyword)
+            # Use default tenant_id if not provided
+            tenant_id = getattr(self, '_tenant_id', 'default')
+            enhanced_data = await self._get_dataforseo_metrics(keyword, tenant_id=tenant_id)
             
             # Cache the results
             self._keyword_cache[cache_key] = {
@@ -136,6 +138,28 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             results[keyword] = await self.analyze_keyword_enhanced(keyword)
         
         return results
+    
+    async def analyze_keywords_comprehensive(self, keywords: List[str], tenant_id: str = "default") -> Dict[str, KeywordAnalysis]:
+        """
+        Perform comprehensive keyword analysis with real SEO data.
+        This is an alias for analyze_keywords_batch that includes tenant_id for credential initialization.
+        
+        Args:
+            keywords: List of keywords to analyze
+            tenant_id: Tenant ID for credential initialization
+            
+        Returns:
+            Dictionary mapping keywords to their comprehensive analysis
+        """
+        # Ensure credentials are initialized if using DataForSEO
+        if self.use_dataforseo and self._df_client:
+            try:
+                await self._df_client.initialize_credentials(tenant_id)
+            except Exception as e:
+                print(f"Warning: Failed to initialize DataForSEO credentials: {e}")
+        
+        # Use batch analysis which handles DataForSEO integration
+        return await self.analyze_keywords_batch(keywords)
     
     async def get_keyword_trends(self, keywords: List[str], days: int = 90) -> Dict[str, Any]:
         """
@@ -192,46 +216,164 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             print(f"Warning: Competitor analysis failed: {e}")
             return []
     
-    async def _get_dataforseo_metrics(self, keyword: str) -> Dict[str, Any]:
+    async def _get_dataforseo_metrics(self, keyword: str, tenant_id: str = "default") -> Dict[str, Any]:
         """Get comprehensive keyword metrics from DataForSEO (direct API if available)."""
         if not (self.use_dataforseo and self._df_client):
             return {
-                "search_volume": None,
-                "cpc": None,
+                "search_volume": 0,  # Return 0 instead of None
+                "cpc": 0.0,  # Return 0.0 instead of None
                 "competition": 0.0,
                 "trend_score": 0.0,
-                "difficulty_score": None,
+                "difficulty_score": 50.0,  # Return default instead of None
             }
 
-        sv_data = await self._df_client.get_search_volume_data([keyword])
-        diff_data = await self._df_client.get_keyword_difficulty([keyword])
-        m = sv_data.get(keyword, {})
-        return {
-            "search_volume": m.get("search_volume"),
-            "cpc": m.get("cpc"),
-            "competition": m.get("competition", 0.0),
-            "trend_score": m.get("trend", 0.0),
-            "difficulty_score": diff_data.get(keyword),
-        }
+        try:
+            # Ensure credentials are initialized
+            await self._df_client.initialize_credentials(tenant_id)
+            
+            # Get search volume data with proper parameters
+            sv_data = await self._df_client.get_search_volume_data(
+                keywords=[keyword],
+                location_name=self.location,
+                language_code=self.language_code,
+                tenant_id=tenant_id
+            )
+            diff_data = await self._df_client.get_keyword_difficulty(
+                keywords=[keyword],
+                location_name=self.location,
+                language_code=self.language_code,
+                tenant_id=tenant_id
+            )
+            m = sv_data.get(keyword, {})
+            return {
+                "search_volume": m.get("search_volume", 0) or 0,  # Ensure numeric, default to 0
+                "cpc": m.get("cpc", 0.0) or 0.0,  # Ensure numeric, default to 0.0
+                "competition": m.get("competition", 0.0) or 0.0,
+                "trend_score": m.get("trend", 0.0) or 0.0,
+                "difficulty_score": diff_data.get(keyword, 50.0) or 50.0,
+            }
+        except Exception as e:
+            print(f"Error fetching DataForSEO metrics for {keyword}: {e}")
+            # Return defaults instead of None
+            return {
+                "search_volume": 0,
+                "cpc": 0.0,
+                "competition": 0.0,
+                "trend_score": 0.0,
+                "difficulty_score": 50.0,
+            }
     
-    async def _get_dataforseo_batch_metrics(self, keywords: List[str]) -> Dict[str, Dict[str, Any]]:
+    async def _get_dataforseo_batch_metrics(self, keywords: List[str], tenant_id: str = "default") -> Dict[str, Dict[str, Any]]:
         """Get metrics for multiple keywords in batch from DataForSEO (direct API)."""
         if not (self.use_dataforseo and self._df_client):
-            return {kw: await self._get_dataforseo_metrics(kw) for kw in keywords}
+            return {kw: await self._get_dataforseo_metrics(kw, tenant_id) for kw in keywords}
 
-        sv_data = await self._df_client.get_search_volume_data(keywords)
-        diff_data = await self._df_client.get_keyword_difficulty(keywords)
-        combined: Dict[str, Dict[str, Any]] = {}
-        for kw in keywords:
-            m = sv_data.get(kw, {})
-            combined[kw] = {
-                "search_volume": m.get("search_volume"),
-                "cpc": m.get("cpc"),
-                "competition": m.get("competition", 0.0),
-                "trend_score": m.get("trend", 0.0),
-                "difficulty_score": diff_data.get(kw),
+        try:
+            # Ensure credentials are initialized
+            await self._df_client.initialize_credentials(tenant_id)
+            
+            # Get search volume data with proper parameters
+            sv_data = await self._df_client.get_search_volume_data(
+                keywords=keywords,
+                location_name=self.location,
+                language_code=self.language_code,
+                tenant_id=tenant_id
+            )
+            diff_data = await self._df_client.get_keyword_difficulty(
+                keywords=keywords,
+                location_name=self.location,
+                language_code=self.language_code,
+                tenant_id=tenant_id
+            )
+            # Get AI optimization data (critical for AI-optimized content)
+            ai_data = {}
+            try:
+                ai_data = await self._df_client.get_ai_search_volume(
+                    keywords=keywords,
+                    location_name=self.location,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                print(f"Warning: Failed to get AI optimization data: {e}")
+                # Continue without AI data
+            
+            combined: Dict[str, Dict[str, Any]] = {}
+            for kw in keywords:
+                m = sv_data.get(kw, {})
+                ai_metrics = ai_data.get(kw, {})
+                
+                # Ensure all values are properly converted to numeric types
+                search_vol = m.get("search_volume", 0)
+                try:
+                    search_volume = int(float(search_vol)) if search_vol is not None else 0
+                except (ValueError, TypeError):
+                    search_volume = 0
+                
+                cpc_val = m.get("cpc", 0.0)
+                try:
+                    cpc = float(cpc_val) if cpc_val is not None else 0.0
+                except (ValueError, TypeError):
+                    cpc = 0.0
+                
+                comp_val = m.get("competition", 0.0)
+                try:
+                    competition = float(comp_val) if comp_val is not None else 0.0
+                except (ValueError, TypeError):
+                    competition = 0.0
+                
+                trend_val = m.get("trend", 0.0)
+                try:
+                    trend_score = float(trend_val) if trend_val is not None else 0.0
+                except (ValueError, TypeError):
+                    trend_score = 0.0
+                
+                diff_val = diff_data.get(kw, 50.0)
+                try:
+                    difficulty_score = float(diff_val) if diff_val is not None else 50.0
+                except (ValueError, TypeError):
+                    difficulty_score = 50.0
+                
+                # Extract AI optimization metrics
+                ai_search_vol = ai_metrics.get("ai_search_volume", 0)
+                try:
+                    ai_search_volume = int(float(ai_search_vol)) if ai_search_vol is not None else 0
+                except (ValueError, TypeError):
+                    ai_search_volume = 0
+                
+                ai_trend_val = ai_metrics.get("ai_trend", 0.0)
+                try:
+                    ai_trend = float(ai_trend_val) if ai_trend_val is not None else 0.0
+                except (ValueError, TypeError):
+                    ai_trend = 0.0
+                
+                combined[kw] = {
+                    "search_volume": search_volume,
+                    "cpc": cpc,
+                    "competition": competition,
+                    "trend_score": trend_score,
+                    "difficulty_score": difficulty_score,
+                    "ai_search_volume": ai_search_volume,
+                    "ai_monthly_searches": ai_metrics.get("ai_monthly_searches", []),
+                    "ai_trend": ai_trend,
+                }
+            return combined
+        except Exception as e:
+            print(f"Error fetching batch DataForSEO metrics: {e}")
+            # Return defaults for all keywords
+            return {
+                kw: {
+                    "search_volume": 0,
+                    "cpc": 0.0,
+                    "competition": 0.0,
+                    "trend_score": 0.0,
+                    "difficulty_score": 50.0,
+                    "ai_search_volume": 0,
+                    "ai_monthly_searches": [],
+                    "ai_trend": 0.0,
+                }
+                for kw in keywords
             }
-        return combined
 
     async def suggest_keyword_variations(self, keyword: str) -> List[str]:
         """Suggest keyword variations using DataForSEO if available, else fallback."""
@@ -254,11 +396,30 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         Returns:
             Combined KeywordAnalysis with enhanced data
         """
-        # Update with real data if available
-        search_volume = enhanced.get("search_volume")
-        cpc = enhanced.get("cpc")
-        competition = enhanced.get("competition", basic.competition)
-        trend_score = enhanced.get("trend_score", basic.trend_score)
+        # Update with real data if available, ensure numeric values with proper type conversion
+        search_vol = enhanced.get("search_volume")
+        try:
+            search_volume = int(float(search_vol)) if search_vol is not None else 0
+        except (ValueError, TypeError):
+            search_volume = 0
+        
+        cpc_val = enhanced.get("cpc")
+        try:
+            cpc = float(cpc_val) if cpc_val is not None else 0.0
+        except (ValueError, TypeError):
+            cpc = 0.0
+        
+        comp_val = enhanced.get("competition", basic.competition)
+        try:
+            competition = float(comp_val) if comp_val is not None else 0.0
+        except (ValueError, TypeError):
+            competition = float(basic.competition) if basic.competition is not None else 0.0
+        
+        trend_val = enhanced.get("trend_score", basic.trend_score)
+        try:
+            trend_score = float(trend_val) if trend_val is not None else 0.0
+        except (ValueError, TypeError):
+            trend_score = float(basic.trend_score) if basic.trend_score is not None else 0.0
         
         # Recalculate difficulty based on real metrics
         difficulty = self._calculate_enhanced_difficulty(
@@ -300,6 +461,13 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         """
         Calculate keyword difficulty using enhanced metrics.
         """
+        # Ensure difficulty_score is a float if provided
+        if difficulty_score is not None:
+            try:
+                difficulty_score = float(difficulty_score)
+            except (ValueError, TypeError):
+                difficulty_score = None
+        
         if difficulty_score is not None:
             # Use DataForSEO difficulty score if available
             if difficulty_score <= 20:
