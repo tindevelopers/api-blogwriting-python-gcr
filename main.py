@@ -888,6 +888,13 @@ async def generate_blog_enhanced(
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
         global intent_analyzer, few_shot_extractor, length_optimizer
         
+        # Check if AI generator is available
+        if ai_generator is None:
+            raise HTTPException(
+                status_code=503,
+                detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
+            )
+        
         # Initialize pipeline with Phase 3 components and additional enhancements
         pipeline = MultiStageGenerationPipeline(
             ai_generator=ai_generator,

@@ -22,8 +22,31 @@ from ..seo.readability_analyzer import ReadabilityAnalyzer, ReadabilityMetrics
 from ..seo.semantic_keyword_integrator import SemanticKeywordIntegrator
 from ..seo.content_quality_scorer import ContentQualityScorer
 from ..seo.intent_analyzer import IntentAnalyzer, SearchIntent
+from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_enum_to_str(value) -> str:
+    """
+    Safely convert an enum or string to a string value.
+    
+    Args:
+        value: Either an Enum instance or a string
+        
+    Returns:
+        String representation of the value
+    """
+    if isinstance(value, Enum):
+        return value.value
+    elif isinstance(value, str):
+        return value
+    else:
+        # Try to get .value attribute, fallback to str()
+        try:
+            return value.value
+        except AttributeError:
+            return str(value)
 
 
 @dataclass
@@ -139,7 +162,7 @@ class MultiStageGenerationPipeline:
                 if additional_context is None:
                     additional_context = {}
                 # Handle both enum and string types for primary_intent
-                intent_value = intent_analysis.primary_intent.value if hasattr(intent_analysis.primary_intent, 'value') else str(intent_analysis.primary_intent)
+                intent_value = _safe_enum_to_str(intent_analysis.primary_intent)
                 additional_context["search_intent"] = intent_value
                 additional_context["intent_recommendations"] = intent_analysis.recommendations
                 logger.info(f"Detected intent: {intent_value} (confidence: {intent_analysis.confidence:.2f})")
@@ -204,8 +227,8 @@ class MultiStageGenerationPipeline:
                 topic=topic,
                 outline=outline_result.content,
                 keywords=keywords,
-                tone=tone.value if hasattr(tone, 'value') else str(tone),
-                length=length.value if hasattr(length, 'value') else str(length),
+                tone=_safe_enum_to_str(tone),
+                length=_safe_enum_to_str(length),
                 additional_context=additional_context
             )
             draft_content = consensus_result.final_content
@@ -273,7 +296,7 @@ class MultiStageGenerationPipeline:
         
         # Add intent analysis to metadata
         if intent_analysis:
-            intent_value = intent_analysis.primary_intent.value if hasattr(intent_analysis.primary_intent, 'value') else str(intent_analysis.primary_intent)
+            intent_value = _safe_enum_to_str(intent_analysis.primary_intent)
             seo_metadata["search_intent"] = {
                 "primary_intent": intent_value,
                 "confidence": intent_analysis.confidence,

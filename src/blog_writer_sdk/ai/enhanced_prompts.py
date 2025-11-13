@@ -5,9 +5,31 @@ This module provides domain-specific prompt templates that guide LLMs
 to produce higher-quality, more authoritative content.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from enum import Enum
 from ..models.blog_models import ContentTone, ContentLength
+
+
+def _safe_enum_to_str(value) -> str:
+    """
+    Safely convert an enum or string to a string value.
+    
+    Args:
+        value: Either an Enum instance or a string
+        
+    Returns:
+        String representation of the value
+    """
+    if isinstance(value, Enum):
+        return value.value
+    elif isinstance(value, str):
+        return value
+    else:
+        # Try to get .value attribute, fallback to str()
+        try:
+            return value.value
+        except AttributeError:
+            return str(value)
 
 
 class PromptTemplate(str, Enum):
@@ -88,8 +110,8 @@ Focus on creating content that provides genuine value, unique insights, and acti
         topic: str,
         outline: str,
         keywords: List[str],
-        tone: ContentTone,
-        length: ContentLength,
+        tone: Union[ContentTone, str],
+        length: Union[ContentLength, str],
         template: Optional[PromptTemplate] = None,
         context: Optional[Dict[str, Any]] = None
     ) -> str:
@@ -116,7 +138,7 @@ Focus on creating content that provides genuine value, unique insights, and acti
 
 TOPIC: {topic}
 PRIMARY KEYWORD: {primary_keyword}
-TONE: {tone.value}
+TONE: {_safe_enum_to_str(tone)}
 TARGET LENGTH: {word_count_target} words
 CURRENT DATE: {current_date}
 CURRENT YEAR: {current_year}
@@ -130,7 +152,7 @@ WRITING REQUIREMENTS:
 1. Write for human readers first, SEO optimization second
 2. Use the primary keyword naturally throughout (aim for 1-2% density)
 3. Integrate related keywords naturally without keyword stuffing
-4. Write in a {tone.value} tone that matches the target audience
+4. Write in a {_safe_enum_to_str(tone)} tone that matches the target audience
 5. Provide specific examples, data points, and actionable insights
 6. Use clear, scannable formatting with proper headings (H2, H3)
 7. Keep paragraphs to 3-4 sentences maximum
@@ -456,13 +478,16 @@ REVIEW TEMPLATE:
         return templates.get(template, templates[PromptTemplate.EXPERT_AUTHORITY])
     
     @staticmethod
-    def _get_word_count(length: ContentLength) -> int:
+    def _get_word_count(length: Union[ContentLength, str]) -> int:
         """Get target word count for content length."""
+        # Normalize to string for comparison
+        length_str = _safe_enum_to_str(length)
+        
         word_counts = {
-            ContentLength.SHORT: 800,
-            ContentLength.MEDIUM: 1500,
-            ContentLength.LONG: 2500,
-            ContentLength.EXTENDED: 4000
+            ContentLength.SHORT.value: 800,
+            ContentLength.MEDIUM.value: 1500,
+            ContentLength.LONG.value: 2500,
+            ContentLength.EXTENDED.value: 4000
         }
-        return word_counts.get(length, 1500)
+        return word_counts.get(length_str, 1500)
 
