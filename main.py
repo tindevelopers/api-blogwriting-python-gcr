@@ -11,6 +11,7 @@ import logging
 import asyncio
 import uuid
 import math
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -100,6 +101,7 @@ from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchC
 from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficultyAnalyzer
 from src.blog_writer_sdk.services.quota_manager import QuotaManager
 from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
+from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
 
 
 # API Request/Response Models
@@ -1065,6 +1067,72 @@ async def generate_blog_enhanced(
         if additional_context.get("brand_recommendations"):
             brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
         
+        # Extract content metadata for frontend processing (unified + remark + rehype support)
+        content_metadata = extract_content_metadata(final_content)
+        
+        # Enhance SEO metadata with OG and Twitter tags
+        enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
+        
+        # Get featured image URL if available
+        featured_image_url = None
+        if generated_images and len(generated_images) > 0:
+            featured_image_url = generated_images[0].get("image_url") or generated_images[0].get("image_data")
+        elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
+            featured_image_url = pipeline_result.structured_data.get("image")
+        
+        # Generate canonical URL (should be set by frontend, but provide default)
+        canonical_url = os.getenv("CANONICAL_BASE_URL", "https://your-domain.com")
+        if pipeline_result.structured_data and pipeline_result.structured_data.get("mainEntityOfPage"):
+            canonical_url = pipeline_result.structured_data.get("mainEntityOfPage", {}).get("@id", canonical_url)
+        
+        # Add OG tags
+        enhanced_seo_metadata["og_tags"] = {
+            "title": pipeline_result.meta_title or request.topic,
+            "description": pipeline_result.meta_description or "",
+            "image": featured_image_url,
+            "url": canonical_url,
+            "type": "article",
+            "site_name": os.getenv("SITE_NAME", "Blog Writer")
+        }
+        
+        # Add Twitter tags
+        enhanced_seo_metadata["twitter_tags"] = {
+            "card": "summary_large_image" if featured_image_url else "summary",
+            "title": pipeline_result.meta_title or request.topic,
+            "description": pipeline_result.meta_description or "",
+            "image": featured_image_url
+        }
+        
+        # Enhance structured_data to be schema-dts compatible
+        enhanced_structured_data = pipeline_result.structured_data
+        if enhanced_structured_data:
+            # Ensure all required BlogPosting fields are present
+            if "@context" not in enhanced_structured_data:
+                enhanced_structured_data["@context"] = "https://schema.org"
+            if "@type" not in enhanced_structured_data:
+                enhanced_structured_data["@type"] = "BlogPosting"
+            
+            # Ensure required fields
+            enhanced_structured_data["headline"] = enhanced_structured_data.get("headline") or pipeline_result.meta_title or request.topic
+            enhanced_structured_data["description"] = enhanced_structured_data.get("description") or pipeline_result.meta_description or ""
+            
+            # Add datePublished and dateModified if not present
+            if "datePublished" not in enhanced_structured_data:
+                enhanced_structured_data["datePublished"] = datetime.now().isoformat()
+            if "dateModified" not in enhanced_structured_data:
+                enhanced_structured_data["dateModified"] = datetime.now().isoformat()
+            
+            # Add wordCount from content metadata
+            if "wordCount" not in enhanced_structured_data:
+                enhanced_structured_data["wordCount"] = content_metadata.get("word_count", 0)
+            
+            # Ensure mainEntityOfPage
+            if "mainEntityOfPage" not in enhanced_structured_data:
+                enhanced_structured_data["mainEntityOfPage"] = {
+                    "@type": "WebPage",
+                    "@id": canonical_url
+                }
+        
         # Prepare stage results for response
         stage_results_data = [
             {
@@ -1097,12 +1165,13 @@ async def generate_blog_enhanced(
             total_tokens=pipeline_result.total_tokens,
             total_cost=pipeline_result.total_cost,
             generation_time=pipeline_result.generation_time,
-            seo_metadata=pipeline_result.seo_metadata,
+            seo_metadata=enhanced_seo_metadata,
             internal_links=pipeline_result.seo_metadata.get("internal_links", []),
             quality_score=pipeline_result.quality_score,
             quality_dimensions=quality_dimensions,
-            structured_data=pipeline_result.structured_data,
+            structured_data=enhanced_structured_data,
             semantic_keywords=semantic_keywords,
+            content_metadata=content_metadata,
             generated_images=generated_images if generated_images else None,
             brand_recommendations=brand_recommendations,
             success=True,
