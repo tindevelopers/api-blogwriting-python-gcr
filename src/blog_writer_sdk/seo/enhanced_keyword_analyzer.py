@@ -288,12 +288,43 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             combined: Dict[str, Dict[str, Any]] = {}
             for kw in keywords:
                 m = sv_data.get(kw, {})
+                # Ensure all values are properly converted to numeric types
+                search_vol = m.get("search_volume", 0)
+                try:
+                    search_volume = int(float(search_vol)) if search_vol is not None else 0
+                except (ValueError, TypeError):
+                    search_volume = 0
+                
+                cpc_val = m.get("cpc", 0.0)
+                try:
+                    cpc = float(cpc_val) if cpc_val is not None else 0.0
+                except (ValueError, TypeError):
+                    cpc = 0.0
+                
+                comp_val = m.get("competition", 0.0)
+                try:
+                    competition = float(comp_val) if comp_val is not None else 0.0
+                except (ValueError, TypeError):
+                    competition = 0.0
+                
+                trend_val = m.get("trend", 0.0)
+                try:
+                    trend_score = float(trend_val) if trend_val is not None else 0.0
+                except (ValueError, TypeError):
+                    trend_score = 0.0
+                
+                diff_val = diff_data.get(kw, 50.0)
+                try:
+                    difficulty_score = float(diff_val) if diff_val is not None else 50.0
+                except (ValueError, TypeError):
+                    difficulty_score = 50.0
+                
                 combined[kw] = {
-                    "search_volume": m.get("search_volume", 0) or 0,  # Ensure numeric, default to 0
-                    "cpc": m.get("cpc", 0.0) or 0.0,  # Ensure numeric, default to 0.0
-                    "competition": m.get("competition", 0.0) or 0.0,
-                    "trend_score": m.get("trend", 0.0) or 0.0,
-                    "difficulty_score": diff_data.get(kw, 50.0) or 50.0,
+                    "search_volume": search_volume,
+                    "cpc": cpc,
+                    "competition": competition,
+                    "trend_score": trend_score,
+                    "difficulty_score": difficulty_score,
                 }
             return combined
         except Exception as e:
@@ -331,11 +362,30 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         Returns:
             Combined KeywordAnalysis with enhanced data
         """
-        # Update with real data if available, ensure numeric values
-        search_volume = enhanced.get("search_volume") or 0  # Default to 0 if None
-        cpc = enhanced.get("cpc") or 0.0  # Default to 0.0 if None
-        competition = enhanced.get("competition", basic.competition) or 0.0
-        trend_score = enhanced.get("trend_score", basic.trend_score) or 0.0
+        # Update with real data if available, ensure numeric values with proper type conversion
+        search_vol = enhanced.get("search_volume")
+        try:
+            search_volume = int(float(search_vol)) if search_vol is not None else 0
+        except (ValueError, TypeError):
+            search_volume = 0
+        
+        cpc_val = enhanced.get("cpc")
+        try:
+            cpc = float(cpc_val) if cpc_val is not None else 0.0
+        except (ValueError, TypeError):
+            cpc = 0.0
+        
+        comp_val = enhanced.get("competition", basic.competition)
+        try:
+            competition = float(comp_val) if comp_val is not None else 0.0
+        except (ValueError, TypeError):
+            competition = float(basic.competition) if basic.competition is not None else 0.0
+        
+        trend_val = enhanced.get("trend_score", basic.trend_score)
+        try:
+            trend_score = float(trend_val) if trend_val is not None else 0.0
+        except (ValueError, TypeError):
+            trend_score = float(basic.trend_score) if basic.trend_score is not None else 0.0
         
         # Recalculate difficulty based on real metrics
         difficulty = self._calculate_enhanced_difficulty(
@@ -377,6 +427,13 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         """
         Calculate keyword difficulty using enhanced metrics.
         """
+        # Ensure difficulty_score is a float if provided
+        if difficulty_score is not None:
+            try:
+                difficulty_score = float(difficulty_score)
+            except (ValueError, TypeError):
+                difficulty_score = None
+        
         if difficulty_score is not None:
             # Use DataForSEO difficulty score if available
             if difficulty_score <= 20:
