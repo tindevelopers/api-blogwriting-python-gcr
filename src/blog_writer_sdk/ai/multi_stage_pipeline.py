@@ -8,6 +8,7 @@ to produce higher-quality content.
 import asyncio
 import logging
 import re
+import os
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 
@@ -16,13 +17,16 @@ from .enhanced_prompts import EnhancedPromptBuilder, PromptTemplate
 from .base_provider import AIRequest, AIGenerationConfig, ContentType
 from .consensus_generator import ConsensusGenerator
 from ..models.blog_models import ContentTone, ContentLength
+from ..models.progress_models import ProgressUpdate, ProgressCallback, PipelineStage
 from ..integrations.google_custom_search import GoogleCustomSearchClient
 from ..integrations.google_knowledge_graph import GoogleKnowledgeGraphClient
+from ..integrations.dataforseo_integration import DataForSEOClient
 from ..seo.readability_analyzer import ReadabilityAnalyzer, ReadabilityMetrics
 from ..seo.semantic_keyword_integrator import SemanticKeywordIntegrator
 from ..seo.content_quality_scorer import ContentQualityScorer
 from ..seo.intent_analyzer import IntentAnalyzer, SearchIntent
 from enum import Enum
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +95,9 @@ class MultiStageGenerationPipeline:
         intent_analyzer: Optional["IntentAnalyzer"] = None,
         few_shot_extractor: Optional["FewShotLearningExtractor"] = None,
         length_optimizer: Optional["ContentLengthOptimizer"] = None,
-        use_consensus: bool = False
+        use_consensus: bool = False,
+        dataforseo_client: Optional[DataForSEOClient] = None,
+        progress_callback: Optional[ProgressCallback] = None
     ):
         """
         Initialize multi-stage pipeline.
@@ -120,6 +126,34 @@ class MultiStageGenerationPipeline:
         self.use_consensus = use_consensus
         self.consensus_generator = ConsensusGenerator(ai_generator) if use_consensus else None
         self.prompt_builder = EnhancedPromptBuilder()
+        self.dataforseo_client = dataforseo_client
+        self.progress_callback = progress_callback
+    
+    async def _emit_progress(
+        self,
+        stage: PipelineStage,
+        stage_number: int,
+        total_stages: int,
+        status: str,
+        details: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """Emit progress update if callback is available."""
+        if self.progress_callback:
+            progress = ProgressUpdate(
+                stage=stage.value,
+                stage_number=stage_number,
+                total_stages=total_stages,
+                progress_percentage=(stage_number / total_stages) * 100,
+                status=status,
+                details=details,
+                metadata=metadata or {},
+                timestamp=time.time()
+            )
+            try:
+                await self.progress_callback(progress)
+            except Exception as e:
+                logger.warning(f"Progress callback failed: {e}")
     
     async def generate(
         self,
@@ -149,9 +183,149 @@ class MultiStageGenerationPipeline:
         stage_results = []
         citations = []  # Will be populated during processing
         
+        # Calculate total stages dynamically
+        # Base stages: initialization, research, draft, enhancement, seo, finalization = 6
+        # Optional stages: keyword_analysis, competitor_analysis, intent, length, semantic, quality = up to 6 more
+        total_stages = 6  # Base stages
+        if self.dataforseo_client and self.dataforseo_client.is_configured and keywords:
+            total_stages += 2  # keyword_analysis, competitor_analysis
+        if self.intent_analyzer and keywords:
+            total_stages += 1  # intent_analysis
+        if self.length_optimizer and keywords:
+            total_stages += 1  # length_optimization
+        if self.semantic_integrator:
+            total_stages += 1  # semantic_integration
+        if self.quality_scorer:
+            total_stages += 1  # quality_scoring
+        
+        current_stage = 0
+        
+        # Stage 0: Initialization
+        await self._emit_progress(
+            PipelineStage.INITIALIZATION,
+            current_stage := current_stage + 1,
+            total_stages,
+            "Initializing blog generation pipeline",
+            f"Topic: {topic}, Keywords: {', '.join(keywords[:3])}"
+        )
+        
+        # DataForSEO Labs: Keyword Analysis (if available)
+        keyword_analysis_data = {}
+        if self.dataforseo_client and self.dataforseo_client.is_configured and keywords:
+            await self._emit_progress(
+                PipelineStage.KEYWORD_ANALYSIS,
+                current_stage := current_stage + 1,
+                total_stages,
+                "Analyzing keywords with DataForSEO Labs",
+                f"Analyzing {len(keywords)} keywords for difficulty, search volume, and competition"
+            )
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                location = additional_context.get("location", "United States") if additional_context else "United States"
+                language = additional_context.get("language", "en") if additional_context else "en"
+                
+                # Get keyword difficulty
+                difficulty_data = await self.dataforseo_client.get_keyword_difficulty(
+                    keywords=keywords,
+                    location_name=location,
+                    language_code=language,
+                    tenant_id=tenant_id
+                )
+                keyword_analysis_data["difficulty"] = difficulty_data
+                
+                # Get keyword overview (search volume, CPC, competition)
+                overview_data = await self.dataforseo_client.get_keyword_overview(
+                    keywords=keywords,
+                    location_name=location,
+                    language_code=language,
+                    tenant_id=tenant_id
+                )
+                keyword_analysis_data["overview"] = overview_data
+                
+                # Add to context
+                if additional_context is None:
+                    additional_context = {}
+                additional_context["keyword_analysis"] = keyword_analysis_data
+                
+                await self._emit_progress(
+                    PipelineStage.KEYWORD_ANALYSIS,
+                    current_stage,
+                    total_stages,
+                    "Keyword analysis complete",
+                    f"Analyzed {len(keywords)} keywords. Average difficulty: {sum(difficulty_data.values()) / len(difficulty_data) if difficulty_data else 0:.1f}/100"
+                )
+            except Exception as e:
+                logger.warning(f"DataForSEO keyword analysis failed: {e}")
+                await self._emit_progress(
+                    PipelineStage.KEYWORD_ANALYSIS,
+                    current_stage,
+                    total_stages,
+                    "Keyword analysis skipped",
+                    "DataForSEO analysis unavailable, using fallback methods"
+                )
+        
+        # DataForSEO Labs: Competitor Analysis (if available and keywords provided)
+        competitor_data = {}
+        if self.dataforseo_client and self.dataforseo_client.is_configured and keywords:
+            await self._emit_progress(
+                PipelineStage.COMPETITOR_ANALYSIS,
+                current_stage := current_stage + 1,
+                total_stages,
+                "Analyzing competitors with DataForSEO Labs",
+                f"Identifying top competitors for keyword: {keywords[0]}"
+            )
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                location = additional_context.get("location", "United States") if additional_context else "United States"
+                language = additional_context.get("language", "en") if additional_context else "en"
+                
+                # Get SERP analysis to find top-ranking domains
+                serp_analysis = await self.dataforseo_client.get_serp_analysis(
+                    keyword=keywords[0],
+                    location_name=location,
+                    language_code=language,
+                    tenant_id=tenant_id,
+                    depth=10
+                )
+                
+                # Extract top domains from SERP results
+                top_domains = serp_analysis.get("top_domains", [])[:5] if serp_analysis else []
+                competitor_data["top_rankers"] = top_domains
+                competitor_data["serp_features"] = serp_analysis.get("serp_features", {})
+                competitor_data["organic_results"] = serp_analysis.get("organic_results", [])[:5]
+                
+                if additional_context is None:
+                    additional_context = {}
+                additional_context["competitor_analysis"] = competitor_data
+                
+                competitor_count = len(top_domains)
+                await self._emit_progress(
+                    PipelineStage.COMPETITOR_ANALYSIS,
+                    current_stage,
+                    total_stages,
+                    "Competitor analysis complete",
+                    f"Identified {competitor_count} top-ranking competitors from SERP"
+                )
+            except Exception as e:
+                logger.warning(f"DataForSEO competitor analysis failed: {e}")
+                await self._emit_progress(
+                    PipelineStage.COMPETITOR_ANALYSIS,
+                    current_stage,
+                    total_stages,
+                    "Competitor analysis skipped",
+                    "DataForSEO competitor analysis unavailable"
+                )
+        
         # Analyze search intent (if analyzer available)
         intent_analysis = None
         if self.intent_analyzer and keywords:
+            await self._emit_progress(
+                PipelineStage.INTENT_ANALYSIS,
+                current_stage := current_stage + 1,
+                total_stages,
+                "Analyzing search intent",
+                f"Determining user intent for keywords: {', '.join(keywords[:2])}"
+            )
             logger.info("Analyzing search intent")
             try:
                 intent_analysis = await self.intent_analyzer.analyze_intent(
@@ -166,8 +340,23 @@ class MultiStageGenerationPipeline:
                 additional_context["search_intent"] = intent_value
                 additional_context["intent_recommendations"] = intent_analysis.recommendations
                 logger.info(f"Detected intent: {intent_value} (confidence: {intent_analysis.confidence:.2f})")
+                
+                await self._emit_progress(
+                    PipelineStage.INTENT_ANALYSIS,
+                    current_stage,
+                    total_stages,
+                    "Search intent analysis complete",
+                    f"Detected intent: {intent_value} ({intent_analysis.confidence*100:.0f}% confidence)"
+                )
             except Exception as e:
                 logger.warning(f"Intent analysis failed: {e}")
+                await self._emit_progress(
+                    PipelineStage.INTENT_ANALYSIS,
+                    current_stage,
+                    total_stages,
+                    "Intent analysis skipped",
+                    "Intent analysis unavailable"
+                )
         
         # Extract few-shot learning examples (if extractor available)
         few_shot_context = None
@@ -189,6 +378,13 @@ class MultiStageGenerationPipeline:
         # Optimize content length based on competition (if optimizer available)
         length_analysis = None
         if self.length_optimizer and keywords:
+            await self._emit_progress(
+                PipelineStage.LENGTH_OPTIMIZATION,
+                current_stage := current_stage + 1,
+                total_stages,
+                "Optimizing content length",
+                f"Analyzing optimal word count for keyword: {keywords[0]}"
+            )
             logger.info("Analyzing optimal content length")
             try:
                 length_analysis = await self.length_optimizer.analyze_optimal_length(
@@ -207,10 +403,40 @@ class MultiStageGenerationPipeline:
                         additional_context = {}
                     additional_context["adjusted_word_count"] = adjusted_word_count
                     additional_context["depth_score"] = length_analysis.depth_score
+                    
+                    await self._emit_progress(
+                        PipelineStage.LENGTH_OPTIMIZATION,
+                        current_stage,
+                        total_stages,
+                        "Content length optimized",
+                        f"Adjusted target: {original_word_count} → {adjusted_word_count} words"
+                    )
+                else:
+                    await self._emit_progress(
+                        PipelineStage.LENGTH_OPTIMIZATION,
+                        current_stage,
+                        total_stages,
+                        "Content length analysis complete",
+                        f"Optimal length: {original_word_count} words"
+                    )
             except Exception as e:
                 logger.warning(f"Length optimization failed: {e}")
+                await self._emit_progress(
+                    PipelineStage.LENGTH_OPTIMIZATION,
+                    current_stage,
+                    total_stages,
+                    "Length optimization skipped",
+                    "Length optimizer unavailable"
+                )
         
         # Stage 1: Research & Outline (Claude 3.5 Sonnet)
+        await self._emit_progress(
+            PipelineStage.RESEARCH_OUTLINE,
+            current_stage := current_stage + 1,
+            total_stages,
+            "Stage 1: Research & Outline",
+            f"Conducting research and creating content outline for: {topic}"
+        )
         logger.info("Stage 1: Research & Outline")
         outline_result = await self._stage1_research_outline(
             topic, keywords, tone, length, additional_context
@@ -218,7 +444,22 @@ class MultiStageGenerationPipeline:
         stage_results.append(outline_result)
         outline = outline_result.content
         
+        await self._emit_progress(
+            PipelineStage.RESEARCH_OUTLINE,
+            current_stage,
+            total_stages,
+            "Stage 1 Complete: Research & Outline",
+            f"Generated comprehensive outline with {len(outline.split('\\n'))} sections"
+        )
+        
         # Stage 2: Draft Generation (GPT-4o or Consensus)
+        await self._emit_progress(
+            PipelineStage.DRAFT_GENERATION,
+            current_stage := current_stage + 1,
+            total_stages,
+            "Stage 2: Draft Generation",
+            f"Generating initial draft content based on outline"
+        )
         logger.info("Stage 2: Draft Generation")
         if self.use_consensus and self.consensus_generator:
             # Use consensus generation (Phase 3)
@@ -252,7 +493,22 @@ class MultiStageGenerationPipeline:
             draft_content = draft_result.content
         stage_results.append(draft_result)
         
+        await self._emit_progress(
+            PipelineStage.DRAFT_GENERATION,
+            current_stage,
+            total_stages,
+            "Stage 2 Complete: Draft Generation",
+            f"Generated draft with {len(draft_content.split())} words"
+        )
+        
         # Stage 3: Enhancement & Fact-Checking (Claude 3.5 Sonnet)
+        await self._emit_progress(
+            PipelineStage.ENHANCEMENT,
+            current_stage := current_stage + 1,
+            total_stages,
+            "Stage 3: Enhancement & Fact-Checking",
+            "Enhancing content quality, improving readability, and fact-checking"
+        )
         logger.info("Stage 3: Enhancement & Fact-Checking")
         enhanced_result = await self._stage3_enhancement(
             draft_content, topic, keywords, additional_context
@@ -270,12 +526,35 @@ class MultiStageGenerationPipeline:
                     enhanced_content, fact_check_results
                 )
         
+        await self._emit_progress(
+            PipelineStage.ENHANCEMENT,
+            current_stage,
+            total_stages,
+            "Stage 3 Complete: Enhancement & Fact-Checking",
+            "Content enhanced and fact-checked"
+        )
+        
         # Stage 4: SEO & Polish (GPT-4o-mini)
+        await self._emit_progress(
+            PipelineStage.SEO_POLISH,
+            current_stage := current_stage + 1,
+            total_stages,
+            "Stage 4: SEO & Polish",
+            "Optimizing content for SEO, generating meta tags, and final polish"
+        )
         logger.info("Stage 4: SEO & Polish")
         seo_result = await self._stage4_seo_polish(
             enhanced_content, topic, keywords
         )
         stage_results.append(seo_result)
+        
+        await self._emit_progress(
+            PipelineStage.SEO_POLISH,
+            current_stage,
+            total_stages,
+            "Stage 4 Complete: SEO & Polish",
+            "SEO optimization and meta tags generated"
+        )
         
         # Readability analysis
         readability_metrics = self.readability_analyzer.analyze(enhanced_content)
@@ -312,6 +591,13 @@ class MultiStageGenerationPipeline:
         
         # Phase 3: Semantic keyword integration
         if self.semantic_integrator:
+            await self._emit_progress(
+                PipelineStage.SEMANTIC_INTEGRATION,
+                current_stage := current_stage + 1,
+                total_stages,
+                "Integrating semantic keywords",
+                f"Adding semantically related keywords for topical authority"
+            )
             logger.info("Integrating semantic keywords (Phase 3)")
             try:
                 semantic_result = await self.semantic_integrator.integrate_semantic_keywords(
@@ -323,8 +609,23 @@ class MultiStageGenerationPipeline:
                 # Add semantic metadata
                 seo_metadata["semantic_keywords"] = semantic_result.keywords_used
                 seo_metadata["keyword_clusters"] = len(semantic_result.keyword_clusters)
+                
+                await self._emit_progress(
+                    PipelineStage.SEMANTIC_INTEGRATION,
+                    current_stage,
+                    total_stages,
+                    "Semantic keyword integration complete",
+                    f"Integrated {len(semantic_result.keywords_used)} semantic keywords"
+                )
             except Exception as e:
                 logger.warning(f"Semantic keyword integration failed: {e}")
+                await self._emit_progress(
+                    PipelineStage.SEMANTIC_INTEGRATION,
+                    current_stage,
+                    total_stages,
+                    "Semantic integration skipped",
+                    "Semantic integrator unavailable"
+                )
         
         # Phase 3: Knowledge Graph integration
         structured_data = None
@@ -350,6 +651,13 @@ class MultiStageGenerationPipeline:
         # Phase 3: Content quality scoring
         quality_report = None
         if self.quality_scorer:
+            await self._emit_progress(
+                PipelineStage.QUALITY_SCORING,
+                current_stage := current_stage + 1,
+                total_stages,
+                "Scoring content quality",
+                "Evaluating content across multiple quality dimensions"
+            )
             logger.info("Scoring content quality (Phase 3)")
             try:
                 quality_report = self.quality_scorer.score_content(
@@ -368,8 +676,32 @@ class MultiStageGenerationPipeline:
                     "passed_threshold": quality_report.passed_threshold,
                     "critical_issues": quality_report.critical_issues[:3]
                 }
+                
+                await self._emit_progress(
+                    PipelineStage.QUALITY_SCORING,
+                    current_stage,
+                    total_stages,
+                    "Quality scoring complete",
+                    f"Overall quality score: {quality_report.overall_score:.1f}/100"
+                )
             except Exception as e:
                 logger.warning(f"Quality scoring failed: {e}")
+                await self._emit_progress(
+                    PipelineStage.QUALITY_SCORING,
+                    current_stage,
+                    total_stages,
+                    "Quality scoring skipped",
+                    "Quality scorer unavailable"
+                )
+        
+        # Finalization
+        await self._emit_progress(
+            PipelineStage.FINALIZATION,
+            current_stage := current_stage + 1,
+            total_stages,
+            "Finalizing blog generation",
+            "Compiling final content and metadata"
+        )
         
         # Calculate totals
         total_tokens = sum(s.tokens_used for s in stage_results)
