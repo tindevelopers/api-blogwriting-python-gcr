@@ -170,7 +170,7 @@ class DataForSEOClient:
     async def _make_request(self, endpoint: str, payload: List[Dict[str, Any]], tenant_id: str) -> Dict[str, Any]:
         if not self.is_configured or not self.api_key or not self.api_secret:
             logger.error(f"DataforSEO API not configured. Returning fallback data for endpoint: {endpoint}")
-            await log_api_request("dataforseo", endpoint, False, 0, "API not configured", tenant_id)
+            log_api_request("dataforseo", endpoint, 0, 0.0, message="API not configured", tenant_id=tenant_id)
             return self._fallback_data(endpoint, payload)
 
         url = f"{self.base_url}/{endpoint}"
@@ -188,19 +188,19 @@ class DataForSEOClient:
                 response.raise_for_status()  # Raise an exception for 4xx or 5xx status codes
             end_time = time.perf_counter()
             duration = end_time - start_time
-            await log_api_request("dataforseo", endpoint, True, duration, "Success", tenant_id)
+            log_api_request("dataforseo", endpoint, response.status_code, duration, message="Success", tenant_id=tenant_id)
             return response.json()
         except httpx.HTTPStatusError as e:
             logger.error(f"DataForSEO API request failed due to HTTP error for {endpoint}: {e.response.status_code} - {e.response.text}")
-            await log_api_request("dataforseo", endpoint, False, 0, f"HTTP Error: {e.response.status_code}", tenant_id)
+            log_api_request("dataforseo", endpoint, e.response.status_code, 0.0, message=f"HTTP Error: {e.response.status_code}", tenant_id=tenant_id)
             return self._fallback_data(endpoint, payload)
         except httpx.RequestError as e:
             logger.error(f"DataForSEO API request failed due to network error for {endpoint}: {e}")
-            await log_api_request("dataforseo", endpoint, False, 0, f"Network Error: {e}", tenant_id)
+            log_api_request("dataforseo", endpoint, 0, 0.0, message=f"Network Error: {e}", tenant_id=tenant_id)
             return self._fallback_data(endpoint, payload)
         except Exception as e:
             logger.error(f"An unexpected error occurred during DataforSEO API request for {endpoint}: {e}")
-            await log_api_request("dataforseo", endpoint, False, 0, f"Unexpected Error: {e}", tenant_id)
+            log_api_request("dataforseo", endpoint, 0, 0.0, message=f"Unexpected Error: {e}", tenant_id=tenant_id)
             return self._fallback_data(endpoint, payload)
 
     @monitor_performance("dataforseo_get_search_volume")
