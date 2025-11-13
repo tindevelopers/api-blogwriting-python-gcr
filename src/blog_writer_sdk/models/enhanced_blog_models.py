@@ -85,6 +85,12 @@ class EnhancedBlogGenerationResponse(BaseModel):
     structured_data: Optional[Dict[str, Any]] = Field(None, description="Schema.org structured data (Phase 3)")
     semantic_keywords: List[str] = Field(default_factory=list, description="Semantically integrated keywords (Phase 3)")
     
+    # Frontend stack support (unified + remark + rehype + schema-dts)
+    content_metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured content metadata for frontend processing (headings, images, links, code blocks, etc.)"
+    )
+    
     # Success indicators
     success: bool = Field(default=True, description="Whether generation was successful")
     warnings: List[str] = Field(default_factory=list, description="Warnings or issues encountered")
