@@ -418,16 +418,43 @@ class DataForSEOClient:
             
             data = await self._make_request("keywords_data/ai_optimization/search_volume/live", payload, tenant_id)
             
+            # Debug: Log response structure for troubleshooting
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                sample_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                logger.debug(f"DataForSEO AI optimization response structure: {list(sample_result.keys())}")
+            
             # Process response
             results = {}
             if data.get("tasks") and data["tasks"][0].get("result"):
                 for item in data["tasks"][0]["result"]:
                     keyword = item.get("keyword", "")
-                    ai_data = item.get("ai_search_volume", {})
                     
-                    # Extract AI search volume metrics
-                    ai_search_volume = ai_data.get("search_volume", 0) if isinstance(ai_data, dict) else 0
+                    # Extract AI search volume metrics - check multiple possible response structures
+                    ai_search_volume = 0
+                    ai_monthly_searches = []
+                    
+                    # Try different response formats
+                    if "ai_search_volume" in item:
+                        ai_data = item.get("ai_search_volume", {})
+                        if isinstance(ai_data, dict):
+                            ai_search_volume = ai_data.get("search_volume", 0) or 0
+                        elif isinstance(ai_data, (int, float)):
+                            ai_search_volume = int(ai_data)
+                    
+                    # Also check for direct search_volume field (some APIs return it directly)
+                    if ai_search_volume == 0 and "search_volume" in item:
+                        ai_search_volume = item.get("search_volume", 0) or 0
+                    
+                    # Get monthly searches
                     ai_monthly_searches = item.get("ai_monthly_searches", [])
+                    if not ai_monthly_searches and "monthly_searches" in item:
+                        ai_monthly_searches = item.get("monthly_searches", [])
+                    
+                    # Ensure numeric types
+                    try:
+                        ai_search_volume = int(float(ai_search_volume)) if ai_search_volume else 0
+                    except (ValueError, TypeError):
+                        ai_search_volume = 0
                     
                     results[keyword] = {
                         "ai_search_volume": ai_search_volume,
