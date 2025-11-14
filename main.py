@@ -1314,12 +1314,30 @@ async def analyze_keywords(
                     keyword_analysis[kw] = {
                         "difficulty": analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty),
                         "search_volume": search_volume,  # Always numeric
+                        "global_search_volume": analysis.global_search_volume or 0,
+                        "search_volume_by_country": analysis.search_volume_by_country,
+                        "monthly_searches": analysis.monthly_searches,
                         "competition": competition_value,
                         "cpc": cpc_value,  # Always numeric
+                        "cpc_currency": analysis.cpc_currency,
+                        "cps": analysis.cps,
+                        "clicks": analysis.clicks,
                         "recommended": analysis.recommended,
                         "reason": analysis.reason,
                         "related_keywords": analysis.related_keywords[:10],
-                        "long_tail_keywords": analysis.long_tail_keywords[:10]
+                        "long_tail_keywords": analysis.long_tail_keywords[:10],
+                        "trend_score": analysis.trend_score,
+                        "traffic_potential": analysis.traffic_potential,
+                        "parent_topic": analysis.parent_topic,
+                        "serp_features": analysis.serp_features,
+                        "serp_feature_counts": analysis.serp_feature_counts,
+                        "primary_intent": analysis.primary_intent,
+                        "intent_probabilities": analysis.intent_probabilities,
+                        "also_rank_for": analysis.also_rank_for,
+                        "also_talk_about": analysis.also_talk_about,
+                        "top_competitors": analysis.top_competitors,
+                        "first_seen": analysis.first_seen,
+                        "last_updated": analysis.last_updated,
                     }
                 return {"keyword_analysis": keyword_analysis}
             except Exception as e:
@@ -1337,9 +1355,23 @@ async def analyze_keywords(
             results[keyword] = {
                 "difficulty": difficulty_value,
                 "search_volume": analysis_dict.get("search_volume") or 0,
+                "global_search_volume": analysis_dict.get("global_search_volume") or 0,
+                "search_volume_by_country": analysis_dict.get("search_volume_by_country") or {},
+                "monthly_searches": analysis_dict.get("monthly_searches") or [],
                 "competition": analysis_dict.get("competition") or 0.0,
                 "cpc": analysis_dict.get("cpc") or 0.0,
                 "trend_score": analysis_dict.get("trend_score") or 0.0,
+                "traffic_potential": analysis_dict.get("traffic_potential"),
+                "parent_topic": analysis_dict.get("parent_topic"),
+                "serp_features": analysis_dict.get("serp_features") or [],
+                "serp_feature_counts": analysis_dict.get("serp_feature_counts") or {},
+                "primary_intent": analysis_dict.get("primary_intent"),
+                "intent_probabilities": analysis_dict.get("intent_probabilities") or {},
+                "also_rank_for": analysis_dict.get("also_rank_for") or [],
+                "also_talk_about": analysis_dict.get("also_talk_about") or [],
+                "top_competitors": analysis_dict.get("top_competitors") or [],
+                "first_seen": analysis_dict.get("first_seen"),
+                "last_updated": analysis_dict.get("last_updated"),
                 "recommended": analysis_dict.get("recommended", False),
                 "reason": analysis_dict.get("reason"),
                 "related_keywords": analysis_dict.get("related_keywords", []),
@@ -1413,6 +1445,186 @@ async def detect_location_from_ip(request: Request) -> Optional[str]:
         logger.debug(f"IP-based location detection failed: {e}")
     
     return None
+
+
+async def _build_keyword_discovery(
+    seed_keyword: str,
+    location: str,
+    language: str,
+    tenant_id: str,
+    df_client
+) -> Dict[str, Any]:
+    """
+    Build enhanced keyword discovery data (matching/related terms, SERP context).
+    """
+    discovery: Dict[str, Any] = {
+        "matching_terms": [],
+        "questions": [],
+        "related_terms": [],
+    }
+    
+    try:
+        tasks = await asyncio.gather(
+            df_client.get_related_keywords(
+                keyword=seed_keyword,
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                depth=2,
+                limit=150
+            ),
+            df_client.get_keyword_ideas(
+                keywords=[seed_keyword],
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                limit=200
+            ),
+            df_client.get_serp_analysis(
+                keyword=seed_keyword,
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                depth=20
+            ),
+            df_client.get_serp_ai_summary(
+                keyword=seed_keyword,
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                depth=10
+            ),
+            return_exceptions=True
+        )
+    except Exception as e:
+        logger.warning(f"Keyword discovery tasks failed to start: {e}")
+        return discovery
+    
+    related_resp, ideas_resp, serp_analysis_raw, serp_ai_summary = tasks
+    
+    if not isinstance(related_resp, Exception):
+        matching_terms = _extract_keywords_from_related_response(related_resp)
+        discovery["matching_terms"] = matching_terms
+        discovery["questions"] = [
+            term for term in matching_terms if _looks_like_question(term.get("keyword", ""))
+        ][:50]
+    else:
+        logger.warning(f"Related keywords task failed: {related_resp}")
+    
+    if not isinstance(ideas_resp, Exception):
+        discovery["related_terms"] = _extract_keywords_from_ideas_response(ideas_resp)
+    else:
+        logger.warning(f"Keyword ideas task failed: {ideas_resp}")
+    
+    if not isinstance(serp_analysis_raw, Exception):
+        discovery["serp_analysis"] = _summarize_serp_analysis(serp_analysis_raw)
+    else:
+        logger.warning(f"SERP analysis summary failed: {serp_analysis_raw}")
+        discovery["serp_analysis"] = {}
+    
+    if isinstance(serp_ai_summary, Exception):
+        logger.warning(f"SERP AI summary failed: {serp_ai_summary}")
+        serp_ai_summary = {}
+    discovery["serp_ai_summary"] = serp_ai_summary if isinstance(serp_ai_summary, dict) else {}
+    
+    return discovery
+
+
+def _extract_keywords_from_related_response(response: Any, limit: int = 200) -> List[Dict[str, Any]]:
+    keywords: List[Dict[str, Any]] = []
+    if not response:
+        return keywords
+    
+    items = []
+    if isinstance(response, dict) and "tasks" in response:
+        for task in response.get("tasks", []):
+            for result in task.get("result", []):
+                items.extend(result.get("items", []))
+    elif isinstance(response, list):
+        items = response
+    
+    for item in items:
+        normalized = _normalize_keyword_record(item)
+        if normalized:
+            keywords.append(normalized)
+            if len(keywords) >= limit:
+                break
+    return keywords
+
+
+def _extract_keywords_from_ideas_response(response: Any, limit: int = 200) -> List[Dict[str, Any]]:
+    if isinstance(response, list):
+        records = response
+    elif isinstance(response, dict) and "tasks" in response:
+        records = []
+        for task in response.get("tasks", []):
+            for result in task.get("result", []):
+                records.append(result)
+    else:
+        return []
+    
+    keywords: List[Dict[str, Any]] = []
+    for item in records:
+        normalized = _normalize_keyword_record(item)
+        if normalized:
+            keywords.append(normalized)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _normalize_keyword_record(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    keyword = item.get("keyword") or item.get("text")
+    keyword_data = item.get("keyword_data", {})
+    keyword_info = keyword_data.get("keyword_info", {})
+    
+    if not keyword:
+        keyword = keyword_data.get("keyword")
+    if not keyword:
+        return None
+    
+    search_volume = keyword_info.get("search_volume", item.get("search_volume", 0))
+    keyword_difficulty = keyword_info.get("keyword_difficulty", item.get("keyword_difficulty"))
+    cpc = keyword_info.get("cpc", item.get("cpc", 0.0))
+    competition = keyword_info.get("competition", item.get("competition", 0.0))
+    
+    intent_info = keyword_info.get("search_intent_info", keyword_data.get("search_intent_info", {}))
+    intent = intent_info.get("main_intent") or keyword_info.get("search_intent") or item.get("search_intent")
+    
+    return {
+        "keyword": keyword,
+        "search_volume": search_volume or 0,
+        "keyword_difficulty": keyword_difficulty or 0,
+        "cpc": cpc or 0.0,
+        "competition": competition or 0.0,
+        "parent_topic": keyword_info.get("parent_topic"),
+        "intent": intent,
+    }
+
+
+def _looks_like_question(keyword: str) -> bool:
+    keyword_lower = keyword.lower()
+    question_prefixes = ("how", "what", "when", "where", "why", "who", "can", "does", "is", "are", "should")
+    return "?" in keyword or keyword_lower.startswith(question_prefixes)
+
+
+def _summarize_serp_analysis(raw: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    summary = {
+        "keyword": raw.get("keyword"),
+        "serp_features": raw.get("serp_features_summary") or raw.get("serp_features"),
+        "people_also_ask": raw.get("people_also_ask", [])[:10],
+        "featured_snippet": raw.get("featured_snippet"),
+        "video_results": raw.get("video_results", [])[:5],
+        "image_results": raw.get("image_results", [])[:5],
+        "related_searches": raw.get("related_searches", [])[:10],
+        "top_domains": raw.get("top_domains", [])[:10],
+        "competition_level": raw.get("competition_level"),
+    }
+    return summary
 
 
 # Enhanced keyword analysis endpoint using DataForSEO (if configured)
@@ -1580,9 +1792,15 @@ async def analyze_keywords_enhanced(
             
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
+                "global_search_volume": v.global_search_volume or 0,
+                "search_volume_by_country": v.search_volume_by_country,
+                "monthly_searches": v.monthly_searches,
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
                 "competition": competition_value,
                 "cpc": cpc_value,  # Always numeric
+                "cpc_currency": v.cpc_currency,
+                "cps": v.cps,
+                "clicks": v.clicks,
                 "trend_score": trend_score_value,
                 "recommended": v.recommended,
                 "reason": v.reason,
@@ -1594,7 +1812,17 @@ async def analyze_keywords_enhanced(
                 # AI Optimization metrics (critical for AI-optimized content)
                 "ai_search_volume": ai_search_volume,
                 "ai_trend": ai_trend,
-                "ai_monthly_searches": ai_monthly_searches
+                "ai_monthly_searches": ai_monthly_searches,
+                "traffic_potential": v.traffic_potential,
+                "serp_features": v.serp_features,
+                "serp_feature_counts": v.serp_feature_counts,
+                "primary_intent": v.primary_intent,
+                "intent_probabilities": v.intent_probabilities,
+                "also_rank_for": v.also_rank_for,
+                "also_talk_about": v.also_talk_about,
+                "top_competitors": v.top_competitors,
+                "first_seen": v.first_seen,
+                "last_updated": v.last_updated,
             }
         
         # Ensure clusters are always returned, even if empty
@@ -1622,6 +1850,25 @@ async def analyze_keywords_enhanced(
                     "keyword_count": 1
                 })
         
+        discovery_data = {}
+        serp_analysis_summary = {}
+        serp_ai_summary = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
+            try:
+                tenant_id_env = os.getenv("TENANT_ID", "default")
+                enrichment = await _build_keyword_discovery(
+                    seed_keyword=request.keywords[0],
+                    location=effective_location,
+                    language=request.language or "en",
+                    tenant_id=tenant_id_env,
+                    df_client=enhanced_analyzer._df_client
+                )
+                serp_analysis_summary = enrichment.pop("serp_analysis", {})
+                serp_ai_summary = enrichment.pop("serp_ai_summary", {})
+                discovery_data = enrichment
+            except Exception as e:
+                logger.warning(f"Keyword discovery enrichment failed: {e}")
+        
         return {
             "enhanced_analysis": out,
             "total_keywords": len(all_keywords),
@@ -1637,7 +1884,10 @@ async def analyze_keywords_enhanced(
                 "used": effective_location,
                 "detected_from_ip": detected_location is not None,
                 "specified": request.location is not None and request.location != "United States"
-            }
+            },
+            "discovery": discovery_data,
+            "serp_analysis": serp_analysis_summary,
+            "serp_ai_summary": serp_ai_summary
         }
     except HTTPException:
         raise
