@@ -1,0 +1,7 @@
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100  1099  100   149  100   950   4700  29969 --:--:-- --:--:-- --:--:-- 35451
+{"error":"HTTP 500","message":"Enhanced blog generation failed: 'NoneType' object has no attribute 'provider_manager'","timestamp":1763063382.780946}
+
+HTTP Status: 500
+Time: 0.031699s

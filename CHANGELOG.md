@@ -1,3 +1,69 @@
+## 1.3.2 (2025-11-15)
+
+### Added
+- **Interlinking Algorithm**: Complete implementation of intelligent interlinking analysis
+  - **InterlinkingAnalyzer Class**: New analyzer for matching keywords to existing content
+    - Multiple matching strategies (exact, partial, title, word overlap)
+    - Relevance scoring with recency boost, title boost, keyword count boost
+    - Anchor text generation from titles and keywords
+    - Quality filtering (minimum 0.4 relevance, top 10 per keyword)
+  - **New Endpoint**: `POST /api/v1/integrations/connect-and-recommend-v2`
+    - Returns full interlink opportunities with URLs, titles, anchor text, relevance scores
+    - Requires structure with existing_content array
+  - **Enhanced Legacy Endpoint**: `POST /api/v1/integrations/connect-and-recommend`
+    - Automatically uses interlinking analyzer when structure is provided
+    - Falls back to heuristic method if no structure
+    - Maintains backward compatibility
+  - **Structure Validation**: Validates existing content structure and required fields
+  - **Models**: New models for interlinking (InterlinkOpportunity, KeywordInterlinkAnalysis, etc.)
+
+### Changed
+- Enhanced integration management endpoint to support interlinking analysis
+- Updated integration models to include legacy models for backward compatibility
+- Added structure validation function
+
+### Dependencies
+- Added `python-dateutil>=2.8.0` for date parsing in relevance scoring
+
+### Documentation
+- **FRONTEND_INTERLINKING_GUIDE_V1.3.2.md**: Complete interlinking integration guide
+- **FRONTEND_INTERLINKING_SUMMARY_V1.3.2.md**: Quick interlinking summary
+- **FRONTEND_DELIVERY_PACKAGE_V1.3.2.md**: Complete frontend delivery package
+- **FRONTEND_FILES_CHECKLIST_V1.3.2.md**: File checklist for frontend team
+- **FRONTEND_UPDATE_V1.3.2.md**: Updated with interlinking feature
+- **FRONTEND_QUICK_REFERENCE_V1.3.2.md**: Updated quick reference
+- **INTERLINKING_IMPLEMENTATION_SUMMARY.md**: Backend implementation details
+- Updated all frontend documentation to version 1.3.2
+
+### Notes
+- Interlinking feature requires structure with existing_content array
+- Minimum relevance score threshold: 0.4
+- Maximum 10 opportunities per keyword
+- Backward compatible with existing integration endpoints
+
+---
+
+## 1.3.1 (2025-11-15)
+
+### Added
+- **Blog Generation Quality Improvements**:
+  - Title validation and fallback logic (no more "**" placeholders)
+  - Content structure validation (minimum 3 H2 sections)
+  - Automatic internal link generation (3-5 links)
+  - Content length enforcement (2000+ words for "long")
+  - Enhanced image generation validation
+
+### Changed
+- Enhanced prompts with critical length requirements
+- Increased max_tokens multiplier for longer content generation
+- Improved image provider initialization with better validation
+
+### Documentation
+- **FRONTEND_UPDATE_V1.3.1.md**: Blog generation improvements summary
+- **FRONTEND_QUICK_REFERENCE_V1.3.1.md**: Quick reference guide
+
+---
+
 ## 1.3.0 (2025-11-13, Updated 2025-11-14)
 
 ### Added

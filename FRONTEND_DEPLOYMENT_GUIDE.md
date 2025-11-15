@@ -784,6 +784,25 @@ function renderImages(images: ImageMetadata[]) {
 
 ## Changelog
 
+### Version 1.3.2 (2025-11-15)
+
+**New Features:**
+- ✅ **Interlinking Algorithm**: Intelligent keyword matching to existing content
+- ✅ **Interlink Opportunities**: Specific URLs, anchor text, and relevance scores
+- ✅ **New Endpoint**: `/api/v1/integrations/connect-and-recommend-v2` with full opportunities
+- ✅ **Enhanced Legacy Endpoint**: `/api/v1/integrations/connect-and-recommend` now uses interlinking analyzer
+
+**Technical Changes:**
+- Added `InterlinkingAnalyzer` class with keyword matching and relevance scoring
+- Added structure validation for existing content
+- Enhanced integration endpoints with interlinking support
+- Added `python-dateutil` dependency for date parsing
+
+**No Breaking Changes:**
+- All existing endpoints continue to work
+- Legacy endpoint enhanced, not replaced
+- Backward compatible
+
 ### Version 1.3.1 (2025-11-15)
 
 **Quality Improvements:**

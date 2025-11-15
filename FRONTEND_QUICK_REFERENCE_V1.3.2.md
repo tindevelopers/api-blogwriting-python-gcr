@@ -1,6 +1,7 @@
 # Frontend Quick Reference - Version 1.3.1
 
-**Last Updated:** 2025-11-15
+**Last Updated:** 2025-11-15  
+**Version:** 1.3.2
 
 ---
 
@@ -96,5 +97,5 @@ interface BlogResponse {
 
 ---
 
-**Version:** 1.3.1
+**Version:** 1.3.2
 
