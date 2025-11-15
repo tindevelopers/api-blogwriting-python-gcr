@@ -12,7 +12,7 @@ import asyncio
 import uuid
 import math
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
 
 # Track startup time for uptime calculation
@@ -22,7 +22,7 @@ startup_time = time.time()
 deployment_version = "2025-11-14-001"
 APP_VERSION = os.getenv("APP_VERSION", "1.3.0")
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -62,6 +62,9 @@ from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOCl
 
 # Global DataForSEO client for Phase 3 semantic integration
 dataforseo_client_global = None
+
+# In-memory job storage (can be upgraded to Supabase/database later)
+blog_generation_jobs: Dict[str, BlogGenerationJob] = {}
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
@@ -84,6 +87,13 @@ from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
     EnhancedBlogGenerationResponse
 )
+from src.blog_writer_sdk.models.job_models import (
+    BlogGenerationJob,
+    JobStatus,
+    JobStatusResponse,
+    CreateJobResponse
+)
+from src.blog_writer_sdk.services.cloud_tasks_service import get_cloud_tasks_service
 from src.blog_writer_sdk.ai.multi_stage_pipeline import MultiStageGenerationPipeline
 from src.blog_writer_sdk.ai.enhanced_prompts import PromptTemplate
 from src.blog_writer_sdk.integrations.google_custom_search import GoogleCustomSearchClient
@@ -873,10 +883,11 @@ async def generate_blog(
 
 
 # Enhanced blog generation endpoint (Phase 1 & 2)
-@app.post("/api/v1/blog/generate-enhanced", response_model=EnhancedBlogGenerationResponse)
+@app.post("/api/v1/blog/generate-enhanced", response_model=Union[EnhancedBlogGenerationResponse, CreateJobResponse])
 async def generate_blog_enhanced(
     request: EnhancedBlogGenerationRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    async_mode: bool = Query(default=False, description="If true, creates async job via Cloud Tasks")
 ):
     """
     Generate high-quality blog content using multi-stage pipeline (Phase 1, 2 & 3).
@@ -889,13 +900,21 @@ async def generate_blog_enhanced(
     - Citation integration
     - Phase 3: Multi-model consensus, Knowledge Graph, semantic keywords, quality scoring
     
-    Returns significantly higher-quality content optimized for ranking.
+    Query Parameters:
+    - async_mode: If true, creates an async job via Cloud Tasks and returns job_id immediately
+    
+    Returns:
+    - If async_mode=false: EnhancedBlogGenerationResponse (synchronous)
+    - If async_mode=true: CreateJobResponse with job_id (asynchronous)
+    
+    Use GET /api/v1/blog/jobs/{job_id} to check status and retrieve results.
     """
     try:
         # Get global clients
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
+        global blog_generation_jobs
         
         # Check if AI generator is available
         if ai_generator is None:
@@ -903,6 +922,69 @@ async def generate_blog_enhanced(
                 status_code=503,
                 detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
             )
+        
+        # Handle async mode - create Cloud Tasks job
+        if async_mode:
+            job_id = str(uuid.uuid4())
+            
+            # Create job record
+            job = BlogGenerationJob(
+                job_id=job_id,
+                status=JobStatus.PENDING,
+                request=request.dict()
+            )
+            blog_generation_jobs[job_id] = job
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL (Cloud Run service URL)
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    # Fallback: construct from environment
+                    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+                    region = os.getenv("GCP_LOCATION", "europe-west1")
+                    service_name = os.getenv("CLOUD_RUN_SERVICE_NAME", "blog-writer-api-dev")
+                    worker_url = f"https://{service_name}-{project_id}.{region}.run.app/api/v1/blog/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_blog_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url
+                )
+                
+                # Update job with task name
+                job.task_name = task_name
+                job.status = JobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
+                
+                # Estimate completion time (4 minutes average)
+                estimated_time = 240  # 4 minutes in seconds
+                
+                return CreateJobResponse(
+                    job_id=job_id,
+                    status=JobStatus.QUEUED,
+                    message="Blog generation job queued successfully",
+                    estimated_completion_time=estimated_time
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to create Cloud Task: {e}", exc_info=True)
+                # Update job status
+                job.status = JobStatus.FAILED
+                job.error_message = f"Failed to queue job: {str(e)}"
+                job.completed_at = datetime.utcnow()
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create async job: {str(e)}"
+                )
         
         # Create progress callback for streaming updates
         progress_updates = []
@@ -1249,6 +1331,409 @@ async def generate_blog_enhanced(
             status_code=500,
             detail=f"Enhanced blog generation failed: {str(e)}"
         )
+
+
+# Worker endpoint for Cloud Tasks
+@app.post("/api/v1/blog/worker")
+async def blog_generation_worker(request: Dict[str, Any]):
+    """
+    Internal worker endpoint called by Cloud Tasks to process blog generation jobs.
+    
+    This endpoint:
+    1. Receives job_id and request data from Cloud Tasks
+    2. Updates job status to PROCESSING
+    3. Executes the blog generation pipeline
+    4. Updates job with result or error
+    5. Marks job as COMPLETED or FAILED
+    
+    This endpoint should not be called directly by clients.
+    """
+    try:
+        global blog_generation_jobs
+        global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
+        global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
+        global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
+        
+        # Extract job_id and request data
+        job_id = request.get("job_id")
+        if not job_id:
+            logger.error("Worker called without job_id")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "job_id is required"}
+            )
+        
+        # Get job from storage
+        if job_id not in blog_generation_jobs:
+            logger.error(f"Job {job_id} not found")
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Job {job_id} not found"}
+            )
+        
+        job = blog_generation_jobs[job_id]
+        
+        # Update job status
+        job.status = JobStatus.PROCESSING
+        job.started_at = datetime.utcnow()
+        job.current_stage = "initialization"
+        
+        # Parse request
+        request_data = request.get("request", {})
+        blog_request = EnhancedBlogGenerationRequest(**request_data)
+        
+        try:
+            # Create progress callback that updates job
+            progress_updates = []
+            async def progress_callback(update):
+                """Update job progress."""
+                progress_updates.append(update.dict())
+                job.progress_updates = progress_updates
+                
+                # Update current stage and progress
+                if "stage" in update:
+                    job.current_stage = update.get("stage", "processing")
+                if "progress_percentage" in update:
+                    job.progress_percentage = update.get("progress_percentage", 0.0)
+            
+            # Initialize pipeline (same as synchronous endpoint)
+            pipeline = MultiStageGenerationPipeline(
+                ai_generator=ai_generator,
+                google_search=google_custom_search_client if blog_request.use_google_search else None,
+                readability_analyzer=readability_analyzer,
+                knowledge_graph=google_knowledge_graph_client if blog_request.use_knowledge_graph else None,
+                semantic_integrator=semantic_integrator if blog_request.use_semantic_keywords else None,
+                quality_scorer=quality_scorer if blog_request.use_quality_scoring else None,
+                intent_analyzer=intent_analyzer,
+                few_shot_extractor=few_shot_extractor if blog_request.use_google_search else None,
+                length_optimizer=length_optimizer if blog_request.use_google_search else None,
+                use_consensus=blog_request.use_consensus_generation,
+                dataforseo_client=dataforseo_client_global,
+                progress_callback=progress_callback
+            )
+            
+            # Determine template type
+            template = None
+            if blog_request.template_type:
+                try:
+                    template = PromptTemplate(blog_request.template_type)
+                except ValueError:
+                    template = PromptTemplate.EXPERT_AUTHORITY
+            
+            # Prepare additional context
+            additional_context = {}
+            if blog_request.target_audience:
+                additional_context["target_audience"] = blog_request.target_audience
+            if blog_request.custom_instructions:
+                additional_context["custom_instructions"] = blog_request.custom_instructions
+            
+            # Add product research requirements if enabled
+            if blog_request.include_product_research:
+                additional_context["product_research_requirements"] = {
+                    "include_brands": blog_request.include_brands,
+                    "include_models": blog_request.include_models,
+                    "include_prices": blog_request.include_prices,
+                    "include_features": blog_request.include_features,
+                    "include_reviews": blog_request.include_reviews,
+                    "include_pros_cons": blog_request.include_pros_cons,
+                    "include_product_table": blog_request.include_product_table,
+                    "include_comparison_section": blog_request.include_comparison_section,
+                    "include_buying_guide": blog_request.include_buying_guide,
+                    "include_faq_section": blog_request.include_faq_section,
+                    "research_depth": blog_request.research_depth
+                }
+            
+            # SERP optimization if enabled
+            serp_features = []
+            if blog_request.use_serp_optimization and blog_request.keywords:
+                try:
+                    serp_analysis = await serp_analyzer.analyze_serp_features(
+                        blog_request.keywords[0]
+                    )
+                    serp_features = [f.type for f in serp_analysis.features]
+                    additional_context["serp_features"] = serp_features
+                except Exception as e:
+                    logger.warning(f"SERP analysis failed: {e}")
+            
+            # Generate using multi-stage pipeline
+            pipeline_result = await pipeline.generate(
+                topic=blog_request.topic,
+                keywords=blog_request.keywords,
+                tone=blog_request.tone,
+                length=blog_request.length,
+                template=template,
+                additional_context=additional_context
+            )
+            
+            # Generate images if needed (same logic as synchronous endpoint)
+            generated_images = []
+            image_generation_warnings = []
+            
+            if blog_request.use_google_search:
+                try:
+                    from src.blog_writer_sdk.api.image_generation import image_provider_manager
+                    from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
+                    
+                    product_indicators = ["best", "top", "review", "compare", "guide"]
+                    is_product_topic = any(indicator in blog_request.topic.lower() for indicator in product_indicators)
+                    
+                    if image_provider_manager and image_provider_manager.providers and is_product_topic:
+                        # Generate featured image
+                        try:
+                            featured_image_request = ImageGenerationRequest(
+                                prompt=f"Professional product photography: {blog_request.topic}. High quality, clean background, professional lighting",
+                                style=ImageStyle.PHOTOGRAPHIC,
+                                aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
+                                quality=ImageQuality.HIGH
+                            )
+                            featured_image_response = await image_provider_manager.generate_image(featured_image_request)
+                            if featured_image_response.success and featured_image_response.images:
+                                generated_images.append({
+                                    "type": "featured",
+                                    "prompt": featured_image_request.prompt,
+                                    "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
+                                    "alt_text": f"Featured image for {blog_request.topic}"
+                                })
+                        except Exception as e:
+                            image_generation_warnings.append(f"Featured image generation failed: {str(e)}")
+                except Exception as e:
+                    image_generation_warnings.append(f"Image generation failed: {str(e)}")
+            
+            # Auto-insert generated images into content
+            if generated_images and len(generated_images) > 0:
+                try:
+                    from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
+                    final_content = insert_images_into_markdown(
+                        pipeline_result.final_content,
+                        generated_images
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to insert images: {e}")
+                    final_content = pipeline_result.final_content
+            else:
+                final_content = pipeline_result.final_content
+            
+            # Add citations if enabled
+            citations = []
+            if blog_request.use_citations and google_custom_search_client:
+                try:
+                    citation_result = await citation_generator.generate_citations(
+                        final_content,
+                        blog_request.topic,
+                        blog_request.keywords
+                    )
+                    citations = [
+                        {
+                            "text": c.text[:100],
+                            "url": c.source_url,
+                            "title": c.source_title
+                        }
+                        for c in citation_result.citations
+                    ]
+                    final_content = citation_generator.integrate_citations(
+                        final_content,
+                        citation_result.citations
+                    )
+                    if citation_result.sources_used:
+                        final_content += citation_generator.generate_references_section(
+                            citation_result.sources_used
+                        )
+                except Exception as e:
+                    logger.warning(f"Citation generation failed: {e}")
+            
+            # Calculate SEO score
+            seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
+            
+            # Extract quality scores
+            quality_dimensions = {}
+            if pipeline_result.quality_score is not None:
+                quality_report = pipeline_result.seo_metadata.get("quality_report", {})
+                quality_dimensions = quality_report.get("dimension_scores", {})
+            
+            # Extract semantic keywords
+            semantic_keywords = pipeline_result.seo_metadata.get("semantic_keywords", [])
+            
+            # Extract brand recommendations
+            brand_recommendations = None
+            if additional_context.get("brand_recommendations"):
+                brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
+            
+            # Extract content metadata
+            content_metadata = extract_content_metadata(final_content)
+            
+            # Enhance SEO metadata
+            enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
+            
+            # Get featured image URL
+            featured_image_url = None
+            if generated_images and len(generated_images) > 0:
+                featured_image_url = generated_images[0].get("image_url") or generated_images[0].get("image_data")
+            elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
+                featured_image_url = pipeline_result.structured_data.get("image")
+            
+            # Generate canonical URL
+            canonical_url = os.getenv("CANONICAL_BASE_URL", "https://your-domain.com")
+            if pipeline_result.structured_data and pipeline_result.structured_data.get("mainEntityOfPage"):
+                canonical_url = pipeline_result.structured_data.get("mainEntityOfPage", {}).get("@id", canonical_url)
+            
+            # Add OG tags
+            enhanced_seo_metadata["og_tags"] = {
+                "title": pipeline_result.meta_title or blog_request.topic,
+                "description": pipeline_result.meta_description or "",
+                "image": featured_image_url,
+                "url": canonical_url,
+                "type": "article",
+                "site_name": os.getenv("SITE_NAME", "Blog Writer")
+            }
+            
+            # Add Twitter tags
+            enhanced_seo_metadata["twitter_tags"] = {
+                "card": "summary_large_image" if featured_image_url else "summary",
+                "title": pipeline_result.meta_title or blog_request.topic,
+                "description": pipeline_result.meta_description or "",
+                "image": featured_image_url
+            }
+            
+            # Enhance structured_data
+            enhanced_structured_data = pipeline_result.structured_data
+            if enhanced_structured_data:
+                if "@context" not in enhanced_structured_data:
+                    enhanced_structured_data["@context"] = "https://schema.org"
+                if "@type" not in enhanced_structured_data:
+                    enhanced_structured_data["@type"] = "BlogPosting"
+                enhanced_structured_data["headline"] = enhanced_structured_data.get("headline") or pipeline_result.meta_title or blog_request.topic
+                enhanced_structured_data["description"] = enhanced_structured_data.get("description") or pipeline_result.meta_description or ""
+                if "datePublished" not in enhanced_structured_data:
+                    enhanced_structured_data["datePublished"] = datetime.now().isoformat()
+                if "dateModified" not in enhanced_structured_data:
+                    enhanced_structured_data["dateModified"] = datetime.now().isoformat()
+                if "wordCount" not in enhanced_structured_data:
+                    enhanced_structured_data["wordCount"] = content_metadata.get("word_count", 0)
+                if "mainEntityOfPage" not in enhanced_structured_data:
+                    enhanced_structured_data["mainEntityOfPage"] = {
+                        "@type": "WebPage",
+                        "@id": canonical_url
+                    }
+            
+            # Prepare stage results
+            stage_results_data = [
+                {
+                    "stage": s.stage,
+                    "provider": s.provider_used,
+                    "tokens": s.tokens_used,
+                    "cost": s.cost
+                }
+                for s in pipeline_result.stage_results
+            ]
+            
+            # Create response
+            response = EnhancedBlogGenerationResponse(
+                title=pipeline_result.meta_title or blog_request.topic,
+                content=final_content,
+                meta_title=pipeline_result.meta_title,
+                meta_description=pipeline_result.meta_description,
+                readability_score=pipeline_result.readability_score,
+                seo_score=seo_score,
+                stage_results=stage_results_data,
+                citations=citations,
+                total_tokens=pipeline_result.total_tokens,
+                total_cost=pipeline_result.total_cost,
+                generation_time=pipeline_result.generation_time,
+                seo_metadata=enhanced_seo_metadata,
+                internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+                quality_score=pipeline_result.quality_score,
+                quality_dimensions=quality_dimensions,
+                structured_data=enhanced_structured_data,
+                semantic_keywords=semantic_keywords,
+                content_metadata=content_metadata,
+                generated_images=generated_images if generated_images else None,
+                brand_recommendations=brand_recommendations,
+                success=True,
+                warnings=image_generation_warnings if image_generation_warnings else [],
+                progress_updates=progress_updates
+            )
+            
+            # Update job with result
+            job.status = JobStatus.COMPLETED
+            job.completed_at = datetime.utcnow()
+            job.progress_percentage = 100.0
+            job.current_stage = "completed"
+            job.result = response.dict()
+            
+            logger.info(f"Blog generation job {job_id} completed successfully")
+            
+            return JSONResponse(
+                status_code=200,
+                content={"status": "success", "job_id": job_id}
+            )
+            
+        except Exception as e:
+            logger.error(f"Blog generation job {job_id} failed: {e}", exc_info=True)
+            
+            # Update job with error
+            job.status = JobStatus.FAILED
+            job.completed_at = datetime.utcnow()
+            job.error_message = str(e)
+            job.error_details = {
+                "type": type(e).__name__,
+                "message": str(e)
+            }
+            
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "job_id": job_id, "error": str(e)}
+            )
+            
+    except Exception as e:
+        logger.error(f"Worker endpoint error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+# Job status endpoint
+@app.get("/api/v1/blog/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str):
+    """
+    Get the status of an async blog generation job.
+    
+    Returns:
+    - Job status (pending, queued, processing, completed, failed)
+    - Progress percentage
+    - Current stage
+    - Result (if completed)
+    - Error message (if failed)
+    """
+    global blog_generation_jobs
+    
+    if job_id not in blog_generation_jobs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job {job_id} not found"
+        )
+    
+    job = blog_generation_jobs[job_id]
+    
+    # Calculate estimated time remaining
+    estimated_time_remaining = None
+    if job.status == JobStatus.PROCESSING and job.started_at:
+        elapsed = (datetime.utcnow() - job.started_at).total_seconds()
+        # Average generation time is 240 seconds (4 minutes)
+        estimated_time_remaining = max(0, int(240 - elapsed))
+    
+    return JobStatusResponse(
+        job_id=job.job_id,
+        status=job.status,
+        progress_percentage=job.progress_percentage,
+        current_stage=job.current_stage,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        result=job.result,
+        error_message=job.error_message,
+        estimated_time_remaining=estimated_time_remaining
+    )
 
 
 # Content analysis endpoint
