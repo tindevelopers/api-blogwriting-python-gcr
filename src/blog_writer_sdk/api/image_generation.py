@@ -534,7 +534,7 @@ async def initialize_image_providers_from_env():
     try:
         # Stability AI
         stability_key = os.getenv("STABILITY_AI_API_KEY")
-        if stability_key:
+        if stability_key and stability_key.strip() and stability_key != "placeholder-key":
             await configure_image_provider(
                 provider_type=ImageProviderType.STABILITY_AI,
                 api_key=stability_key,
@@ -542,11 +542,19 @@ async def initialize_image_providers_from_env():
                 priority=1,
                 default_model=os.getenv("STABILITY_AI_DEFAULT_MODEL", "stable-diffusion-xl-1024-v1-0")
             )
+            logger.info("✅ Stability AI image provider initialized successfully")
+        else:
+            logger.warning("⚠️ STABILITY_AI_API_KEY not found or invalid. Image generation will be disabled.")
+            logger.warning("   To enable image generation, set STABILITY_AI_API_KEY in Cloud Run secrets.")
         
-        logger.info("Image providers initialized from environment variables")
+        # Log provider status
+        if image_provider_manager and image_provider_manager.providers:
+            logger.info(f"✅ {len(image_provider_manager.providers)} image provider(s) available")
+        else:
+            logger.warning("⚠️ No image providers available. Image generation will be disabled.")
         
     except Exception as e:
-        logger.error(f"Failed to initialize image providers from environment: {e}")
+        logger.error(f"Failed to initialize image providers from environment: {e}", exc_info=True)
 
 
 # Export the router and manager for use in main.py

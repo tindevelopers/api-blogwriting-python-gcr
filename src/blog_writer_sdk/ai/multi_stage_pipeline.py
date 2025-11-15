@@ -9,7 +9,7 @@ import asyncio
 import logging
 import re
 import os
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from dataclasses import dataclass
 
 from .ai_content_generator import AIContentGenerator
@@ -93,8 +93,8 @@ class MultiStageGenerationPipeline:
         semantic_integrator: Optional[SemanticKeywordIntegrator] = None,
         quality_scorer: Optional[ContentQualityScorer] = None,
         intent_analyzer: Optional["IntentAnalyzer"] = None,
-        few_shot_extractor: Optional["FewShotLearningExtractor"] = None,
-        length_optimizer: Optional["ContentLengthOptimizer"] = None,
+        few_shot_extractor: Optional[Any] = None,  # FewShotLearningExtractor
+        length_optimizer: Optional[Any] = None,  # ContentLengthOptimizer
         use_consensus: bool = False,
         dataforseo_client: Optional[DataForSEOClient] = None,
         progress_callback: Optional[ProgressCallback] = None
@@ -574,6 +574,18 @@ class MultiStageGenerationPipeline:
         meta_title = seo_metadata.get("meta_title", "")
         meta_description = seo_metadata.get("meta_description", "")
         
+        # Validate and fix title if invalid
+        if not meta_title or meta_title == "**" or len(meta_title) < 5:
+            # Extract title from H1 in content as fallback
+            h1_match = re.search(r'^#\s+(.+)$', enhanced_content, re.MULTILINE)
+            if h1_match:
+                meta_title = h1_match.group(1).strip()
+                logger.info(f"Using H1 as title fallback: {meta_title}")
+            else:
+                # Last resort: use topic
+                meta_title = topic
+                logger.warning(f"Using topic as title fallback: {meta_title}")
+        
         # Add intent analysis to metadata
         if intent_analysis:
             intent_value = _safe_enum_to_str(intent_analysis.primary_intent)
@@ -694,6 +706,21 @@ class MultiStageGenerationPipeline:
                     "Quality scoring skipped",
                     "Quality scorer unavailable"
                 )
+        
+        # Validate and enforce content structure
+        enhanced_content = self._validate_and_fix_content_structure(
+            enhanced_content,
+            topic,
+            keywords,
+            length
+        )
+        
+        # Generate and insert internal links
+        enhanced_content = await self._generate_and_insert_internal_links(
+            enhanced_content,
+            keywords,
+            topic
+        )
         
         # Finalization
         await self._emit_progress(
@@ -859,7 +886,9 @@ class MultiStageGenerationPipeline:
         )
         
         # Generate with GPT-4o (best for comprehensive generation)
-        max_tokens = int(self.prompt_builder._get_word_count(length) * 1.5)  # Tokens estimate
+        # Increase max_tokens to ensure we can generate long content
+        word_count_target = self.prompt_builder._get_word_count(length)
+        max_tokens = int(word_count_target * 2.0)  # Increased multiplier to ensure enough tokens for long content
         request = AIRequest(
             prompt=prompt,
             content_type=ContentType.BLOG_POST,
@@ -1017,10 +1046,15 @@ class MultiStageGenerationPipeline:
         """Parse SEO metadata from stage 4 response."""
         metadata = {}
         
-        # Extract meta title
+        # Extract meta title with validation
         title_match = re.search(r'Meta Title[:\s]+(.+)', seo_response, re.IGNORECASE)
         if title_match:
-            metadata["meta_title"] = title_match.group(1).strip()
+            extracted_title = title_match.group(1).strip()
+            # Validate title - reject if it's just "**" or too short
+            if extracted_title and extracted_title != "**" and len(extracted_title) > 3:
+                metadata["meta_title"] = extracted_title
+            else:
+                logger.warning(f"Invalid title extracted: '{extracted_title}', will use fallback")
         
         # Extract meta description
         desc_match = re.search(r'Meta Description[:\s]+(.+)', seo_response, re.IGNORECASE)
@@ -1033,5 +1067,172 @@ class MultiStageGenerationPipeline:
             metadata["internal_links"] = [link.strip() for link in links_match]
         
         return metadata
+    
+    def _validate_and_fix_content_structure(
+        self,
+        content: str,
+        topic: str,
+        keywords: List[str],
+        length: Union[ContentLength, str]
+    ) -> str:
+        """
+        Validate and fix content structure (H2 count, length, etc.).
+        
+        Args:
+            content: Content to validate
+            topic: Blog topic
+            keywords: Keywords list
+            length: Target content length
+            
+        Returns:
+            Fixed content
+        """
+        lines = content.split('\n')
+        h1_count = sum(1 for line in lines if line.strip().startswith('# ') and not line.strip().startswith('##'))
+        h2_count = sum(1 for line in lines if line.strip().startswith('## ') and not line.strip().startswith('###'))
+        word_count = len(content.split())
+        target_word_count = self.prompt_builder._get_word_count(length)
+        
+        issues = []
+        
+        # Check H1 count
+        if h1_count == 0:
+            issues.append("Missing H1 heading")
+            # Add H1 at the beginning
+            content = f"# {topic}\n\n{content}"
+        elif h1_count > 1:
+            issues.append(f"Multiple H1 headings found ({h1_count}), should be exactly 1")
+        
+        # Check H2 count (should be 3-5 minimum)
+        if h2_count < 3:
+            issues.append(f"Insufficient H2 headings ({h2_count}), minimum 3 required")
+            logger.warning(f"Content has only {h2_count} H2 headings, minimum 3 required")
+            # Try to identify sections that should be H2
+            # This is a basic fix - in production, might want to regenerate sections
+            content = self._promote_headings_to_h2(content, keywords)
+        
+        # Check content length
+        if word_count < target_word_count * 0.7:  # Allow 30% tolerance
+            issues.append(f"Content too short ({word_count} words, target: {target_word_count})")
+            logger.warning(f"Content length ({word_count} words) is below target ({target_word_count} words)")
+            # Note: We can't easily expand content here, but we log the issue
+        
+        if issues:
+            logger.warning(f"Content structure issues found: {', '.join(issues)}")
+        
+        return content
+    
+    def _promote_headings_to_h2(self, content: str, keywords: List[str]) -> str:
+        """
+        Promote some H3 headings to H2 if H2 count is insufficient.
+        
+        Args:
+            content: Content to fix
+            keywords: Keywords for context
+            
+        Returns:
+            Fixed content
+        """
+        lines = content.split('\n')
+        fixed_lines = []
+        h2_count = 0
+        h3_promoted = 0
+        
+        for i, line in enumerate(lines):
+            # Count current H2
+            if line.strip().startswith('## ') and not line.strip().startswith('###'):
+                h2_count += 1
+                fixed_lines.append(line)
+            # Promote first few H3s to H2 if needed
+            elif line.strip().startswith('### ') and h2_count < 3 and h3_promoted < 2:
+                # Promote to H2
+                fixed_lines.append(line.replace('###', '##', 1))
+                h2_count += 1
+                h3_promoted += 1
+            else:
+                fixed_lines.append(line)
+        
+        if h3_promoted > 0:
+            logger.info(f"Promoted {h3_promoted} H3 headings to H2 to meet minimum requirement")
+        
+        return '\n'.join(fixed_lines)
+    
+    async def _generate_and_insert_internal_links(
+        self,
+        content: str,
+        keywords: List[str],
+        topic: str
+    ) -> str:
+        """
+        Generate and insert actual internal links into content.
+        
+        Args:
+            content: Content to add links to
+            keywords: Keywords for link generation
+            topic: Blog topic
+            
+        Returns:
+            Content with internal links inserted
+        """
+        # Generate internal link opportunities based on keywords
+        internal_links = []
+        
+        # Create link opportunities from keywords and related terms
+        for keyword in keywords[:5]:  # Use top 5 keywords
+            # Generate URL-friendly slug
+            slug = keyword.lower().replace(' ', '-').replace(',', '').replace('.', '')
+            # Create link opportunity
+            internal_links.append({
+                'anchor_text': keyword,
+                'url': f'/{slug}',
+                'keyword': keyword
+            })
+        
+        # Find natural insertion points in content
+        lines = content.split('\n')
+        fixed_lines = []
+        links_inserted = 0
+        target_link_count = min(5, len(internal_links))
+        
+        for i, line in enumerate(lines):
+            fixed_lines.append(line)
+            
+            # Insert links in paragraphs (not in headings or code blocks)
+            if (links_inserted < target_link_count and 
+                line.strip() and 
+                not line.strip().startswith('#') and
+                not line.strip().startswith('```') and
+                not line.strip().startswith('![') and
+                len(line.strip()) > 50):  # Only in substantial paragraphs
+                
+                # Check if any keyword appears in this line
+                for link_info in internal_links:
+                    if link_info['keyword'].lower() in line.lower() and links_inserted < target_link_count:
+                        # Insert link after first occurrence of keyword
+                        keyword_lower = link_info['keyword'].lower()
+                        line_lower = line.lower()
+                        if keyword_lower in line_lower:
+                            # Find position and insert link
+                            idx = line_lower.find(keyword_lower)
+                            if idx != -1:
+                                # Replace keyword with linked version
+                                before = line[:idx]
+                                keyword_text = line[idx:idx+len(link_info['keyword'])]
+                                after = line[idx+len(link_info['keyword']):]
+                                
+                                # Check if already linked
+                                if '[' not in before[-20:] and '](' not in before[-20:]:
+                                    linked_keyword = f"[{keyword_text}]({link_info['url']})"
+                                    fixed_lines[-1] = before + linked_keyword + after
+                                    links_inserted += 1
+                                    logger.info(f"Inserted internal link: {link_info['anchor_text']} -> {link_info['url']}")
+                                    break
+        
+        if links_inserted > 0:
+            logger.info(f"Inserted {links_inserted} internal links into content")
+        else:
+            logger.warning("No internal links were inserted - may need manual review")
+        
+        return '\n'.join(fixed_lines)
     
 

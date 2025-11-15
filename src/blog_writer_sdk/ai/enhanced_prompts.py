@@ -139,7 +139,7 @@ Focus on creating content that provides genuine value, unique insights, and acti
 TOPIC: {topic}
 PRIMARY KEYWORD: {primary_keyword}
 TONE: {_safe_enum_to_str(tone)}
-TARGET LENGTH: {word_count_target} words
+TARGET LENGTH: {word_count_target} words (MANDATORY - content must reach this word count)
 CURRENT DATE: {current_date}
 CURRENT YEAR: {current_year}
 
@@ -147,6 +147,13 @@ CONTENT OUTLINE:
 {outline}
 
 {template_instructions}
+
+CRITICAL LENGTH REQUIREMENT:
+- You MUST generate at least {word_count_target} words of content
+- This is a hard requirement, not a suggestion
+- If your initial draft is shorter, expand sections with more detail, examples, and explanations
+- Each H2 section should contribute 400-600 words toward the total
+- Do not stop writing until you reach the target word count
 
 WRITING REQUIREMENTS:
 1. Write for human readers first, SEO optimization second
@@ -366,14 +373,33 @@ SEO OPTIMIZATION TASKS:
 10. URL Slug Suggestion - Create an SEO-friendly URL slug
 
 OUTPUT FORMAT:
-Provide:
-1. Optimized meta title
-2. Meta description
-3. List of internal linking suggestions (with anchor text and target topics)
-4. Image alt text suggestions (3-5 suggestions)
-5. Schema markup recommendations
-6. URL slug suggestion
-7. Any content adjustments needed for SEO (minimal changes only)
+Provide your response in the following exact format:
+
+Meta Title: [Your SEO-optimized title here - 50-60 characters, include primary keyword]
+Meta Description: [Your compelling meta description here - 150-160 characters with call-to-action]
+
+Internal Link Suggestions:
+Internal Link: [anchor text] -> /related-topic-url
+Internal Link: [anchor text] -> /related-topic-url
+Internal Link: [anchor text] -> /related-topic-url
+[Provide 3-5 internal link suggestions with descriptive anchor text and URL paths]
+
+Image Alt Text Suggestions:
+1. [Descriptive alt text for featured image]
+2. [Alt text for section image]
+3. [Alt text for section image]
+[Provide 3-5 image alt text suggestions]
+
+Schema Markup Recommendations:
+[Brief recommendations for structured data]
+
+URL Slug: [seo-friendly-url-slug]
+
+IMPORTANT:
+- Meta Title MUST be a proper title string, NOT "**" or placeholder text
+- Meta Title should be 50-60 characters and include the primary keyword
+- Internal links should use descriptive anchor text, not generic phrases
+- All output should be clear, specific, and actionable
 
 Focus on SEO optimization that enhances rather than detracts from content quality."""
         
