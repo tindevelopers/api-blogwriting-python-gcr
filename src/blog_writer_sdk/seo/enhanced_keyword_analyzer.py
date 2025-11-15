@@ -272,94 +272,164 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             return {kw: await self._get_dataforseo_metrics(kw, tenant_id) for kw in keywords}
 
         try:
-            # Ensure credentials are initialized
             await self._df_client.initialize_credentials(tenant_id)
             
-            # Get search volume data with proper parameters
-            sv_data = await self._df_client.get_search_volume_data(
-                keywords=keywords,
-                location_name=self.location,
-                language_code=self.language_code,
-                tenant_id=tenant_id
-            )
-            diff_data = await self._df_client.get_keyword_difficulty(
-                keywords=keywords,
-                location_name=self.location,
-                language_code=self.language_code,
-                tenant_id=tenant_id
-            )
-            # Get AI optimization data (critical for AI-optimized content)
-            ai_data = {}
-            try:
-                ai_data = await self._df_client.get_ai_search_volume(
+            search_task = asyncio.create_task(
+                self._df_client.get_search_volume_data(
                     keywords=keywords,
                     location_name=self.location,
                     language_code=self.language_code,
                     tenant_id=tenant_id
                 )
-            except Exception as e:
-                print(f"Warning: Failed to get AI optimization data: {e}")
-                # Continue without AI data
+            )
+            difficulty_task = asyncio.create_task(
+                self._df_client.get_keyword_difficulty(
+                    keywords=keywords,
+                    location_name=self.location,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+            )
+            ai_task = asyncio.create_task(
+                self._df_client.get_ai_search_volume(
+                    keywords=keywords,
+                    location_name=self.location,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+            )
+            overview_task = asyncio.create_task(
+                self._df_client.get_keyword_overview(
+                    keywords=keywords,
+                    location_name=self.location,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+            )
+            intent_task = asyncio.create_task(
+                self._df_client.get_search_intent(
+                    keywords=keywords,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+            )
+            
+            (
+                sv_data,
+                diff_data,
+                ai_data,
+                overview_raw,
+                intent_raw
+            ) = await asyncio.gather(
+                search_task,
+                difficulty_task,
+                ai_task,
+                overview_task,
+                intent_task,
+                return_exceptions=True
+            )
+            
+            # Handle task exceptions individually
+            if isinstance(sv_data, Exception):
+                logger.warning(f"Search volume task failed: {sv_data}")
+                sv_data = {}
+            if isinstance(diff_data, Exception):
+                logger.warning(f"Keyword difficulty task failed: {diff_data}")
+                diff_data = {}
+            if isinstance(ai_data, Exception):
+                logger.warning(f"AI optimization task failed: {ai_data}")
+                ai_data = {}
+            if isinstance(overview_raw, Exception):
+                logger.warning(f"Keyword overview task failed: {overview_raw}")
+                overview_raw = {}
+            if isinstance(intent_raw, Exception):
+                logger.warning(f"Search intent task failed: {intent_raw}")
+                intent_raw = {}
+            
+            overview_map, _ = self._parse_keyword_overview_response(overview_raw)
+            intent_map = self._parse_search_intent_response(intent_raw)
+            
+            # Log overview data availability for debugging
+            if not overview_map:
+                logger.warning(f"Keyword overview returned empty for {len(keywords)} keywords. Check DataForSEO API response.")
+            else:
+                logger.debug(f"Keyword overview populated for {len(overview_map)} keywords")
             
             combined: Dict[str, Dict[str, Any]] = {}
             for kw in keywords:
                 m = sv_data.get(kw, {})
                 ai_metrics = ai_data.get(kw, {})
+                overview_entry = overview_map.get(kw, {})
+                intent_entry = intent_map.get(kw, {})
                 
-                # Ensure all values are properly converted to numeric types
-                search_vol = m.get("search_volume", 0)
-                try:
-                    search_volume = int(float(search_vol)) if search_vol is not None else 0
-                except (ValueError, TypeError):
-                    search_volume = 0
+                # Prioritize overview data (more accurate, organic metrics) over Google Ads data
+                # Overview provides organic CPC, global search volume, clicks, traffic potential
+                search_volume = self._safe_int(
+                    overview_entry.get("search_volume") if overview_entry.get("search_volume") 
+                    else m.get("search_volume", 0)
+                )
+                # Prioritize overview CPC (organic) over Google Ads CPC (advertising)
+                cpc = self._safe_float(
+                    overview_entry.get("cpc") if overview_entry.get("cpc") 
+                    else m.get("cpc", 0.0)
+                )
+                competition = self._safe_float(
+                    overview_entry.get("competition") if overview_entry.get("competition") is not None
+                    else m.get("competition", 0.0)
+                )
+                trend_score = self._safe_float(
+                    overview_entry.get("trend_score") if overview_entry.get("trend_score") is not None
+                    else m.get("trend", 0.0)
+                )
+                difficulty_score = self._safe_float(
+                    overview_entry.get("keyword_difficulty") if overview_entry.get("keyword_difficulty") is not None
+                    else diff_data.get(kw, 50.0)
+                )
                 
-                cpc_val = m.get("cpc", 0.0)
-                try:
-                    cpc = float(cpc_val) if cpc_val is not None else 0.0
-                except (ValueError, TypeError):
-                    cpc = 0.0
+                ai_search_volume = self._safe_int(ai_metrics.get("ai_search_volume"))
+                ai_trend = self._safe_float(ai_metrics.get("ai_trend"))
+                ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
                 
-                comp_val = m.get("competition", 0.0)
-                try:
-                    competition = float(comp_val) if comp_val is not None else 0.0
-                except (ValueError, TypeError):
-                    competition = 0.0
-                
-                trend_val = m.get("trend", 0.0)
-                try:
-                    trend_score = float(trend_val) if trend_val is not None else 0.0
-                except (ValueError, TypeError):
-                    trend_score = 0.0
-                
-                diff_val = diff_data.get(kw, 50.0)
-                try:
-                    difficulty_score = float(diff_val) if diff_val is not None else 50.0
-                except (ValueError, TypeError):
-                    difficulty_score = 50.0
-                
-                # Extract AI optimization metrics
-                ai_search_vol = ai_metrics.get("ai_search_volume", 0)
-                try:
-                    ai_search_volume = int(float(ai_search_vol)) if ai_search_vol is not None else 0
-                except (ValueError, TypeError):
-                    ai_search_volume = 0
-                
-                ai_trend_val = ai_metrics.get("ai_trend", 0.0)
-                try:
-                    ai_trend = float(ai_trend_val) if ai_trend_val is not None else 0.0
-                except (ValueError, TypeError):
-                    ai_trend = 0.0
+                # Ensure all overview fields are properly extracted (even if 0/null)
+                global_sv = overview_entry.get("global_search_volume")
+                if global_sv is None:
+                    global_sv = 0
+                else:
+                    global_sv = self._safe_int(global_sv)
                 
                 combined[kw] = {
                     "search_volume": search_volume,
+                    "global_search_volume": global_sv,
+                    "search_volume_by_country": overview_entry.get("search_volume_by_country") or {},
+                    "monthly_searches": overview_entry.get("monthly_searches") or m.get("monthly_searches", []),
                     "cpc": cpc,
+                    "cpc_currency": overview_entry.get("cpc_currency") or m.get("currency"),
                     "competition": competition,
                     "trend_score": trend_score,
                     "difficulty_score": difficulty_score,
                     "ai_search_volume": ai_search_volume,
-                    "ai_monthly_searches": ai_metrics.get("ai_monthly_searches", []),
+                    "ai_monthly_searches": ai_monthly_searches,
                     "ai_trend": ai_trend,
+                    "cps": overview_entry.get("cps"),
+                    "clicks": overview_entry.get("clicks"),
+                    "traffic_potential": overview_entry.get("traffic_potential"),
+                    "parent_topic": overview_entry.get("parent_topic"),
+                    "serp_features": overview_entry.get("serp_features") or [],
+                    "serp_feature_counts": overview_entry.get("serp_feature_counts") or {},
+                    "also_rank_for": overview_entry.get("also_rank_for") or [],
+                    "also_talk_about": overview_entry.get("also_talk_about") or [],
+                    "top_competitors": overview_entry.get("top_competitors") or [],
+                    "first_seen": overview_entry.get("first_seen"),
+                    "last_updated": overview_entry.get("last_updated"),
+                    "intent_probabilities": intent_entry.get("intent_probabilities") or overview_entry.get("intent_probabilities") or {},
+                    "primary_intent": intent_entry.get("primary_intent") or overview_entry.get("primary_intent"),
                 }
+                
+                # Log if overview data is missing for debugging
+                if not overview_entry and (m.get("search_volume") or m.get("cpc")):
+                    logger.debug(f"Keyword '{kw}': Using Google Ads data only (overview unavailable). CPC: {cpc}, SV: {search_volume}")
+                elif overview_entry:
+                    logger.debug(f"Keyword '{kw}': Using overview data. CPC: {cpc}, Global SV: {global_sv}, Clicks: {overview_entry.get('clicks')}")
             return combined
         except Exception as e:
             print(f"Error fetching batch DataForSEO metrics: {e}")
@@ -374,6 +444,15 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                     "ai_search_volume": 0,
                     "ai_monthly_searches": [],
                     "ai_trend": 0.0,
+                    "search_volume_by_country": {},
+                    "monthly_searches": [],
+                    "serp_features": [],
+                    "serp_feature_counts": {},
+                    "also_rank_for": [],
+                    "also_talk_about": [],
+                    "top_competitors": [],
+                    "intent_probabilities": {},
+                    "primary_intent": None,
                 }
                 for kw in keywords
             }
@@ -668,15 +747,271 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         return KeywordAnalysis(
             keyword=basic.keyword,
             search_volume=search_volume,
+            global_search_volume=enhanced.get("global_search_volume"),
+            search_volume_by_country=enhanced.get("search_volume_by_country", {}),
+            monthly_searches=enhanced.get("monthly_searches", []),
             difficulty=difficulty,
             competition=competition,
             related_keywords=basic.related_keywords,
             long_tail_keywords=basic.long_tail_keywords,
             cpc=cpc,
+            cpc_currency=enhanced.get("cpc_currency"),
+            cps=enhanced.get("cps"),
+            clicks=enhanced.get("clicks"),
             trend_score=trend_score,
+            traffic_potential=enhanced.get("traffic_potential"),
+            parent_topic=enhanced.get("parent_topic"),
+            serp_features=enhanced.get("serp_features", []),
+            serp_feature_counts=enhanced.get("serp_feature_counts", {}),
+            primary_intent=enhanced.get("primary_intent"),
+            intent_probabilities=enhanced.get("intent_probabilities", {}),
+            also_rank_for=enhanced.get("also_rank_for", []),
+            also_talk_about=enhanced.get("also_talk_about", []),
+            top_competitors=enhanced.get("top_competitors", []),
+            first_seen=enhanced.get("first_seen"),
+            last_updated=enhanced.get("last_updated"),
             recommended=recommended,
             reason=reason,
         )
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = 0) -> int:
+        try:
+            if value is None:
+                return default
+            return int(float(value))
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _parse_keyword_overview_response(self, response: Any) -> tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
+        overview_map: Dict[str, Dict[str, Any]] = {}
+        overview_items: List[Dict[str, Any]] = []
+        
+        if not response:
+            return overview_map, overview_items
+        
+        # If already processed mapping, return as-is
+        if isinstance(response, dict) and "tasks" not in response:
+            for key, value in response.items():
+                if key == "items":
+                    continue
+                if isinstance(value, dict):
+                    overview_map[key] = value
+            overview_items = response.get("items", list(overview_map.values()))
+            return overview_map, overview_items
+        
+        tasks = []
+        if isinstance(response, dict):
+            tasks = response.get("tasks", [])
+        elif isinstance(response, list):
+            tasks = [{"result": response}]
+        
+        for task in tasks:
+            for item in task.get("result", []):
+                normalized = self._normalize_overview_entry(item)
+                if not normalized:
+                    continue
+                keyword, payload = normalized
+                overview_map[keyword] = payload
+                overview_items.append(payload)
+        
+        return overview_map, overview_items
+
+    def _normalize_overview_entry(self, item: Dict[str, Any]) -> Optional[tuple[str, Dict[str, Any]]]:
+        keyword_data = item.get("keyword_data", {})
+        keyword_info = keyword_data.get("keyword_info", {})
+        keyword = (
+            item.get("keyword")
+            or keyword_data.get("keyword")
+            or keyword_info.get("keyword")
+        )
+        if not keyword:
+            return None
+        
+        keyword_properties = keyword_data.get("keyword_properties", {})
+        serp_info = keyword_data.get("serp_info", {})
+        impressions_info = keyword_data.get("impressions_info", item.get("impressions_info", {}))
+        clickstream_info = keyword_data.get("clickstream_keyword_info", item.get("clickstream_keyword_info", {}))
+        
+        serp_features = self._normalize_serp_features(
+            serp_info.get("serp_features")
+            or serp_info.get("primary_serp_features")
+            or serp_info.get("serp_features_history")
+        )
+        serp_feature_counts = serp_info.get("serp_features_summary", {})
+        
+        search_volume_by_country = {}
+        for country_entry in keyword_info.get("search_volume_by_country", []):
+            if isinstance(country_entry, dict):
+                country = (
+                    country_entry.get("country_iso_code")
+                    or country_entry.get("location_code")
+                    or country_entry.get("location_name")
+                )
+                if country:
+                    search_volume_by_country[str(country)] = country_entry.get("search_volume", 0)
+        
+        intent_info = keyword_properties.get("search_intent_info", {})
+        intent_probabilities = intent_info.get("probabilities", {})
+        if isinstance(intent_probabilities, dict):
+            intent_probabilities = {
+                str(k).lower(): self._safe_float(v)
+                for k, v in intent_probabilities.items()
+            }
+        else:
+            intent_probabilities = {}
+        
+        primary_intent = (
+            intent_info.get("main_intent")
+            or keyword_properties.get("search_intent")
+            or item.get("primary_intent")
+        )
+        
+        # Extract clicks - check multiple possible locations in response
+        clicks = (
+            impressions_info.get("clicks") 
+            or clickstream_info.get("clicks")
+            or impressions_info.get("estimated_clicks")
+            or keyword_info.get("clicks")
+        )
+        
+        # Extract traffic potential - check multiple possible locations
+        traffic_potential = (
+            clickstream_info.get("traffic_potential")
+            or impressions_info.get("value")
+            or impressions_info.get("traffic_potential")
+            or clickstream_info.get("estimated_traffic")
+        )
+        
+        # Extract CPS (cost per sale) - check multiple locations
+        cps = (
+            impressions_info.get("cps")
+            or clickstream_info.get("cps")
+            or impressions_info.get("cost_per_sale")
+        )
+        
+        entry = {
+            "keyword": keyword,
+            "search_volume": keyword_info.get("search_volume", 0),
+            "global_search_volume": keyword_info.get("global_search_volume")
+            or keyword_info.get("avg_search_volume_global"),
+            "search_volume_by_country": search_volume_by_country,
+            "monthly_searches": keyword_info.get("monthly_searches", []),
+            "cpc": keyword_info.get("cpc", 0.0),
+            "cpc_currency": keyword_info.get("currency"),
+            "competition": keyword_info.get("competition", 0.0),
+            "trend_score": keyword_info.get("trend", 0.0),
+            "keyword_difficulty": keyword_properties.get("keyword_difficulty", keyword_info.get("keyword_difficulty")),
+            "cps": cps,
+            "clicks": clicks,
+            "traffic_potential": traffic_potential,
+            "parent_topic": keyword_info.get("parent_topic") or keyword_data.get("parent_topic"),
+            "serp_features": serp_features,
+            "serp_feature_counts": serp_feature_counts,
+            "also_rank_for": self._extract_keyword_strings(
+                item.get("also_ranked_keywords")
+                or keyword_data.get("also_ranked_keywords")
+                or serp_info.get("also_ranked_keywords")
+            ),
+            "also_talk_about": self._extract_keyword_strings(
+                item.get("also_talked_topics")
+                or keyword_data.get("also_talked_topics")
+                or serp_info.get("also_talked_topics")
+            ),
+            "top_competitors": self._extract_keyword_strings(
+                serp_info.get("top_domains")
+                or serp_info.get("top_ranking_domains")
+            ),
+            "first_seen": keyword_info.get("first_seen") or keyword_data.get("first_seen"),
+            "last_updated": keyword_info.get("last_updated_time") or keyword_info.get("last_updated"),
+            "primary_intent": primary_intent,
+            "intent_probabilities": intent_probabilities,
+        }
+        return keyword, entry
+
+    def _parse_search_intent_response(self, response: Any) -> Dict[str, Dict[str, Any]]:
+        mapping: Dict[str, Dict[str, Any]] = {}
+        if not response:
+            return mapping
+        
+        if isinstance(response, dict) and "tasks" not in response:
+            # Already processed format
+            for key, value in response.items():
+                if isinstance(value, dict) and "intent_probabilities" in value:
+                    mapping[key] = value
+            return mapping
+        
+        if isinstance(response, dict):
+            tasks = response.get("tasks", [])
+        else:
+            tasks = []
+        
+        for task in tasks:
+            for item in task.get("result", []):
+                keyword_data = item.get("keyword_data", {})
+                keyword = keyword_data.get("keyword") or item.get("keyword")
+                if not keyword:
+                    continue
+                intent_info = keyword_data.get("search_intent", {})
+                probabilities = {}
+                for intent_type, probability in intent_info.items():
+                    try:
+                        probabilities[str(intent_type).lower()] = float(probability)
+                    except (ValueError, TypeError):
+                        continue
+                primary_intent = None
+                if probabilities:
+                    primary_intent = max(probabilities.items(), key=lambda x: x[1])[0]
+                mapping[keyword] = {
+                    "primary_intent": primary_intent,
+                    "intent_probabilities": probabilities
+                }
+        return mapping
+
+    def _normalize_serp_features(self, raw_features: Any) -> List[str]:
+        if not raw_features:
+            return []
+        features: List[str] = []
+        if isinstance(raw_features, list):
+            for feature in raw_features:
+                if isinstance(feature, dict):
+                    features.append(feature.get("feature") or feature.get("type") or feature.get("name"))
+                else:
+                    features.append(str(feature))
+        elif isinstance(raw_features, dict):
+            features.extend(raw_features.keys())
+        else:
+            features.append(str(raw_features))
+        return [f for f in features if f]
+
+    def _extract_keyword_strings(self, value: Any) -> List[str]:
+        if not value:
+            return []
+        strings: List[str] = []
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    strings.append(item)
+                elif isinstance(item, dict):
+                    kw = item.get("keyword") or item.get("title") or item.get("domain")
+                    if kw:
+                        strings.append(kw)
+        elif isinstance(value, dict):
+            for kw in value.values():
+                if isinstance(kw, str):
+                    strings.append(kw)
+        elif isinstance(value, str):
+            strings.append(value)
+        return strings
     
     def _calculate_enhanced_difficulty(
         self,

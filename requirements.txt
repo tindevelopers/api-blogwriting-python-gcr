@@ -50,3 +50,9 @@ botocore>=1.34.0
 google-api-python-client>=2.100.0
 google-auth>=2.23.0
 google-auth-httplib2>=0.1.1
+
+# Cloud Tasks for async job processing
+google-cloud-tasks>=2.16.0
+
+# Date parsing for interlinking analyzer
+python-dateutil>=2.8.0

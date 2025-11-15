@@ -61,6 +61,10 @@ dependencies = [
     "google-cloud-secret-manager>=2.16.0",
     "cryptography>=41.0.0",
     "supabase>=2.0.0",
+    # Cloud Tasks for async job processing
+    "google-cloud-tasks>=2.16.0",
+    # Date parsing for interlinking analyzer
+    "python-dateutil>=2.8.0",
 ]
 
 [project.optional-dependencies]

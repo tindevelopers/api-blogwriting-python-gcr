@@ -1,4 +1,70 @@
-## 1.3.0 (2025-11-13)
+## 1.3.2 (2025-11-15)
+
+### Added
+- **Interlinking Algorithm**: Complete implementation of intelligent interlinking analysis
+  - **InterlinkingAnalyzer Class**: New analyzer for matching keywords to existing content
+    - Multiple matching strategies (exact, partial, title, word overlap)
+    - Relevance scoring with recency boost, title boost, keyword count boost
+    - Anchor text generation from titles and keywords
+    - Quality filtering (minimum 0.4 relevance, top 10 per keyword)
+  - **New Endpoint**: `POST /api/v1/integrations/connect-and-recommend-v2`
+    - Returns full interlink opportunities with URLs, titles, anchor text, relevance scores
+    - Requires structure with existing_content array
+  - **Enhanced Legacy Endpoint**: `POST /api/v1/integrations/connect-and-recommend`
+    - Automatically uses interlinking analyzer when structure is provided
+    - Falls back to heuristic method if no structure
+    - Maintains backward compatibility
+  - **Structure Validation**: Validates existing content structure and required fields
+  - **Models**: New models for interlinking (InterlinkOpportunity, KeywordInterlinkAnalysis, etc.)
+
+### Changed
+- Enhanced integration management endpoint to support interlinking analysis
+- Updated integration models to include legacy models for backward compatibility
+- Added structure validation function
+
+### Dependencies
+- Added `python-dateutil>=2.8.0` for date parsing in relevance scoring
+
+### Documentation
+- **FRONTEND_INTERLINKING_GUIDE_V1.3.2.md**: Complete interlinking integration guide
+- **FRONTEND_INTERLINKING_SUMMARY_V1.3.2.md**: Quick interlinking summary
+- **FRONTEND_DELIVERY_PACKAGE_V1.3.2.md**: Complete frontend delivery package
+- **FRONTEND_FILES_CHECKLIST_V1.3.2.md**: File checklist for frontend team
+- **FRONTEND_UPDATE_V1.3.2.md**: Updated with interlinking feature
+- **FRONTEND_QUICK_REFERENCE_V1.3.2.md**: Updated quick reference
+- **INTERLINKING_IMPLEMENTATION_SUMMARY.md**: Backend implementation details
+- Updated all frontend documentation to version 1.3.2
+
+### Notes
+- Interlinking feature requires structure with existing_content array
+- Minimum relevance score threshold: 0.4
+- Maximum 10 opportunities per keyword
+- Backward compatible with existing integration endpoints
+
+---
+
+## 1.3.1 (2025-11-15)
+
+### Added
+- **Blog Generation Quality Improvements**:
+  - Title validation and fallback logic (no more "**" placeholders)
+  - Content structure validation (minimum 3 H2 sections)
+  - Automatic internal link generation (3-5 links)
+  - Content length enforcement (2000+ words for "long")
+  - Enhanced image generation validation
+
+### Changed
+- Enhanced prompts with critical length requirements
+- Increased max_tokens multiplier for longer content generation
+- Improved image provider initialization with better validation
+
+### Documentation
+- **FRONTEND_UPDATE_V1.3.1.md**: Blog generation improvements summary
+- **FRONTEND_QUICK_REFERENCE_V1.3.1.md**: Quick reference guide
+
+---
+
+## 1.3.0 (2025-11-13, Updated 2025-11-14)
 
 ### Added
 - **New DataForSEO Endpoints (Priority 1 & 2)**:
@@ -51,12 +117,32 @@
 - Enhanced `_make_request()` method to support AI-optimized format (default: enabled)
 - Enhanced SERP analysis now extracts full SERP features (PAA, Featured Snippets, Videos, Images)
 - All new endpoints include comprehensive error handling and caching support
+- **Keyword Analysis Improvements** (2025-11-14):
+  - Fixed CPC priority: Now uses organic CPC from overview endpoint instead of Google Ads CPC
+  - Enhanced data extraction: Improved extraction of clicks, traffic_potential, cps from multiple response locations
+  - Prioritized overview data: All metrics now prioritize DataForSEO overview data over Google Ads data
+  - Added diagnostic logging for overview data availability
+  - Impact: CPC now shows accurate organic values (~$2.00) instead of Google Ads values (~$10.05)
+  - Impact: Global search volume, clicks, traffic potential now properly populated
+- **Enhanced Keyword Metrics** (2025-11-14):
+  - Expanded KeywordAnalysis model with granular fields (parent_topic, category_type, cluster_score)
+  - Added AI optimization metrics (ai_search_volume, ai_trend, ai_monthly_searches)
+  - Improved keyword clustering and parent topic extraction
+  - Impact: Much more granular keyword data matching Ahrefs-level detail
+
+### Fixed
+- Fixed enum conversion issues in intent analyzer (prevents `.value` attribute errors)
+- Fixed ContentLength enum usage (VERY_LONG → EXTENDED)
+- Fixed Cloud Build secrets configuration (combined into single --update-secrets flag)
+- Fixed DataForSEO client initialization and result inclusion in responses
 
 ### Documentation
+- **FRONTEND_DEPLOYMENT_GUIDE.md**: Complete TypeScript/React frontend integration guide (2025-11-14)
 - **FRONTEND_API_IMPROVEMENTS_SUMMARY.md**: Complete frontend integration guide
 - **PRIORITY_1_2_IMPLEMENTATION_SUMMARY.md**: DataForSEO endpoints implementation details
 - **AI_ENDPOINTS_IMPLEMENTATION_SUMMARY.md**: AI endpoints implementation details
 - **DATAFORSEO_AI_ENDPOINTS_ANALYSIS.md**: Analysis of available AI endpoints
+- **KEYWORD_GRANULARITY_FIX_SUMMARY.md**: Keyword analysis improvements documentation
 - Updated **CLOUD_RUN_DEPLOYMENT.md** with version 1.3.0 changes
 
 ### Performance
@@ -64,10 +150,16 @@
 - Expected content quality improvements: 30-40% better relevance, 25-35% better accuracy
 - Expected ranking improvements: 15-25% from trend alignment, 20-30% better featured snippet capture
 
+### Infrastructure
+- Added Cloud Tasks service for future async job processing (not yet integrated)
+- Added google-cloud-tasks dependency (>=2.16.0)
+- Enhanced autoscaling documentation and configuration guides
+
 ### Notes
 - All Priority 1 & 2 DataForSEO endpoints now implemented
 - All Priority 1, 2 & 3 AI endpoints now implemented
-- Ready for frontend integration - see FRONTEND_API_IMPROVEMENTS_SUMMARY.md
+- Keyword analysis now provides Ahrefs-level granularity
+- Ready for frontend integration - see FRONTEND_DEPLOYMENT_GUIDE.md
 - DataForSEO credentials required for full functionality
 - AI endpoints require DataForSEO API access
 

@@ -1,0 +1,23 @@
+{
+  "topic": "The Best Way of Grooming a Poodle",
+  "keywords": [
+    "poodle grooming",
+    "how to groom a poodle",
+    "poodle haircut",
+    "poodle grooming tips",
+    "professional poodle grooming"
+  ],
+  "tone": "professional",
+  "length": "long",
+  "use_google_search": true,
+  "use_fact_checking": true,
+  "use_citations": true,
+  "use_serp_optimization": true,
+  "use_consensus_generation": false,
+  "use_knowledge_graph": true,
+  "use_semantic_keywords": true,
+  "use_quality_scoring": true,
+  "target_audience": "Poodle owners and pet care enthusiasts",
+  "custom_instructions": "Focus on step-by-step instructions, include safety tips, and mention different poodle sizes (toy, miniature, standard). Include information about grooming tools and frequency recommendations."
+}
+

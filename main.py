@@ -12,17 +12,17 @@ import asyncio
 import uuid
 import math
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
 
 # Track startup time for uptime calculation
 startup_time = time.time()
 
 # Deployment trigger - updated timestamp
-deployment_version = "2025-11-12-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.2.1")
+deployment_version = "2025-11-15-001"
+APP_VERSION = os.getenv("APP_VERSION", "1.3.2")
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -62,6 +62,7 @@ from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOCl
 
 # Global DataForSEO client for Phase 3 semantic integration
 dataforseo_client_global = None
+
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
@@ -84,6 +85,16 @@ from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
     EnhancedBlogGenerationResponse
 )
+from src.blog_writer_sdk.models.job_models import (
+    BlogGenerationJob,
+    JobStatus,
+    JobStatusResponse,
+    CreateJobResponse
+)
+from src.blog_writer_sdk.services.cloud_tasks_service import get_cloud_tasks_service
+
+# In-memory job storage (can be upgraded to Supabase/database later)
+blog_generation_jobs: Dict[str, BlogGenerationJob] = {}
 from src.blog_writer_sdk.ai.multi_stage_pipeline import MultiStageGenerationPipeline
 from src.blog_writer_sdk.ai.enhanced_prompts import PromptTemplate
 from src.blog_writer_sdk.integrations.google_custom_search import GoogleCustomSearchClient
@@ -350,8 +361,17 @@ async def lifespan(app: FastAPI):
         )
     
     # Initialize DataForSEO client for semantic integration (Phase 3)
-    # Note: DataForSEO client will be initialized synchronously when needed
-    dataforseo_client_global = None  # Will be initialized on first use if credentials available
+    if dataforseo_api_key and dataforseo_api_secret:
+        dataforseo_client_global = DataForSEOClient(
+            api_key=dataforseo_api_key,
+            api_secret=dataforseo_api_secret,
+            location=os.getenv("DATAFORSEO_LOCATION", "United States"),
+            language_code=os.getenv("DATAFORSEO_LANGUAGE", "en"),
+        )
+        print("✅ DataForSEO Labs client initialized.")
+    else:
+        dataforseo_client_global = None
+        print("⚠️ DataForSEO Labs not configured (DATAFORSEO_API_KEY and DATAFORSEO_API_SECRET)")
     
     print("✅ EnhancedKeywordAnalyzer initialized.")
     
@@ -864,10 +884,11 @@ async def generate_blog(
 
 
 # Enhanced blog generation endpoint (Phase 1 & 2)
-@app.post("/api/v1/blog/generate-enhanced", response_model=EnhancedBlogGenerationResponse)
+@app.post("/api/v1/blog/generate-enhanced", response_model=Union[EnhancedBlogGenerationResponse, CreateJobResponse])
 async def generate_blog_enhanced(
     request: EnhancedBlogGenerationRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    async_mode: bool = Query(default=False, description="If true, creates async job via Cloud Tasks")
 ):
     """
     Generate high-quality blog content using multi-stage pipeline (Phase 1, 2 & 3).
@@ -880,13 +901,21 @@ async def generate_blog_enhanced(
     - Citation integration
     - Phase 3: Multi-model consensus, Knowledge Graph, semantic keywords, quality scoring
     
-    Returns significantly higher-quality content optimized for ranking.
+    Query Parameters:
+    - async_mode: If true, creates an async job via Cloud Tasks and returns job_id immediately
+    
+    Returns:
+    - If async_mode=false: EnhancedBlogGenerationResponse (synchronous)
+    - If async_mode=true: CreateJobResponse with job_id (asynchronous)
+    
+    Use GET /api/v1/blog/jobs/{job_id} to check status and retrieve results.
     """
     try:
         # Get global clients
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
+        global blog_generation_jobs
         
         # Check if AI generator is available
         if ai_generator is None:
@@ -894,6 +923,69 @@ async def generate_blog_enhanced(
                 status_code=503,
                 detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
             )
+        
+        # Handle async mode - create Cloud Tasks job
+        if async_mode:
+            job_id = str(uuid.uuid4())
+            
+            # Create job record
+            job = BlogGenerationJob(
+                job_id=job_id,
+                status=JobStatus.PENDING,
+                request=request.dict()
+            )
+            blog_generation_jobs[job_id] = job
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL (Cloud Run service URL)
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    # Fallback: construct from environment
+                    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+                    region = os.getenv("GCP_LOCATION", "europe-west1")
+                    service_name = os.getenv("CLOUD_RUN_SERVICE_NAME", "blog-writer-api-dev")
+                    worker_url = f"https://{service_name}-{project_id}.{region}.run.app/api/v1/blog/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_blog_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url
+                )
+                
+                # Update job with task name
+                job.task_name = task_name
+                job.status = JobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
+                
+                # Estimate completion time (4 minutes average)
+                estimated_time = 240  # 4 minutes in seconds
+                
+                return CreateJobResponse(
+                    job_id=job_id,
+                    status=JobStatus.QUEUED,
+                    message="Blog generation job queued successfully",
+                    estimated_completion_time=estimated_time
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to create Cloud Task: {e}", exc_info=True)
+                # Update job status
+                job.status = JobStatus.FAILED
+                job.error_message = f"Failed to queue job: {str(e)}"
+                job.completed_at = datetime.utcnow()
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create async job: {str(e)}"
+                )
         
         # Create progress callback for streaming updates
         progress_updates = []
@@ -977,6 +1069,8 @@ async def generate_blog_enhanced(
         
         # Generate images if this is a product-related topic
         generated_images = []
+        image_generation_warnings = []
+        
         if request.use_google_search:  # Only if Google Search is enabled (indicates research was done)
             try:
                 from src.blog_writer_sdk.api.image_generation import image_provider_manager
@@ -986,7 +1080,14 @@ async def generate_blog_enhanced(
                 product_indicators = ["best", "top", "review", "compare", "guide"]
                 is_product_topic = any(indicator in request.topic.lower() for indicator in product_indicators)
                 
-                if is_product_topic and image_provider_manager and image_provider_manager.providers:
+                # Check if image providers are available
+                if not image_provider_manager:
+                    image_generation_warnings.append("Image provider manager not initialized")
+                    logger.warning("Image provider manager not available")
+                elif not image_provider_manager.providers:
+                    image_generation_warnings.append("No image providers configured. STABILITY_AI_API_KEY may be missing.")
+                    logger.warning("No image providers available. Check STABILITY_AI_API_KEY configuration.")
+                elif is_product_topic:
                     logger.info("Generating images for product blog post")
                     
                     # Generate featured image
@@ -1006,8 +1107,14 @@ async def generate_blog_enhanced(
                                 "alt_text": f"Featured image for {request.topic}"
                             })
                             logger.info("Featured image generated successfully")
+                        else:
+                            error_msg = featured_image_response.error_message if hasattr(featured_image_response, 'error_message') else "Unknown error"
+                            image_generation_warnings.append(f"Featured image generation failed: {error_msg}")
+                            logger.warning(f"Featured image generation failed: {error_msg}")
                     except Exception as e:
-                        logger.warning(f"Featured image generation failed: {e}")
+                        error_msg = f"Featured image generation exception: {str(e)}"
+                        image_generation_warnings.append(error_msg)
+                        logger.error(error_msg, exc_info=True)
                     
                     # Generate section images (if brand recommendations exist)
                     if additional_context.get("brand_recommendations"):
@@ -1029,10 +1136,21 @@ async def generate_blog_enhanced(
                                         "image_url": brand_image_response.images[0].get("image_url") or brand_image_response.images[0].get("image_data"),
                                         "alt_text": f"{brand} product image"
                                     })
+                                else:
+                                    error_msg = brand_image_response.error_message if hasattr(brand_image_response, 'error_message') else "Unknown error"
+                                    logger.warning(f"Brand image generation failed for {brand}: {error_msg}")
                             except Exception as e:
-                                logger.warning(f"Brand image generation failed for {brand}: {e}")
+                                logger.warning(f"Brand image generation failed for {brand}: {e}", exc_info=True)
+                else:
+                    logger.debug(f"Topic '{request.topic}' does not match product indicators, skipping image generation")
+            except ImportError as e:
+                error_msg = f"Image generation module not available: {str(e)}"
+                image_generation_warnings.append(error_msg)
+                logger.error(error_msg, exc_info=True)
             except Exception as e:
-                logger.warning(f"Image generation integration failed: {e}")
+                error_msg = f"Image generation integration failed: {str(e)}"
+                image_generation_warnings.append(error_msg)
+                logger.error(error_msg, exc_info=True)
         
         # Auto-insert generated images into content
         if generated_images and len(generated_images) > 0:
@@ -1204,7 +1322,7 @@ async def generate_blog_enhanced(
             generated_images=generated_images if generated_images else None,
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=[],
+            warnings=image_generation_warnings if image_generation_warnings else [],
             progress_updates=progress_updates  # Include progress updates for frontend
         )
         
@@ -1214,6 +1332,409 @@ async def generate_blog_enhanced(
             status_code=500,
             detail=f"Enhanced blog generation failed: {str(e)}"
         )
+
+
+# Worker endpoint for Cloud Tasks
+@app.post("/api/v1/blog/worker")
+async def blog_generation_worker(request: Dict[str, Any]):
+    """
+    Internal worker endpoint called by Cloud Tasks to process blog generation jobs.
+    
+    This endpoint:
+    1. Receives job_id and request data from Cloud Tasks
+    2. Updates job status to PROCESSING
+    3. Executes the blog generation pipeline
+    4. Updates job with result or error
+    5. Marks job as COMPLETED or FAILED
+    
+    This endpoint should not be called directly by clients.
+    """
+    try:
+        global blog_generation_jobs
+        global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
+        global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
+        global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
+        
+        # Extract job_id and request data
+        job_id = request.get("job_id")
+        if not job_id:
+            logger.error("Worker called without job_id")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "job_id is required"}
+            )
+        
+        # Get job from storage
+        if job_id not in blog_generation_jobs:
+            logger.error(f"Job {job_id} not found")
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Job {job_id} not found"}
+            )
+        
+        job = blog_generation_jobs[job_id]
+        
+        # Update job status
+        job.status = JobStatus.PROCESSING
+        job.started_at = datetime.utcnow()
+        job.current_stage = "initialization"
+        
+        # Parse request
+        request_data = request.get("request", {})
+        blog_request = EnhancedBlogGenerationRequest(**request_data)
+        
+        try:
+            # Create progress callback that updates job
+            progress_updates = []
+            async def progress_callback(update):
+                """Update job progress."""
+                progress_updates.append(update.dict())
+                job.progress_updates = progress_updates
+                
+                # Update current stage and progress
+                if "stage" in update:
+                    job.current_stage = update.get("stage", "processing")
+                if "progress_percentage" in update:
+                    job.progress_percentage = update.get("progress_percentage", 0.0)
+            
+            # Initialize pipeline (same as synchronous endpoint)
+            pipeline = MultiStageGenerationPipeline(
+                ai_generator=ai_generator,
+                google_search=google_custom_search_client if blog_request.use_google_search else None,
+                readability_analyzer=readability_analyzer,
+                knowledge_graph=google_knowledge_graph_client if blog_request.use_knowledge_graph else None,
+                semantic_integrator=semantic_integrator if blog_request.use_semantic_keywords else None,
+                quality_scorer=quality_scorer if blog_request.use_quality_scoring else None,
+                intent_analyzer=intent_analyzer,
+                few_shot_extractor=few_shot_extractor if blog_request.use_google_search else None,
+                length_optimizer=length_optimizer if blog_request.use_google_search else None,
+                use_consensus=blog_request.use_consensus_generation,
+                dataforseo_client=dataforseo_client_global,
+                progress_callback=progress_callback
+            )
+            
+            # Determine template type
+            template = None
+            if blog_request.template_type:
+                try:
+                    template = PromptTemplate(blog_request.template_type)
+                except ValueError:
+                    template = PromptTemplate.EXPERT_AUTHORITY
+            
+            # Prepare additional context
+            additional_context = {}
+            if blog_request.target_audience:
+                additional_context["target_audience"] = blog_request.target_audience
+            if blog_request.custom_instructions:
+                additional_context["custom_instructions"] = blog_request.custom_instructions
+            
+            # Add product research requirements if enabled
+            if blog_request.include_product_research:
+                additional_context["product_research_requirements"] = {
+                    "include_brands": blog_request.include_brands,
+                    "include_models": blog_request.include_models,
+                    "include_prices": blog_request.include_prices,
+                    "include_features": blog_request.include_features,
+                    "include_reviews": blog_request.include_reviews,
+                    "include_pros_cons": blog_request.include_pros_cons,
+                    "include_product_table": blog_request.include_product_table,
+                    "include_comparison_section": blog_request.include_comparison_section,
+                    "include_buying_guide": blog_request.include_buying_guide,
+                    "include_faq_section": blog_request.include_faq_section,
+                    "research_depth": blog_request.research_depth
+                }
+            
+            # SERP optimization if enabled
+            serp_features = []
+            if blog_request.use_serp_optimization and blog_request.keywords:
+                try:
+                    serp_analysis = await serp_analyzer.analyze_serp_features(
+                        blog_request.keywords[0]
+                    )
+                    serp_features = [f.type for f in serp_analysis.features]
+                    additional_context["serp_features"] = serp_features
+                except Exception as e:
+                    logger.warning(f"SERP analysis failed: {e}")
+            
+            # Generate using multi-stage pipeline
+            pipeline_result = await pipeline.generate(
+                topic=blog_request.topic,
+                keywords=blog_request.keywords,
+                tone=blog_request.tone,
+                length=blog_request.length,
+                template=template,
+                additional_context=additional_context
+            )
+            
+            # Generate images if needed (same logic as synchronous endpoint)
+            generated_images = []
+            image_generation_warnings = []
+            
+            if blog_request.use_google_search:
+                try:
+                    from src.blog_writer_sdk.api.image_generation import image_provider_manager
+                    from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
+                    
+                    product_indicators = ["best", "top", "review", "compare", "guide"]
+                    is_product_topic = any(indicator in blog_request.topic.lower() for indicator in product_indicators)
+                    
+                    if image_provider_manager and image_provider_manager.providers and is_product_topic:
+                        # Generate featured image
+                        try:
+                            featured_image_request = ImageGenerationRequest(
+                                prompt=f"Professional product photography: {blog_request.topic}. High quality, clean background, professional lighting",
+                                style=ImageStyle.PHOTOGRAPHIC,
+                                aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
+                                quality=ImageQuality.HIGH
+                            )
+                            featured_image_response = await image_provider_manager.generate_image(featured_image_request)
+                            if featured_image_response.success and featured_image_response.images:
+                                generated_images.append({
+                                    "type": "featured",
+                                    "prompt": featured_image_request.prompt,
+                                    "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
+                                    "alt_text": f"Featured image for {blog_request.topic}"
+                                })
+                        except Exception as e:
+                            image_generation_warnings.append(f"Featured image generation failed: {str(e)}")
+                except Exception as e:
+                    image_generation_warnings.append(f"Image generation failed: {str(e)}")
+            
+            # Auto-insert generated images into content
+            if generated_images and len(generated_images) > 0:
+                try:
+                    from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
+                    final_content = insert_images_into_markdown(
+                        pipeline_result.final_content,
+                        generated_images
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to insert images: {e}")
+                    final_content = pipeline_result.final_content
+            else:
+                final_content = pipeline_result.final_content
+            
+            # Add citations if enabled
+            citations = []
+            if blog_request.use_citations and google_custom_search_client:
+                try:
+                    citation_result = await citation_generator.generate_citations(
+                        final_content,
+                        blog_request.topic,
+                        blog_request.keywords
+                    )
+                    citations = [
+                        {
+                            "text": c.text[:100],
+                            "url": c.source_url,
+                            "title": c.source_title
+                        }
+                        for c in citation_result.citations
+                    ]
+                    final_content = citation_generator.integrate_citations(
+                        final_content,
+                        citation_result.citations
+                    )
+                    if citation_result.sources_used:
+                        final_content += citation_generator.generate_references_section(
+                            citation_result.sources_used
+                        )
+                except Exception as e:
+                    logger.warning(f"Citation generation failed: {e}")
+            
+            # Calculate SEO score
+            seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
+            
+            # Extract quality scores
+            quality_dimensions = {}
+            if pipeline_result.quality_score is not None:
+                quality_report = pipeline_result.seo_metadata.get("quality_report", {})
+                quality_dimensions = quality_report.get("dimension_scores", {})
+            
+            # Extract semantic keywords
+            semantic_keywords = pipeline_result.seo_metadata.get("semantic_keywords", [])
+            
+            # Extract brand recommendations
+            brand_recommendations = None
+            if additional_context.get("brand_recommendations"):
+                brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
+            
+            # Extract content metadata
+            content_metadata = extract_content_metadata(final_content)
+            
+            # Enhance SEO metadata
+            enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
+            
+            # Get featured image URL
+            featured_image_url = None
+            if generated_images and len(generated_images) > 0:
+                featured_image_url = generated_images[0].get("image_url") or generated_images[0].get("image_data")
+            elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
+                featured_image_url = pipeline_result.structured_data.get("image")
+            
+            # Generate canonical URL
+            canonical_url = os.getenv("CANONICAL_BASE_URL", "https://your-domain.com")
+            if pipeline_result.structured_data and pipeline_result.structured_data.get("mainEntityOfPage"):
+                canonical_url = pipeline_result.structured_data.get("mainEntityOfPage", {}).get("@id", canonical_url)
+            
+            # Add OG tags
+            enhanced_seo_metadata["og_tags"] = {
+                "title": pipeline_result.meta_title or blog_request.topic,
+                "description": pipeline_result.meta_description or "",
+                "image": featured_image_url,
+                "url": canonical_url,
+                "type": "article",
+                "site_name": os.getenv("SITE_NAME", "Blog Writer")
+            }
+            
+            # Add Twitter tags
+            enhanced_seo_metadata["twitter_tags"] = {
+                "card": "summary_large_image" if featured_image_url else "summary",
+                "title": pipeline_result.meta_title or blog_request.topic,
+                "description": pipeline_result.meta_description or "",
+                "image": featured_image_url
+            }
+            
+            # Enhance structured_data
+            enhanced_structured_data = pipeline_result.structured_data
+            if enhanced_structured_data:
+                if "@context" not in enhanced_structured_data:
+                    enhanced_structured_data["@context"] = "https://schema.org"
+                if "@type" not in enhanced_structured_data:
+                    enhanced_structured_data["@type"] = "BlogPosting"
+                enhanced_structured_data["headline"] = enhanced_structured_data.get("headline") or pipeline_result.meta_title or blog_request.topic
+                enhanced_structured_data["description"] = enhanced_structured_data.get("description") or pipeline_result.meta_description or ""
+                if "datePublished" not in enhanced_structured_data:
+                    enhanced_structured_data["datePublished"] = datetime.now().isoformat()
+                if "dateModified" not in enhanced_structured_data:
+                    enhanced_structured_data["dateModified"] = datetime.now().isoformat()
+                if "wordCount" not in enhanced_structured_data:
+                    enhanced_structured_data["wordCount"] = content_metadata.get("word_count", 0)
+                if "mainEntityOfPage" not in enhanced_structured_data:
+                    enhanced_structured_data["mainEntityOfPage"] = {
+                        "@type": "WebPage",
+                        "@id": canonical_url
+                    }
+            
+            # Prepare stage results
+            stage_results_data = [
+                {
+                    "stage": s.stage,
+                    "provider": s.provider_used,
+                    "tokens": s.tokens_used,
+                    "cost": s.cost
+                }
+                for s in pipeline_result.stage_results
+            ]
+            
+            # Create response
+            response = EnhancedBlogGenerationResponse(
+                title=pipeline_result.meta_title or blog_request.topic,
+                content=final_content,
+                meta_title=pipeline_result.meta_title,
+                meta_description=pipeline_result.meta_description,
+                readability_score=pipeline_result.readability_score,
+                seo_score=seo_score,
+                stage_results=stage_results_data,
+                citations=citations,
+                total_tokens=pipeline_result.total_tokens,
+                total_cost=pipeline_result.total_cost,
+                generation_time=pipeline_result.generation_time,
+                seo_metadata=enhanced_seo_metadata,
+                internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+                quality_score=pipeline_result.quality_score,
+                quality_dimensions=quality_dimensions,
+                structured_data=enhanced_structured_data,
+                semantic_keywords=semantic_keywords,
+                content_metadata=content_metadata,
+                generated_images=generated_images if generated_images else None,
+                brand_recommendations=brand_recommendations,
+                success=True,
+                warnings=image_generation_warnings if image_generation_warnings else [],
+                progress_updates=progress_updates
+            )
+            
+            # Update job with result
+            job.status = JobStatus.COMPLETED
+            job.completed_at = datetime.utcnow()
+            job.progress_percentage = 100.0
+            job.current_stage = "completed"
+            job.result = response.dict()
+            
+            logger.info(f"Blog generation job {job_id} completed successfully")
+            
+            return JSONResponse(
+                status_code=200,
+                content={"status": "success", "job_id": job_id}
+            )
+            
+        except Exception as e:
+            logger.error(f"Blog generation job {job_id} failed: {e}", exc_info=True)
+            
+            # Update job with error
+            job.status = JobStatus.FAILED
+            job.completed_at = datetime.utcnow()
+            job.error_message = str(e)
+            job.error_details = {
+                "type": type(e).__name__,
+                "message": str(e)
+            }
+            
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "job_id": job_id, "error": str(e)}
+            )
+            
+    except Exception as e:
+        logger.error(f"Worker endpoint error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
+
+
+# Job status endpoint
+@app.get("/api/v1/blog/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str):
+    """
+    Get the status of an async blog generation job.
+    
+    Returns:
+    - Job status (pending, queued, processing, completed, failed)
+    - Progress percentage
+    - Current stage
+    - Result (if completed)
+    - Error message (if failed)
+    """
+    global blog_generation_jobs
+    
+    if job_id not in blog_generation_jobs:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Job {job_id} not found"
+        )
+    
+    job = blog_generation_jobs[job_id]
+    
+    # Calculate estimated time remaining
+    estimated_time_remaining = None
+    if job.status == JobStatus.PROCESSING and job.started_at:
+        elapsed = (datetime.utcnow() - job.started_at).total_seconds()
+        # Average generation time is 240 seconds (4 minutes)
+        estimated_time_remaining = max(0, int(240 - elapsed))
+    
+    return JobStatusResponse(
+        job_id=job.job_id,
+        status=job.status,
+        progress_percentage=job.progress_percentage,
+        current_stage=job.current_stage,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        result=job.result,
+        error_message=job.error_message,
+        estimated_time_remaining=estimated_time_remaining
+    )
 
 
 # Content analysis endpoint
@@ -1305,12 +1826,30 @@ async def analyze_keywords(
                     keyword_analysis[kw] = {
                         "difficulty": analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty),
                         "search_volume": search_volume,  # Always numeric
+                        "global_search_volume": analysis.global_search_volume or 0,
+                        "search_volume_by_country": analysis.search_volume_by_country,
+                        "monthly_searches": analysis.monthly_searches,
                         "competition": competition_value,
                         "cpc": cpc_value,  # Always numeric
+                        "cpc_currency": analysis.cpc_currency,
+                        "cps": analysis.cps,
+                        "clicks": analysis.clicks,
                         "recommended": analysis.recommended,
                         "reason": analysis.reason,
                         "related_keywords": analysis.related_keywords[:10],
-                        "long_tail_keywords": analysis.long_tail_keywords[:10]
+                        "long_tail_keywords": analysis.long_tail_keywords[:10],
+                        "trend_score": analysis.trend_score,
+                        "traffic_potential": analysis.traffic_potential,
+                        "parent_topic": analysis.parent_topic,
+                        "serp_features": analysis.serp_features,
+                        "serp_feature_counts": analysis.serp_feature_counts,
+                        "primary_intent": analysis.primary_intent,
+                        "intent_probabilities": analysis.intent_probabilities,
+                        "also_rank_for": analysis.also_rank_for,
+                        "also_talk_about": analysis.also_talk_about,
+                        "top_competitors": analysis.top_competitors,
+                        "first_seen": analysis.first_seen,
+                        "last_updated": analysis.last_updated,
                     }
                 return {"keyword_analysis": keyword_analysis}
             except Exception as e:
@@ -1328,9 +1867,23 @@ async def analyze_keywords(
             results[keyword] = {
                 "difficulty": difficulty_value,
                 "search_volume": analysis_dict.get("search_volume") or 0,
+                "global_search_volume": analysis_dict.get("global_search_volume") or 0,
+                "search_volume_by_country": analysis_dict.get("search_volume_by_country") or {},
+                "monthly_searches": analysis_dict.get("monthly_searches") or [],
                 "competition": analysis_dict.get("competition") or 0.0,
                 "cpc": analysis_dict.get("cpc") or 0.0,
                 "trend_score": analysis_dict.get("trend_score") or 0.0,
+                "traffic_potential": analysis_dict.get("traffic_potential"),
+                "parent_topic": analysis_dict.get("parent_topic"),
+                "serp_features": analysis_dict.get("serp_features") or [],
+                "serp_feature_counts": analysis_dict.get("serp_feature_counts") or {},
+                "primary_intent": analysis_dict.get("primary_intent"),
+                "intent_probabilities": analysis_dict.get("intent_probabilities") or {},
+                "also_rank_for": analysis_dict.get("also_rank_for") or [],
+                "also_talk_about": analysis_dict.get("also_talk_about") or [],
+                "top_competitors": analysis_dict.get("top_competitors") or [],
+                "first_seen": analysis_dict.get("first_seen"),
+                "last_updated": analysis_dict.get("last_updated"),
                 "recommended": analysis_dict.get("recommended", False),
                 "reason": analysis_dict.get("reason"),
                 "related_keywords": analysis_dict.get("related_keywords", []),
@@ -1404,6 +1957,186 @@ async def detect_location_from_ip(request: Request) -> Optional[str]:
         logger.debug(f"IP-based location detection failed: {e}")
     
     return None
+
+
+async def _build_keyword_discovery(
+    seed_keyword: str,
+    location: str,
+    language: str,
+    tenant_id: str,
+    df_client
+) -> Dict[str, Any]:
+    """
+    Build enhanced keyword discovery data (matching/related terms, SERP context).
+    """
+    discovery: Dict[str, Any] = {
+        "matching_terms": [],
+        "questions": [],
+        "related_terms": [],
+    }
+    
+    try:
+        tasks = await asyncio.gather(
+            df_client.get_related_keywords(
+                keyword=seed_keyword,
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                depth=2,
+                limit=150
+            ),
+            df_client.get_keyword_ideas(
+                keywords=[seed_keyword],
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                limit=200
+            ),
+            df_client.get_serp_analysis(
+                keyword=seed_keyword,
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                depth=20
+            ),
+            df_client.get_serp_ai_summary(
+                keyword=seed_keyword,
+                location_name=location,
+                language_code=language,
+                tenant_id=tenant_id,
+                depth=10
+            ),
+            return_exceptions=True
+        )
+    except Exception as e:
+        logger.warning(f"Keyword discovery tasks failed to start: {e}")
+        return discovery
+    
+    related_resp, ideas_resp, serp_analysis_raw, serp_ai_summary = tasks
+    
+    if not isinstance(related_resp, Exception):
+        matching_terms = _extract_keywords_from_related_response(related_resp)
+        discovery["matching_terms"] = matching_terms
+        discovery["questions"] = [
+            term for term in matching_terms if _looks_like_question(term.get("keyword", ""))
+        ][:50]
+    else:
+        logger.warning(f"Related keywords task failed: {related_resp}")
+    
+    if not isinstance(ideas_resp, Exception):
+        discovery["related_terms"] = _extract_keywords_from_ideas_response(ideas_resp)
+    else:
+        logger.warning(f"Keyword ideas task failed: {ideas_resp}")
+    
+    if not isinstance(serp_analysis_raw, Exception):
+        discovery["serp_analysis"] = _summarize_serp_analysis(serp_analysis_raw)
+    else:
+        logger.warning(f"SERP analysis summary failed: {serp_analysis_raw}")
+        discovery["serp_analysis"] = {}
+    
+    if isinstance(serp_ai_summary, Exception):
+        logger.warning(f"SERP AI summary failed: {serp_ai_summary}")
+        serp_ai_summary = {}
+    discovery["serp_ai_summary"] = serp_ai_summary if isinstance(serp_ai_summary, dict) else {}
+    
+    return discovery
+
+
+def _extract_keywords_from_related_response(response: Any, limit: int = 200) -> List[Dict[str, Any]]:
+    keywords: List[Dict[str, Any]] = []
+    if not response:
+        return keywords
+    
+    items = []
+    if isinstance(response, dict) and "tasks" in response:
+        for task in response.get("tasks", []):
+            for result in task.get("result", []):
+                items.extend(result.get("items", []))
+    elif isinstance(response, list):
+        items = response
+    
+    for item in items:
+        normalized = _normalize_keyword_record(item)
+        if normalized:
+            keywords.append(normalized)
+            if len(keywords) >= limit:
+                break
+    return keywords
+
+
+def _extract_keywords_from_ideas_response(response: Any, limit: int = 200) -> List[Dict[str, Any]]:
+    if isinstance(response, list):
+        records = response
+    elif isinstance(response, dict) and "tasks" in response:
+        records = []
+        for task in response.get("tasks", []):
+            for result in task.get("result", []):
+                records.append(result)
+    else:
+        return []
+    
+    keywords: List[Dict[str, Any]] = []
+    for item in records:
+        normalized = _normalize_keyword_record(item)
+        if normalized:
+            keywords.append(normalized)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _normalize_keyword_record(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+    keyword = item.get("keyword") or item.get("text")
+    keyword_data = item.get("keyword_data", {})
+    keyword_info = keyword_data.get("keyword_info", {})
+    
+    if not keyword:
+        keyword = keyword_data.get("keyword")
+    if not keyword:
+        return None
+    
+    search_volume = keyword_info.get("search_volume", item.get("search_volume", 0))
+    keyword_difficulty = keyword_info.get("keyword_difficulty", item.get("keyword_difficulty"))
+    cpc = keyword_info.get("cpc", item.get("cpc", 0.0))
+    competition = keyword_info.get("competition", item.get("competition", 0.0))
+    
+    intent_info = keyword_info.get("search_intent_info", keyword_data.get("search_intent_info", {}))
+    intent = intent_info.get("main_intent") or keyword_info.get("search_intent") or item.get("search_intent")
+    
+    return {
+        "keyword": keyword,
+        "search_volume": search_volume or 0,
+        "keyword_difficulty": keyword_difficulty or 0,
+        "cpc": cpc or 0.0,
+        "competition": competition or 0.0,
+        "parent_topic": keyword_info.get("parent_topic"),
+        "intent": intent,
+    }
+
+
+def _looks_like_question(keyword: str) -> bool:
+    keyword_lower = keyword.lower()
+    question_prefixes = ("how", "what", "when", "where", "why", "who", "can", "does", "is", "are", "should")
+    return "?" in keyword or keyword_lower.startswith(question_prefixes)
+
+
+def _summarize_serp_analysis(raw: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    summary = {
+        "keyword": raw.get("keyword"),
+        "serp_features": raw.get("serp_features_summary") or raw.get("serp_features"),
+        "people_also_ask": raw.get("people_also_ask", [])[:10],
+        "featured_snippet": raw.get("featured_snippet"),
+        "video_results": raw.get("video_results", [])[:5],
+        "image_results": raw.get("image_results", [])[:5],
+        "related_searches": raw.get("related_searches", [])[:10],
+        "top_domains": raw.get("top_domains", [])[:10],
+        "competition_level": raw.get("competition_level"),
+    }
+    return summary
 
 
 # Enhanced keyword analysis endpoint using DataForSEO (if configured)
@@ -1571,9 +2304,15 @@ async def analyze_keywords_enhanced(
             
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
+                "global_search_volume": v.global_search_volume or 0,
+                "search_volume_by_country": v.search_volume_by_country,
+                "monthly_searches": v.monthly_searches,
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
                 "competition": competition_value,
                 "cpc": cpc_value,  # Always numeric
+                "cpc_currency": v.cpc_currency,
+                "cps": v.cps,
+                "clicks": v.clicks,
                 "trend_score": trend_score_value,
                 "recommended": v.recommended,
                 "reason": v.reason,
@@ -1585,7 +2324,17 @@ async def analyze_keywords_enhanced(
                 # AI Optimization metrics (critical for AI-optimized content)
                 "ai_search_volume": ai_search_volume,
                 "ai_trend": ai_trend,
-                "ai_monthly_searches": ai_monthly_searches
+                "ai_monthly_searches": ai_monthly_searches,
+                "traffic_potential": v.traffic_potential,
+                "serp_features": v.serp_features,
+                "serp_feature_counts": v.serp_feature_counts,
+                "primary_intent": v.primary_intent,
+                "intent_probabilities": v.intent_probabilities,
+                "also_rank_for": v.also_rank_for,
+                "also_talk_about": v.also_talk_about,
+                "top_competitors": v.top_competitors,
+                "first_seen": v.first_seen,
+                "last_updated": v.last_updated,
             }
         
         # Ensure clusters are always returned, even if empty
@@ -1613,6 +2362,25 @@ async def analyze_keywords_enhanced(
                     "keyword_count": 1
                 })
         
+        discovery_data = {}
+        serp_analysis_summary = {}
+        serp_ai_summary = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
+            try:
+                tenant_id_env = os.getenv("TENANT_ID", "default")
+                enrichment = await _build_keyword_discovery(
+                    seed_keyword=request.keywords[0],
+                    location=effective_location,
+                    language=request.language or "en",
+                    tenant_id=tenant_id_env,
+                    df_client=enhanced_analyzer._df_client
+                )
+                serp_analysis_summary = enrichment.pop("serp_analysis", {})
+                serp_ai_summary = enrichment.pop("serp_ai_summary", {})
+                discovery_data = enrichment
+            except Exception as e:
+                logger.warning(f"Keyword discovery enrichment failed: {e}")
+        
         return {
             "enhanced_analysis": out,
             "total_keywords": len(all_keywords),
@@ -1628,7 +2396,10 @@ async def analyze_keywords_enhanced(
                 "used": effective_location,
                 "detected_from_ip": detected_location is not None,
                 "specified": request.location is not None and request.location != "United States"
-            }
+            },
+            "discovery": discovery_data,
+            "serp_analysis": serp_analysis_summary,
+            "serp_ai_summary": serp_ai_summary
         }
     except HTTPException:
         raise

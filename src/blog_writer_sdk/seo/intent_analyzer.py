@@ -99,11 +99,21 @@ class IntentAnalyzer:
             primary_intent = max(intent_probabilities.items(), key=lambda x: x[1])[0]
             confidence = intent_probabilities[primary_intent]
         
+        # Ensure primary_intent is always a SearchIntent enum
+        if isinstance(primary_intent, str):
+            try:
+                primary_intent_enum = SearchIntent(primary_intent)
+            except ValueError:
+                logger.warning(f"Unknown intent '{primary_intent}', defaulting to informational")
+                primary_intent_enum = SearchIntent.INFORMATIONAL
+        else:
+            primary_intent_enum = primary_intent
+        
         # Generate recommendations based on intent
-        recommendations = self._get_intent_recommendations(primary_intent)
+        recommendations = self._get_intent_recommendations(primary_intent_enum)
         
         return IntentAnalysis(
-            primary_intent=primary_intent,
+            primary_intent=primary_intent_enum,
             intent_probabilities=intent_probabilities,
             confidence=confidence,
             recommendations=recommendations
