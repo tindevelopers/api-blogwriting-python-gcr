@@ -2,7 +2,7 @@
 
 **Version:** 1.3.1  
 **Date:** 2025-11-15  
-**Purpose:** Async Blog Generation Integration
+**Purpose:** Complete Frontend Integration Guide (Blog Generation + Interlinking)
 
 ## 📦 Required Files
 
@@ -59,6 +59,13 @@ Copy these files to your frontend project:
   - Guaranteed features
   - Code examples
   - **Use this for quick lookup**
+
+- ✅ **`FRONTEND_INTERLINKING_GUIDE.md`** ⭐ **NEW - Interlinking Feature**
+  - Complete guide for interlinking opportunities
+  - API endpoints (v1 and v2)
+  - TypeScript interfaces
+  - React hooks and components examples
+  - **Required for interlinking feature**
 
 - ✅ **`frontend-examples/README.md`**
   - Quick start guide for async blog generation
@@ -169,9 +176,16 @@ REACT_APP_API_URL=https://your-api.run.app
    - Guaranteed features table
    - Code snippets
 
+5. **`FRONTEND_INTERLINKING_GUIDE.md`** ⭐ **INTERLINKING FEATURE**
+   - Complete guide for interlinking opportunities
+   - API endpoints and TypeScript interfaces
+   - React hooks and component examples
+   - Migration guide from legacy endpoint
+
 ### Additional Resources:
-3. **`frontend-examples/README.md`** - Quick start and examples
-4. **`CLOUD_TASKS_IMPLEMENTATION_SUMMARY.md`** - Backend implementation details (for reference)
+6. **`frontend-examples/README.md`** - Quick start and examples
+7. **`CLOUD_TASKS_IMPLEMENTATION_SUMMARY.md`** - Backend implementation details (for reference)
+8. **`INTERLINKING_IMPLEMENTATION_SUMMARY.md`** - Backend interlinking implementation details
 
 ## ✅ Testing Checklist
 
