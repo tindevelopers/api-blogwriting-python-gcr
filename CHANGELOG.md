@@ -1,4 +1,4 @@
-## 1.3.0 (2025-11-13)
+## 1.3.0 (2025-11-13, Updated 2025-11-14)
 
 ### Added
 - **New DataForSEO Endpoints (Priority 1 & 2)**:
@@ -51,12 +51,32 @@
 - Enhanced `_make_request()` method to support AI-optimized format (default: enabled)
 - Enhanced SERP analysis now extracts full SERP features (PAA, Featured Snippets, Videos, Images)
 - All new endpoints include comprehensive error handling and caching support
+- **Keyword Analysis Improvements** (2025-11-14):
+  - Fixed CPC priority: Now uses organic CPC from overview endpoint instead of Google Ads CPC
+  - Enhanced data extraction: Improved extraction of clicks, traffic_potential, cps from multiple response locations
+  - Prioritized overview data: All metrics now prioritize DataForSEO overview data over Google Ads data
+  - Added diagnostic logging for overview data availability
+  - Impact: CPC now shows accurate organic values (~$2.00) instead of Google Ads values (~$10.05)
+  - Impact: Global search volume, clicks, traffic potential now properly populated
+- **Enhanced Keyword Metrics** (2025-11-14):
+  - Expanded KeywordAnalysis model with granular fields (parent_topic, category_type, cluster_score)
+  - Added AI optimization metrics (ai_search_volume, ai_trend, ai_monthly_searches)
+  - Improved keyword clustering and parent topic extraction
+  - Impact: Much more granular keyword data matching Ahrefs-level detail
+
+### Fixed
+- Fixed enum conversion issues in intent analyzer (prevents `.value` attribute errors)
+- Fixed ContentLength enum usage (VERY_LONG → EXTENDED)
+- Fixed Cloud Build secrets configuration (combined into single --update-secrets flag)
+- Fixed DataForSEO client initialization and result inclusion in responses
 
 ### Documentation
+- **FRONTEND_DEPLOYMENT_GUIDE.md**: Complete TypeScript/React frontend integration guide (2025-11-14)
 - **FRONTEND_API_IMPROVEMENTS_SUMMARY.md**: Complete frontend integration guide
 - **PRIORITY_1_2_IMPLEMENTATION_SUMMARY.md**: DataForSEO endpoints implementation details
 - **AI_ENDPOINTS_IMPLEMENTATION_SUMMARY.md**: AI endpoints implementation details
 - **DATAFORSEO_AI_ENDPOINTS_ANALYSIS.md**: Analysis of available AI endpoints
+- **KEYWORD_GRANULARITY_FIX_SUMMARY.md**: Keyword analysis improvements documentation
 - Updated **CLOUD_RUN_DEPLOYMENT.md** with version 1.3.0 changes
 
 ### Performance
@@ -64,10 +84,16 @@
 - Expected content quality improvements: 30-40% better relevance, 25-35% better accuracy
 - Expected ranking improvements: 15-25% from trend alignment, 20-30% better featured snippet capture
 
+### Infrastructure
+- Added Cloud Tasks service for future async job processing (not yet integrated)
+- Added google-cloud-tasks dependency (>=2.16.0)
+- Enhanced autoscaling documentation and configuration guides
+
 ### Notes
 - All Priority 1 & 2 DataForSEO endpoints now implemented
 - All Priority 1, 2 & 3 AI endpoints now implemented
-- Ready for frontend integration - see FRONTEND_API_IMPROVEMENTS_SUMMARY.md
+- Keyword analysis now provides Ahrefs-level granularity
+- Ready for frontend integration - see FRONTEND_DEPLOYMENT_GUIDE.md
 - DataForSEO credentials required for full functionality
 - AI endpoints require DataForSEO API access
 
