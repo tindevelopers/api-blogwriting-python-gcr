@@ -14,6 +14,7 @@ import math
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
+import jwt
 
 # Track startup time for uptime calculation
 startup_time = time.time()
@@ -77,6 +78,7 @@ except Exception:
 
 from google.cloud import secretmanager
 from supabase import create_client, Client
+from src.blog_writer_sdk.integrations.supabase_client import SupabaseClient
 from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
@@ -151,6 +153,7 @@ class KeywordAnalysisRequest(BaseModel):
     keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
+    search_type: Optional[str] = Field("keyword_analysis", description="Keyword search type (e.g., keyword_analysis, competitor)")
     text: Optional[str] = Field(None, description="Optional text content (ignored if keywords provided)")
     max_suggestions_per_keyword: Optional[int] = Field(None, description="Optional: if provided, routes to enhanced analysis")
     
@@ -162,6 +165,7 @@ class EnhancedKeywordAnalysisRequest(BaseModel):
     keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200 for comprehensive research)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
+    search_type: Optional[str] = Field("enhanced_keyword_analysis", description="Keyword search type (e.g., keyword_analysis, competitor, enhanced_keyword_analysis)")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
     max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
 
@@ -324,11 +328,21 @@ async def lifespan(app: FastAPI):
     
     # Initialize Supabase client
     supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_KEY")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
     if supabase_url and supabase_key:
-        global supabase_client
+        global supabase_client, supabase_server_client
         supabase_client = create_client(supabase_url, supabase_key)
         print("✅ Supabase client initialized.")
+        try:
+            supabase_server_client = SupabaseClient(
+                supabase_url=supabase_url,
+                supabase_key=supabase_key,
+                environment=os.getenv("ENVIRONMENT", "dev"),
+            )
+            print("✅ Supabase server client initialized.")
+        except Exception as supabase_exc:
+            supabase_server_client = None
+            print(f"⚠️ Supabase server client not initialized: {supabase_exc}")
     else:
         print("⚠️ Supabase credentials not found. Supabase client not initialized.")
 
@@ -668,12 +682,60 @@ blog_writer = BlogWriter(
 # Phase 1-3 global services (initialized in lifespan)
 quota_manager = None
 keyword_difficulty_analyzer = None
+supabase_client: Optional[Client] = None
+supabase_server_client: Optional[SupabaseClient] = None
 
 
 # Dependency to get blog writer instance
 def get_blog_writer() -> BlogWriter:
     """Get blog writer instance."""
     return blog_writer
+
+
+def extract_supabase_user_id(http_request: Request) -> Optional[str]:
+    """Extract Supabase user ID from Authorization header or cookies."""
+    token: Optional[str] = None
+    auth_header = http_request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+    if not token:
+        token = http_request.cookies.get("sb-access-token") or http_request.cookies.get("supabase-auth-token")
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, options={"verify_signature": False})
+        return payload.get("sub") or payload.get("user_id") or payload.get("uid")
+    except Exception:
+        return None
+
+
+async def persist_keyword_search_event(
+    *,
+    keywords: List[str],
+    search_type: str,
+    location: Optional[str],
+    language: Optional[str],
+    provider: str,
+    result_payload: Dict[str, Any],
+    user_id: Optional[str],
+    request_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Persist keyword search metadata to Supabase (best effort)."""
+    if not supabase_server_client:
+        return
+    try:
+        await supabase_server_client.log_keyword_search(
+            keywords=keywords,
+            search_type=search_type,
+            location=location,
+            language=language,
+            provider=provider,
+            result=result_payload,
+            user_id=user_id,
+            request_metadata=request_metadata or {},
+        )
+    except Exception as exc:
+        logger.debug(f"Failed to persist keyword search: {exc}")
 
 
 # Health check endpoint - optimized for Cloud Run
@@ -1758,7 +1820,8 @@ async def analyze_content(
 # Keyword analysis endpoint
 @app.post("/api/v1/keywords/analyze")
 async def analyze_keywords(
-    request: KeywordAnalysisRequest,
+    keyword_request: KeywordAnalysisRequest,
+    http_request: Request,
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
@@ -1776,32 +1839,54 @@ async def analyze_keywords(
     - Recommendations
     """
     try:
-        if not request.keywords:
+        if not keyword_request.keywords:
             raise HTTPException(
                 status_code=400,
                 detail="No keywords provided. Please provide at least one keyword in the 'keywords' array."
             )
         
         # If max_suggestions_per_keyword is provided (even if 0), use enhanced analysis for better results
-        if request.max_suggestions_per_keyword is not None:
+        if keyword_request.max_suggestions_per_keyword is not None:
             # Convert to EnhancedKeywordAnalysisRequest format
             enhanced_request = EnhancedKeywordAnalysisRequest(
-                keywords=request.keywords,
-                location=request.location,
-                language=request.language,
+                keywords=keyword_request.keywords,
+                location=keyword_request.location,
+                language=keyword_request.language,
+                search_type=keyword_request.search_type or "keyword_analysis",
                 include_serp=False,
-                max_suggestions_per_keyword=max(5, min(request.max_suggestions_per_keyword, 150)) if request.max_suggestions_per_keyword > 0 else 20
+                max_suggestions_per_keyword=max(5, min(keyword_request.max_suggestions_per_keyword, 150)) if keyword_request.max_suggestions_per_keyword > 0 else 20
             )
             # Route to enhanced endpoint for better results
-            return await analyze_keywords_enhanced(enhanced_request)
+            enhanced_response = await analyze_keywords_enhanced(enhanced_request, http_request)
+            
+            # Persist search to Supabase
+            user_id = extract_supabase_user_id(http_request)
+            request_meta = {
+                "client_ip": http_request.client.host if http_request.client else None,
+                "user_agent": http_request.headers.get("user-agent"),
+                "referer": http_request.headers.get("referer"),
+            }
+            await persist_keyword_search_event(
+                keywords=keyword_request.keywords,
+                search_type=keyword_request.search_type or "keyword_analysis",
+                location=keyword_request.location,
+                language=keyword_request.language,
+                provider="enhanced",
+                result_payload=enhanced_response,
+                user_id=user_id,
+                request_metadata=request_meta,
+            )
+            return enhanced_response
         
         # Standard analysis - but prefer enhanced if available
+        analysis_mode = "standard"
         if enhanced_analyzer:
             try:
                 results = await enhanced_analyzer.analyze_keywords_comprehensive(
-                    keywords=request.keywords,
+                    keywords=keyword_request.keywords,
                     tenant_id=os.getenv("TENANT_ID", "default")
                 )
+                analysis_mode = "enhanced"
                 # Convert to expected format
                 keyword_analysis = {}
                 for kw, analysis in results.items():
@@ -1838,13 +1923,30 @@ async def analyze_keywords(
                         "first_seen": analysis.first_seen,
                         "last_updated": analysis.last_updated,
                     }
-                return {"keyword_analysis": keyword_analysis}
+                response_payload = {"keyword_analysis": keyword_analysis}
+                user_id = extract_supabase_user_id(http_request)
+                request_meta = {
+                    "client_ip": http_request.client.host if http_request.client else None,
+                    "user_agent": http_request.headers.get("user-agent"),
+                    "referer": http_request.headers.get("referer"),
+                }
+                await persist_keyword_search_event(
+                    keywords=keyword_request.keywords,
+                    search_type=keyword_request.search_type or "keyword_analysis",
+                    location=keyword_request.location,
+                    language=keyword_request.language,
+                    provider=analysis_mode,
+                    result_payload=response_payload,
+                    user_id=user_id,
+                    request_metadata=request_meta,
+                )
+                return response_payload
             except Exception as e:
                 logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
         
         # Fallback to standard analysis
         results: Dict[str, Dict[str, Any]] = {}
-        for keyword in request.keywords:
+        for keyword in keyword_request.keywords:
             analysis = await writer.keyword_analyzer.analyze_keyword(keyword)
             
             # Normalize analysis to plain dict with numeric defaults
@@ -1877,7 +1979,24 @@ async def analyze_keywords(
                 "long_tail_keywords": analysis_dict.get("long_tail_keywords", []),
             }
         
-        return {"keyword_analysis": results}
+        response_payload = {"keyword_analysis": results}
+        user_id = extract_supabase_user_id(http_request)
+        request_meta = {
+            "client_ip": http_request.client.host if http_request.client else None,
+            "user_agent": http_request.headers.get("user-agent"),
+            "referer": http_request.headers.get("referer"),
+        }
+        await persist_keyword_search_event(
+            keywords=keyword_request.keywords,
+            search_type=keyword_request.search_type or "keyword_analysis",
+            location=keyword_request.location,
+            language=keyword_request.language,
+            provider=analysis_mode,
+            result_payload=response_payload,
+            user_id=user_id,
+            request_metadata=request_meta,
+        )
+        return response_payload
         
     except HTTPException:
         raise
@@ -2368,7 +2487,7 @@ async def analyze_keywords_enhanced(
             except Exception as e:
                 logger.warning(f"Keyword discovery enrichment failed: {e}")
         
-        return {
+        response_payload = {
             "enhanced_analysis": out,
             "total_keywords": len(all_keywords),
             "original_keywords": request.keywords,
@@ -2388,6 +2507,30 @@ async def analyze_keywords_enhanced(
             "serp_analysis": serp_analysis_summary,
             "serp_ai_summary": serp_ai_summary
         }
+        
+        # Persist search to Supabase (best effort, non-blocking)
+        if http_request:
+            try:
+                user_id = extract_supabase_user_id(http_request)
+                request_meta = {
+                    "client_ip": http_request.client.host if http_request.client else None,
+                    "user_agent": http_request.headers.get("user-agent"),
+                    "referer": http_request.headers.get("referer"),
+                }
+                await persist_keyword_search_event(
+                    keywords=request.keywords,
+                    search_type=request.search_type or "enhanced_keyword_analysis",
+                    location=effective_location,
+                    language=request.language or "en",
+                    provider="enhanced",
+                    result_payload=response_payload,
+                    user_id=user_id,
+                    request_metadata=request_meta,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to persist enhanced keyword search: {e}")
+        
+        return response_payload
     except HTTPException:
         raise
     except Exception as e:

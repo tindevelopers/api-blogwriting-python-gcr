@@ -310,6 +310,40 @@ class SupabaseClient:
         except Exception as e:
             self.logger.error(f"Error logging analytics: {str(e)}")
             raise
+
+    async def log_keyword_search(
+        self,
+        *,
+        keywords: List[str],
+        search_type: Optional[str],
+        location: Optional[str],
+        language: Optional[str],
+        provider: str,
+        result: Dict[str, Any],
+        user_id: Optional[str] = None,
+        request_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Log keyword search activity.
+        """
+        try:
+            table_name = self._get_table_name("keyword_searches")
+            record = {
+                "keywords": keywords,
+                "search_type": search_type,
+                "location": location,
+                "language": language,
+                "provider": provider,
+                "result": result,
+                "user_id": user_id,
+                "request_metadata": request_metadata or {},
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            response = self.client.table(table_name).insert(record).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            self.logger.error(f"Error logging keyword search: {str(e)}")
+            return None
     
     async def get_analytics_summary(
         self,
@@ -473,6 +507,20 @@ CREATE TABLE IF NOT EXISTS generation_analytics_{env} (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Keyword searches table for {env} environment
+CREATE TABLE IF NOT EXISTS keyword_searches_{env} (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    keywords TEXT[] NOT NULL,
+    search_type TEXT,
+    location TEXT,
+    language TEXT,
+    provider TEXT,
+    result JSONB,
+    user_id UUID,
+    request_metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for performance ({env} environment)
 CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_user_id ON blog_posts_{env}(user_id);
 CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_status ON blog_posts_{env}(status);
@@ -480,6 +528,8 @@ CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_created_at ON blog_posts_{env}(c
 CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_slug ON blog_posts_{env}(slug);
 CREATE INDEX IF NOT EXISTS idx_generation_analytics_{env}_user_id ON generation_analytics_{env}(user_id);
 CREATE INDEX IF NOT EXISTS idx_generation_analytics_{env}_created_at ON generation_analytics_{env}(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_keyword_searches_{env}_user_id ON keyword_searches_{env}(user_id);
+CREATE INDEX IF NOT EXISTS idx_keyword_searches_{env}_created_at ON keyword_searches_{env}(created_at DESC);
 
 -- Full-text search indexes ({env} environment)
 CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_title_search ON blog_posts_{env} USING gin(to_tsvector('english', title));
@@ -488,6 +538,7 @@ CREATE INDEX IF NOT EXISTS idx_blog_posts_{env}_content_search ON blog_posts_{en
 -- Row Level Security (RLS) policies ({env} environment)
 ALTER TABLE blog_posts_{env} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE generation_analytics_{env} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE keyword_searches_{env} ENABLE ROW LEVEL SECURITY;
 
 -- Policies for blog_posts_{env} (users can only access their own posts)
 CREATE POLICY "Users can view their own blog posts {env}" ON blog_posts_{env}
@@ -507,6 +558,13 @@ CREATE POLICY "Users can view their own analytics {env}" ON generation_analytics
     FOR SELECT USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert their own analytics {env}" ON generation_analytics_{env}
+    FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Policies for keyword_searches_{env}
+CREATE POLICY "Users can view their own keyword searches {env}" ON keyword_searches_{env}
+    FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own keyword searches {env}" ON keyword_searches_{env}
     FOR INSERT WITH CHECK (auth.uid() = user_id);
 """)
         
