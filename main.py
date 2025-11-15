@@ -19,8 +19,8 @@ from contextlib import asynccontextmanager
 startup_time = time.time()
 
 # Deployment trigger - updated timestamp
-deployment_version = "2025-11-12-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.2.1")
+deployment_version = "2025-11-14-001"
+APP_VERSION = os.getenv("APP_VERSION", "1.3.0")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
