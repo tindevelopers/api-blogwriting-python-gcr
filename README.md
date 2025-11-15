@@ -13,7 +13,7 @@ See the full [CHANGELOG](CHANGELOG.md) for details.
 ## 🚀 Features
 
 ### Core Capabilities
-- **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic, Azure OpenAI) with intelligent fallback
+- **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic) with intelligent fallback
 - **🚀 Direct AI Provider Integration**: Direct integration with OpenAI, Anthropic, and other AI providers
 - **📊 SEO-First Architecture**: Built-in SEO optimization and analysis
 - **🔍 Enhanced Keyword Analysis**: Optional DataForSEO integration for real search volume, competition, and trends data
@@ -210,7 +210,6 @@ The SDK supports multiple AI providers with intelligent fallback for robust cont
 #### Supported AI Providers
 - **OpenAI**: GPT-4o, GPT-4o-mini, GPT-4 Turbo, GPT-3.5 Turbo
 - **Anthropic**: Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus
-- **Azure OpenAI**: All OpenAI models via Azure endpoints
 
 #### AI Features
 - **Smart Content Generation**: Context-aware blog posts, titles, meta descriptions

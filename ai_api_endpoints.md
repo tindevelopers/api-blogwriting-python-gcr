@@ -20,14 +20,7 @@ Your Blog Writer SDK is designed to make API calls to multiple AI providers for 
 - **Authentication**: API Key via `x-api-key` header
 - **Usage**: `await client.messages.create()`
 
-### **3. Azure OpenAI API**
-- **Base URL**: `https://{your-resource}.openai.azure.com/openai/deployments/{deployment}/chat/completions`
-- **Endpoint**: `/chat/completions`
-- **Models**: Same as OpenAI but through Azure
-- **Authentication**: API Key via `api-key` header
-- **Usage**: `await client.chat.completions.create()`
-
-### **4. DeepSeek API**
+### **3. DeepSeek API**
 - **Base URL**: `https://api.deepseek.com`
 - **Endpoint**: `/v1/chat/completions`
 - **Models**: DeepSeek Chat
@@ -71,10 +64,6 @@ OPENAI_ORGANIZATION=org-... (optional)
 
 # Anthropic
 ANTHROPIC_API_KEY=sk-ant-...
-
-# Azure OpenAI
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 
 # DeepSeek
 DEEPSEEK_API_KEY=sk-...

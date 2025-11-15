@@ -173,7 +173,7 @@ All documented endpoints are implemented:
 
 ### Dependencies Check
 - **Total Dependencies**: 25+ core dependencies
-- **AI Providers**: OpenAI, Anthropic, Azure OpenAI
+- **AI Providers**: OpenAI, Anthropic
 - **Cloud Services**: Google Cloud (Secret Manager, Cloud Tasks, Logging)
 - **Database**: Supabase integration
 - **Caching**: Redis support

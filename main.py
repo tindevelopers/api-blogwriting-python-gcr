@@ -484,7 +484,7 @@ app = FastAPI(
     
     ### 🤖 AI Provider Management
     - **Dynamic Provider Configuration**: Add, update, and remove AI providers without service restarts
-    - **Multi-Provider Support**: OpenAI, Anthropic, Azure OpenAI with automatic fallback
+    - **Multi-Provider Support**: OpenAI and Anthropic with automatic fallback
     - **Real-time Health Monitoring**: Live status checks and usage statistics
     - **Secure API Key Management**: Encrypted storage and validation
     - **Provider Switching**: Dynamic switching between providers based on performance
@@ -623,19 +623,6 @@ def create_ai_content_generator() -> Optional[AIContentGenerator]:
             'default_model': os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
             'enabled': True,
             'priority': 1
-        }
-    
-    # Check for Azure OpenAI configuration
-    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    if azure_api_key and azure_endpoint:
-        ai_config['providers']['azure_openai'] = {
-            'api_key': azure_api_key,
-            'azure_endpoint': azure_endpoint,
-            'api_version': os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-            'default_model': os.getenv("AZURE_OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            'enabled': True,
-            'priority': 2
         }
     
     # Check for Anthropic configuration

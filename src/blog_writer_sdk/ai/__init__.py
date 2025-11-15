@@ -20,7 +20,7 @@ from .base_provider import (
     AIProviderConfig
 )
 
-from .openai_provider import OpenAIProvider, AzureOpenAIProvider
+from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
 from .ai_content_generator import AIContentGenerator, ContentTemplate
 from .blog_writer_abstraction import (
@@ -68,7 +68,6 @@ __all__ = [
     
     # Provider implementations
     'OpenAIProvider',
-    'AzureOpenAIProvider',
     'AnthropicProvider',
     
     # Main AI generator

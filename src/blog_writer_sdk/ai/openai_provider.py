@@ -260,35 +260,3 @@ class OpenAIProvider(BaseAIProvider):
         
         return "Context: " + " | ".join(context_parts) if context_parts else ""
 
-
-class AzureOpenAIProvider(OpenAIProvider):
-    """Azure OpenAI provider implementation."""
-    
-    def __init__(self, api_key: str, azure_endpoint: str, api_version: str = "2024-02-15-preview", **kwargs):
-        """Initialize Azure OpenAI provider."""
-        super().__init__(api_key, **kwargs)
-        self.azure_endpoint = azure_endpoint
-        self.api_version = api_version
-    
-    @property
-    def provider_type(self) -> AIProviderType:
-        """Return the provider type."""
-        return AIProviderType.AZURE_OPENAI
-    
-    async def initialize(self) -> None:
-        """Initialize the Azure OpenAI client."""
-        self._client = AsyncOpenAI(
-            api_key=self.api_key,
-            azure_endpoint=self.azure_endpoint,
-            api_version=self.api_version,
-            max_retries=self.max_retries,
-            timeout=self.timeout
-        )
-    
-    def get_rate_limits(self) -> Dict[str, Any]:
-        """Get Azure OpenAI rate limits."""
-        return {
-            "requests_per_minute": 240,   # Default for standard deployment
-            "tokens_per_minute": 40000,   # Default for standard deployment
-            "requests_per_day": None,     # No daily limit by default
-        }
