@@ -1,7 +1,7 @@
 # Frontend Deployment Guide
 
-**Version**: 1.3.0  
-**Last Updated**: 2025-11-14  
+**Version**: 1.3.2  
+**Last Updated**: 2025-11-15  
 **API Base URL**: `https://blog-writer-api-dev-kq42l26tuq-ew.a.run.app`
 
 ---
