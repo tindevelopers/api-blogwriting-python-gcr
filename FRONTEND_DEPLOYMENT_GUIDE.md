@@ -782,7 +782,30 @@ function renderImages(images: ImageMetadata[]) {
 
 ---
 
-## Support & Resources
+## Changelog
+
+### Version 1.3.1 (2025-11-15)
+
+**Quality Improvements:**
+- ✅ **Fixed Title Generation**: Titles are now always valid strings (no more "**" placeholders)
+- ✅ **Enforced H2 Structure**: Minimum 3 H2 sections guaranteed, automatic structure validation
+- ✅ **Content Length Enforcement**: "Long" content now produces 2000+ words (was ~500)
+- ✅ **Automatic Internal Linking**: 3-5 internal links automatically generated and inserted
+- ✅ **Image Generation Ready**: STABILITY_AI_API_KEY configured, images automatically inserted
+
+**Technical Changes:**
+- Added title validation and fallback logic
+- Added content structure validation (`_validate_and_fix_content_structure`)
+- Added automatic internal link generation (`_generate_and_insert_internal_links`)
+- Enhanced prompts with critical length requirements
+- Improved image provider initialization with better validation
+
+**No Breaking Changes:**
+- API response structure unchanged
+- All existing frontend code continues to work
+- Improvements are automatic and transparent
+
+### Version 1.3.0 (2025-11-14) & Resources
 
 - **API Documentation**: `/docs` (Swagger UI)
 - **Health Check**: `/health`
