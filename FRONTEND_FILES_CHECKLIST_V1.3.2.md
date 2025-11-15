@@ -101,7 +101,7 @@
 
 ### Must Read First:
 1. `FRONTEND_UPDATE_V1.3.2.md` - Latest improvements
-2. `FRONTEND_INTERLINKING_GUIDE.md` - New interlinking feature
+2. `FRONTEND_INTERLINKING_GUIDE_V1.3.2.md` - New interlinking feature
 3. `FRONTEND_DEPLOYMENT_GUIDE.md` - Complete API reference
 
 ### Reference as Needed:

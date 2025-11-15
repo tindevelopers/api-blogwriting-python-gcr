@@ -6,8 +6,8 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Version**: 1.3.0  
-**Publish date**: 2025-11-13  
+**Version**: 1.3.2  
+**Publish date**: 2025-11-15  
 See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ## 🚀 Features

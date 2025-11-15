@@ -1,4 +1,4 @@
-# Frontend Quick Reference - Version 1.3.1
+# Frontend Quick Reference - Version 1.3.2
 
 **Last Updated:** 2025-11-15  
 **Version:** 1.3.2
@@ -92,7 +92,7 @@ interface BlogResponse {
 
 - **Complete Guide**: `FRONTEND_DEPLOYMENT_GUIDE.md`
 - **Async Guide**: `CLOUD_TASKS_FRONTEND_GUIDE.md`
-- **Update Details**: `FRONTEND_UPDATE_V1.3.1.md`
+- **Update Details**: `FRONTEND_UPDATE_V1.3.2.md`
 - **Examples**: `frontend-examples/` directory
 
 ---
