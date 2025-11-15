@@ -63,8 +63,6 @@ from src.blog_writer_sdk.integrations.dataforseo_integration import DataForSEOCl
 # Global DataForSEO client for Phase 3 semantic integration
 dataforseo_client_global = None
 
-# In-memory job storage (can be upgraded to Supabase/database later)
-blog_generation_jobs: Dict[str, BlogGenerationJob] = {}
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
@@ -94,6 +92,9 @@ from src.blog_writer_sdk.models.job_models import (
     CreateJobResponse
 )
 from src.blog_writer_sdk.services.cloud_tasks_service import get_cloud_tasks_service
+
+# In-memory job storage (can be upgraded to Supabase/database later)
+blog_generation_jobs: Dict[str, BlogGenerationJob] = {}
 from src.blog_writer_sdk.ai.multi_stage_pipeline import MultiStageGenerationPipeline
 from src.blog_writer_sdk.ai.enhanced_prompts import PromptTemplate
 from src.blog_writer_sdk.integrations.google_custom_search import GoogleCustomSearchClient
