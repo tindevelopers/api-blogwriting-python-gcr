@@ -692,52 +692,6 @@ def get_blog_writer() -> BlogWriter:
     return blog_writer
 
 
-def extract_supabase_user_id(http_request: Request) -> Optional[str]:
-    """Extract Supabase user ID from Authorization header or cookies."""
-    token: Optional[str] = None
-    auth_header = http_request.headers.get("Authorization")
-    if auth_header and auth_header.lower().startswith("bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-    if not token:
-        token = http_request.cookies.get("sb-access-token") or http_request.cookies.get("supabase-auth-token")
-    if not token:
-        return None
-    try:
-        payload = jwt.decode(token, options={"verify_signature": False})
-        return payload.get("sub") or payload.get("user_id") or payload.get("uid")
-    except Exception:
-        return None
-
-
-async def persist_keyword_search_event(
-    *,
-    keywords: List[str],
-    search_type: str,
-    location: Optional[str],
-    language: Optional[str],
-    provider: str,
-    result_payload: Dict[str, Any],
-    user_id: Optional[str],
-    request_metadata: Optional[Dict[str, Any]] = None,
-) -> None:
-    """Persist keyword search metadata to Supabase (best effort)."""
-    if not supabase_server_client:
-        return
-    try:
-        await supabase_server_client.log_keyword_search(
-            keywords=keywords,
-            search_type=search_type,
-            location=location,
-            language=language,
-            provider=provider,
-            result=result_payload,
-            user_id=user_id,
-            request_metadata=request_metadata or {},
-        )
-    except Exception as exc:
-        logger.debug(f"Failed to persist keyword search: {exc}")
-
-
 # Health check endpoint - optimized for Cloud Run
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -1858,24 +1812,6 @@ async def analyze_keywords(
             )
             # Route to enhanced endpoint for better results
             enhanced_response = await analyze_keywords_enhanced(enhanced_request, http_request)
-            
-            # Persist search to Supabase
-            user_id = extract_supabase_user_id(http_request)
-            request_meta = {
-                "client_ip": http_request.client.host if http_request.client else None,
-                "user_agent": http_request.headers.get("user-agent"),
-                "referer": http_request.headers.get("referer"),
-            }
-            await persist_keyword_search_event(
-                keywords=keyword_request.keywords,
-                search_type=keyword_request.search_type or "keyword_analysis",
-                location=keyword_request.location,
-                language=keyword_request.language,
-                provider="enhanced",
-                result_payload=enhanced_response,
-                user_id=user_id,
-                request_metadata=request_meta,
-            )
             return enhanced_response
         
         # Standard analysis - but prefer enhanced if available
@@ -1924,22 +1860,6 @@ async def analyze_keywords(
                         "last_updated": analysis.last_updated,
                     }
                 response_payload = {"keyword_analysis": keyword_analysis}
-                user_id = extract_supabase_user_id(http_request)
-                request_meta = {
-                    "client_ip": http_request.client.host if http_request.client else None,
-                    "user_agent": http_request.headers.get("user-agent"),
-                    "referer": http_request.headers.get("referer"),
-                }
-                await persist_keyword_search_event(
-                    keywords=keyword_request.keywords,
-                    search_type=keyword_request.search_type or "keyword_analysis",
-                    location=keyword_request.location,
-                    language=keyword_request.language,
-                    provider=analysis_mode,
-                    result_payload=response_payload,
-                    user_id=user_id,
-                    request_metadata=request_meta,
-                )
                 return response_payload
             except Exception as e:
                 logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
@@ -1980,22 +1900,6 @@ async def analyze_keywords(
             }
         
         response_payload = {"keyword_analysis": results}
-        user_id = extract_supabase_user_id(http_request)
-        request_meta = {
-            "client_ip": http_request.client.host if http_request.client else None,
-            "user_agent": http_request.headers.get("user-agent"),
-            "referer": http_request.headers.get("referer"),
-        }
-        await persist_keyword_search_event(
-            keywords=keyword_request.keywords,
-            search_type=keyword_request.search_type or "keyword_analysis",
-            location=keyword_request.location,
-            language=keyword_request.language,
-            provider=analysis_mode,
-            result_payload=response_payload,
-            user_id=user_id,
-            request_metadata=request_meta,
-        )
         return response_payload
         
     except HTTPException:
@@ -2507,28 +2411,6 @@ async def analyze_keywords_enhanced(
             "serp_analysis": serp_analysis_summary,
             "serp_ai_summary": serp_ai_summary
         }
-        
-        # Persist search to Supabase (best effort, non-blocking)
-        if http_request:
-            try:
-                user_id = extract_supabase_user_id(http_request)
-                request_meta = {
-                    "client_ip": http_request.client.host if http_request.client else None,
-                    "user_agent": http_request.headers.get("user-agent"),
-                    "referer": http_request.headers.get("referer"),
-                }
-                await persist_keyword_search_event(
-                    keywords=request.keywords,
-                    search_type=request.search_type or "enhanced_keyword_analysis",
-                    location=effective_location,
-                    language=request.language or "en",
-                    provider="enhanced",
-                    result_payload=response_payload,
-                    user_id=user_id,
-                    request_metadata=request_meta,
-                )
-            except Exception as e:
-                logger.debug(f"Failed to persist enhanced keyword search: {e}")
         
         return response_payload
     except HTTPException:
