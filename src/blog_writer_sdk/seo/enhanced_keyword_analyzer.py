@@ -349,6 +349,12 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             overview_map, _ = self._parse_keyword_overview_response(overview_raw)
             intent_map = self._parse_search_intent_response(intent_raw)
             
+            # Log overview data availability for debugging
+            if not overview_map:
+                logger.warning(f"Keyword overview returned empty for {len(keywords)} keywords. Check DataForSEO API response.")
+            else:
+                logger.debug(f"Keyword overview populated for {len(overview_map)} keywords")
+            
             combined: Dict[str, Dict[str, Any]] = {}
             for kw in keywords:
                 m = sv_data.get(kw, {})
@@ -356,23 +362,48 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 overview_entry = overview_map.get(kw, {})
                 intent_entry = intent_map.get(kw, {})
                 
-                search_volume = self._safe_int(m.get("search_volume", overview_entry.get("search_volume")))
-                cpc = self._safe_float(m.get("cpc", overview_entry.get("cpc")))
-                competition = self._safe_float(m.get("competition", overview_entry.get("competition", 0.0)))
-                trend_score = self._safe_float(m.get("trend", overview_entry.get("trend_score", 0.0)))
-                difficulty_score = self._safe_float(diff_data.get(kw, overview_entry.get("keyword_difficulty", 50.0)))
+                # Prioritize overview data (more accurate, organic metrics) over Google Ads data
+                # Overview provides organic CPC, global search volume, clicks, traffic potential
+                search_volume = self._safe_int(
+                    overview_entry.get("search_volume") if overview_entry.get("search_volume") 
+                    else m.get("search_volume", 0)
+                )
+                # Prioritize overview CPC (organic) over Google Ads CPC (advertising)
+                cpc = self._safe_float(
+                    overview_entry.get("cpc") if overview_entry.get("cpc") 
+                    else m.get("cpc", 0.0)
+                )
+                competition = self._safe_float(
+                    overview_entry.get("competition") if overview_entry.get("competition") is not None
+                    else m.get("competition", 0.0)
+                )
+                trend_score = self._safe_float(
+                    overview_entry.get("trend_score") if overview_entry.get("trend_score") is not None
+                    else m.get("trend", 0.0)
+                )
+                difficulty_score = self._safe_float(
+                    overview_entry.get("keyword_difficulty") if overview_entry.get("keyword_difficulty") is not None
+                    else diff_data.get(kw, 50.0)
+                )
                 
                 ai_search_volume = self._safe_int(ai_metrics.get("ai_search_volume"))
                 ai_trend = self._safe_float(ai_metrics.get("ai_trend"))
                 ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
                 
+                # Ensure all overview fields are properly extracted (even if 0/null)
+                global_sv = overview_entry.get("global_search_volume")
+                if global_sv is None:
+                    global_sv = 0
+                else:
+                    global_sv = self._safe_int(global_sv)
+                
                 combined[kw] = {
                     "search_volume": search_volume,
-                    "global_search_volume": overview_entry.get("global_search_volume"),
-                    "search_volume_by_country": overview_entry.get("search_volume_by_country", {}),
-                    "monthly_searches": overview_entry.get("monthly_searches", m.get("monthly_searches", [])),
+                    "global_search_volume": global_sv,
+                    "search_volume_by_country": overview_entry.get("search_volume_by_country") or {},
+                    "monthly_searches": overview_entry.get("monthly_searches") or m.get("monthly_searches", []),
                     "cpc": cpc,
-                    "cpc_currency": overview_entry.get("cpc_currency", m.get("currency")),
+                    "cpc_currency": overview_entry.get("cpc_currency") or m.get("currency"),
                     "competition": competition,
                     "trend_score": trend_score,
                     "difficulty_score": difficulty_score,
@@ -383,16 +414,22 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                     "clicks": overview_entry.get("clicks"),
                     "traffic_potential": overview_entry.get("traffic_potential"),
                     "parent_topic": overview_entry.get("parent_topic"),
-                    "serp_features": overview_entry.get("serp_features", []),
-                    "serp_feature_counts": overview_entry.get("serp_feature_counts", {}),
-                    "also_rank_for": overview_entry.get("also_rank_for", []),
-                    "also_talk_about": overview_entry.get("also_talk_about", []),
-                    "top_competitors": overview_entry.get("top_competitors", []),
+                    "serp_features": overview_entry.get("serp_features") or [],
+                    "serp_feature_counts": overview_entry.get("serp_feature_counts") or {},
+                    "also_rank_for": overview_entry.get("also_rank_for") or [],
+                    "also_talk_about": overview_entry.get("also_talk_about") or [],
+                    "top_competitors": overview_entry.get("top_competitors") or [],
                     "first_seen": overview_entry.get("first_seen"),
                     "last_updated": overview_entry.get("last_updated"),
-                    "intent_probabilities": intent_entry.get("intent_probabilities", overview_entry.get("intent_probabilities", {})),
-                    "primary_intent": intent_entry.get("primary_intent", overview_entry.get("primary_intent")),
+                    "intent_probabilities": intent_entry.get("intent_probabilities") or overview_entry.get("intent_probabilities") or {},
+                    "primary_intent": intent_entry.get("primary_intent") or overview_entry.get("primary_intent"),
                 }
+                
+                # Log if overview data is missing for debugging
+                if not overview_entry and (m.get("search_volume") or m.get("cpc")):
+                    logger.debug(f"Keyword '{kw}': Using Google Ads data only (overview unavailable). CPC: {cpc}, SV: {search_volume}")
+                elif overview_entry:
+                    logger.debug(f"Keyword '{kw}': Using overview data. CPC: {cpc}, Global SV: {global_sv}, Clicks: {overview_entry.get('clicks')}")
             return combined
         except Exception as e:
             print(f"Error fetching batch DataForSEO metrics: {e}")
@@ -839,6 +876,29 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             or item.get("primary_intent")
         )
         
+        # Extract clicks - check multiple possible locations in response
+        clicks = (
+            impressions_info.get("clicks") 
+            or clickstream_info.get("clicks")
+            or impressions_info.get("estimated_clicks")
+            or keyword_info.get("clicks")
+        )
+        
+        # Extract traffic potential - check multiple possible locations
+        traffic_potential = (
+            clickstream_info.get("traffic_potential")
+            or impressions_info.get("value")
+            or impressions_info.get("traffic_potential")
+            or clickstream_info.get("estimated_traffic")
+        )
+        
+        # Extract CPS (cost per sale) - check multiple locations
+        cps = (
+            impressions_info.get("cps")
+            or clickstream_info.get("cps")
+            or impressions_info.get("cost_per_sale")
+        )
+        
         entry = {
             "keyword": keyword,
             "search_volume": keyword_info.get("search_volume", 0),
@@ -851,21 +911,26 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             "competition": keyword_info.get("competition", 0.0),
             "trend_score": keyword_info.get("trend", 0.0),
             "keyword_difficulty": keyword_properties.get("keyword_difficulty", keyword_info.get("keyword_difficulty")),
-            "cps": impressions_info.get("cps"),
-            "clicks": impressions_info.get("clicks"),
-            "traffic_potential": clickstream_info.get("traffic_potential") or impressions_info.get("value"),
+            "cps": cps,
+            "clicks": clicks,
+            "traffic_potential": traffic_potential,
             "parent_topic": keyword_info.get("parent_topic") or keyword_data.get("parent_topic"),
             "serp_features": serp_features,
             "serp_feature_counts": serp_feature_counts,
             "also_rank_for": self._extract_keyword_strings(
                 item.get("also_ranked_keywords")
                 or keyword_data.get("also_ranked_keywords")
+                or serp_info.get("also_ranked_keywords")
             ),
             "also_talk_about": self._extract_keyword_strings(
                 item.get("also_talked_topics")
                 or keyword_data.get("also_talked_topics")
+                or serp_info.get("also_talked_topics")
             ),
-            "top_competitors": self._extract_keyword_strings(serp_info.get("top_domains")),
+            "top_competitors": self._extract_keyword_strings(
+                serp_info.get("top_domains")
+                or serp_info.get("top_ranking_domains")
+            ),
             "first_seen": keyword_info.get("first_seen") or keyword_data.get("first_seen"),
             "last_updated": keyword_info.get("last_updated_time") or keyword_info.get("last_updated"),
             "primary_intent": primary_intent,
