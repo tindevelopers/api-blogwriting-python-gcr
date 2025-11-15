@@ -986,6 +986,8 @@ async def generate_blog_enhanced(
         
         # Generate images if this is a product-related topic
         generated_images = []
+        image_generation_warnings = []
+        
         if request.use_google_search:  # Only if Google Search is enabled (indicates research was done)
             try:
                 from src.blog_writer_sdk.api.image_generation import image_provider_manager
@@ -995,7 +997,14 @@ async def generate_blog_enhanced(
                 product_indicators = ["best", "top", "review", "compare", "guide"]
                 is_product_topic = any(indicator in request.topic.lower() for indicator in product_indicators)
                 
-                if is_product_topic and image_provider_manager and image_provider_manager.providers:
+                # Check if image providers are available
+                if not image_provider_manager:
+                    image_generation_warnings.append("Image provider manager not initialized")
+                    logger.warning("Image provider manager not available")
+                elif not image_provider_manager.providers:
+                    image_generation_warnings.append("No image providers configured. STABILITY_AI_API_KEY may be missing.")
+                    logger.warning("No image providers available. Check STABILITY_AI_API_KEY configuration.")
+                elif is_product_topic:
                     logger.info("Generating images for product blog post")
                     
                     # Generate featured image
@@ -1015,8 +1024,14 @@ async def generate_blog_enhanced(
                                 "alt_text": f"Featured image for {request.topic}"
                             })
                             logger.info("Featured image generated successfully")
+                        else:
+                            error_msg = featured_image_response.error_message if hasattr(featured_image_response, 'error_message') else "Unknown error"
+                            image_generation_warnings.append(f"Featured image generation failed: {error_msg}")
+                            logger.warning(f"Featured image generation failed: {error_msg}")
                     except Exception as e:
-                        logger.warning(f"Featured image generation failed: {e}")
+                        error_msg = f"Featured image generation exception: {str(e)}"
+                        image_generation_warnings.append(error_msg)
+                        logger.error(error_msg, exc_info=True)
                     
                     # Generate section images (if brand recommendations exist)
                     if additional_context.get("brand_recommendations"):
@@ -1038,10 +1053,21 @@ async def generate_blog_enhanced(
                                         "image_url": brand_image_response.images[0].get("image_url") or brand_image_response.images[0].get("image_data"),
                                         "alt_text": f"{brand} product image"
                                     })
+                                else:
+                                    error_msg = brand_image_response.error_message if hasattr(brand_image_response, 'error_message') else "Unknown error"
+                                    logger.warning(f"Brand image generation failed for {brand}: {error_msg}")
                             except Exception as e:
-                                logger.warning(f"Brand image generation failed for {brand}: {e}")
+                                logger.warning(f"Brand image generation failed for {brand}: {e}", exc_info=True)
+                else:
+                    logger.debug(f"Topic '{request.topic}' does not match product indicators, skipping image generation")
+            except ImportError as e:
+                error_msg = f"Image generation module not available: {str(e)}"
+                image_generation_warnings.append(error_msg)
+                logger.error(error_msg, exc_info=True)
             except Exception as e:
-                logger.warning(f"Image generation integration failed: {e}")
+                error_msg = f"Image generation integration failed: {str(e)}"
+                image_generation_warnings.append(error_msg)
+                logger.error(error_msg, exc_info=True)
         
         # Auto-insert generated images into content
         if generated_images and len(generated_images) > 0:
@@ -1213,7 +1239,7 @@ async def generate_blog_enhanced(
             generated_images=generated_images if generated_images else None,
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=[],
+            warnings=image_generation_warnings if image_generation_warnings else [],
             progress_updates=progress_updates  # Include progress updates for frontend
         )
         
