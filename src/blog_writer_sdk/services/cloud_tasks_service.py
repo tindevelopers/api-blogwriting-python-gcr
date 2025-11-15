@@ -9,8 +9,16 @@ import os
 import json
 import logging
 from typing import Dict, Any, Optional
-from google.cloud import tasks_v2
-from google.protobuf import duration_pb2
+
+try:
+    from google.cloud import tasks_v2
+    from google.protobuf import duration_pb2
+    CLOUD_TASKS_AVAILABLE = True
+except ImportError:
+    # Cloud Tasks not available - will use in-memory processing
+    CLOUD_TASKS_AVAILABLE = False
+    tasks_v2 = None
+    duration_pb2 = None
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +40,11 @@ class CloudTasksService:
             location: GCP location (defaults to env var or 'europe-west1')
             queue_name: Cloud Tasks queue name (defaults to env var or 'blog-generation-queue')
         """
+        if not CLOUD_TASKS_AVAILABLE:
+            logger.warning("Cloud Tasks library not available. Async processing will use in-memory queue.")
+            self.client = None
+            return
+            
         self.project_id = project_id or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")
         self.location = location or os.getenv("GCP_LOCATION", "europe-west1")
         self.queue_name = queue_name or os.getenv("CLOUD_TASKS_QUEUE_NAME", "blog-generation-queue")
@@ -59,6 +72,10 @@ class CloudTasksService:
         Returns:
             Task name/ID
         """
+        if not CLOUD_TASKS_AVAILABLE or self.client is None:
+            logger.warning("Cloud Tasks not available, returning placeholder task name")
+            return "in-memory-task-placeholder"
+            
         try:
             # Prepare HTTP request
             http_request = tasks_v2.HttpRequest(
@@ -99,6 +116,10 @@ class CloudTasksService:
     
     def create_queue_if_not_exists(self) -> None:
         """Create Cloud Tasks queue if it doesn't exist."""
+        if not CLOUD_TASKS_AVAILABLE or self.client is None:
+            logger.warning("Cloud Tasks not available, skipping queue creation")
+            return
+            
         try:
             queue = tasks_v2.Queue(
                 name=self.queue_path,
