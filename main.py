@@ -254,17 +254,34 @@ class ErrorResponse(BaseModel):
 
 # Application lifespan management
 def load_env_from_secrets():
-    """Load environment variables from mounted secrets file."""
+    """Load environment variables from mounted secrets file.
+    
+    Note: Individual secrets (set via --update-secrets) take precedence over
+    values in the mounted secret file to avoid placeholder values overriding real credentials.
+    """
     secrets_file = "/secrets/env"
     if os.path.exists(secrets_file):
         print("📁 Loading environment variables from mounted secrets...")
+        loaded_count = 0
+        skipped_count = 0
         with open(secrets_file, 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
-                    os.environ[key] = value
-        print("✅ Environment variables loaded from secrets")
+                    # Only set if not already set (individual secrets take precedence)
+                    # Also skip placeholder values
+                    if key not in os.environ:
+                        # Skip placeholder values that look like templates
+                        if not (value.startswith('your_') or value.startswith('YOUR_') or 
+                                'placeholder' in value.lower() or value == ''):
+                            os.environ[key] = value
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    else:
+                        skipped_count += 1
+        print(f"✅ Environment variables loaded from secrets: {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
     else:
         print("⚠️ No secrets file found at /secrets/env, using system environment variables")
 
