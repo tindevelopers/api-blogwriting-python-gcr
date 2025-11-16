@@ -8,6 +8,7 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 
 **Version**: 1.3.2  
 **Publish date**: 2025-11-15  
+**Last deployment test**: 2025-11-16 (develop branch)  
 See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ## 🚀 Features
