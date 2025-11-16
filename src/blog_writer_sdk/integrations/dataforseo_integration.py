@@ -46,8 +46,9 @@ class DataForSEOClient:
         self.base_url = "https://api.dataforseo.com/v3"
         self.credential_service = credential_service
         # Accept credentials directly or from env vars
-        self.api_key = api_key or os.getenv("DATAFORSEO_API_KEY")
-        self.api_secret = api_secret or os.getenv("DATAFORSEO_API_SECRET")
+        # Strip whitespace to avoid authentication issues
+        self.api_key = (api_key or os.getenv("DATAFORSEO_API_KEY") or "").strip()
+        self.api_secret = (api_secret or os.getenv("DATAFORSEO_API_SECRET") or "").strip()
         self.location = location or os.getenv("DATAFORSEO_LOCATION", "United States")
         self.language_code = language_code or os.getenv("DATAFORSEO_LANGUAGE", "en")
         self.is_configured = bool(self.api_key and self.api_secret)
