@@ -37,7 +37,15 @@ from src.blog_writer_sdk.models.blog_models import (
     ContentFormat,
 )
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
+from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
+from src.blog_writer_sdk.config.testing_limits import (
+    is_testing_mode,
+    apply_keyword_limits,
+    apply_suggestions_limit,
+    apply_clustering_limits,
+    get_testing_limits
+)
 from src.blog_writer_sdk.ai import (
     BlogWriterAbstraction,
     BlogWriterFactory,
@@ -807,6 +815,7 @@ async def root():
         "message": "Blog Writer SDK API",
         "version": APP_VERSION,
         "environment": "cloud-run",
+        "testing_mode": is_testing_mode(),
         "docs": "/docs",
         "health": "/health",
         "ready": "/ready",
@@ -1816,27 +1825,38 @@ async def analyze_keywords(
                 detail="No keywords provided. Please provide at least one keyword in the 'keywords' array."
             )
         
+        # Apply testing mode limits
+        limited_keywords = apply_keyword_limits(keyword_request.keywords)
+        if is_testing_mode():
+            logger.info(f"🧪 TESTING MODE: Limited keywords from {len(keyword_request.keywords)} to {len(limited_keywords)}")
+        
         # If max_suggestions_per_keyword is provided (even if 0), use enhanced analysis for better results
         if keyword_request.max_suggestions_per_keyword is not None:
+            # Apply testing mode limits to suggestions
+            max_suggestions = apply_suggestions_limit(
+                max(5, min(keyword_request.max_suggestions_per_keyword, 150)) if keyword_request.max_suggestions_per_keyword > 0 else 20
+            )
             # Convert to EnhancedKeywordAnalysisRequest format
             enhanced_request = EnhancedKeywordAnalysisRequest(
-                keywords=keyword_request.keywords,
+                keywords=limited_keywords,
                 location=keyword_request.location,
                 language=keyword_request.language,
                 search_type=keyword_request.search_type or "keyword_analysis",
                 include_serp=False,
-                max_suggestions_per_keyword=max(5, min(keyword_request.max_suggestions_per_keyword, 150)) if keyword_request.max_suggestions_per_keyword > 0 else 20
+                max_suggestions_per_keyword=max_suggestions
             )
             # Route to enhanced endpoint for better results
             enhanced_response = await analyze_keywords_enhanced(enhanced_request, http_request)
             return enhanced_response
         
         # Standard analysis - but prefer enhanced if available
+        # Apply testing mode limits to keywords
+        limited_keywords = apply_keyword_limits(keyword_request.keywords)
         analysis_mode = "standard"
         if enhanced_analyzer:
             try:
                 results = await enhanced_analyzer.analyze_keywords_comprehensive(
-                    keywords=keyword_request.keywords,
+                    keywords=limited_keywords,
                     tenant_id=os.getenv("TENANT_ID", "default")
                 )
                 analysis_mode = "enhanced"
@@ -2196,23 +2216,33 @@ async def analyze_keywords_enhanced(
         effective_location = detected_location or request.location or "United States"
         from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
         
+        # Apply testing mode limits
+        limited_keywords = apply_keyword_limits(request.keywords)
+        max_suggestions = apply_suggestions_limit(request.max_suggestions_per_keyword)
+        limits = get_testing_limits() if is_testing_mode() else {}
+        max_total = limits.get("max_total_keywords", 200) if is_testing_mode() else 200
+        
+        if is_testing_mode():
+            logger.info(f"🧪 TESTING MODE: Keyword limits - {len(limited_keywords)} primary, {max_suggestions} suggestions/keyword, {max_total} total max")
+        
         if not enhanced_analyzer:
             raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
         results = await enhanced_analyzer.analyze_keywords_comprehensive(
-            keywords=request.keywords,
+            keywords=limited_keywords,
             tenant_id=os.getenv("TENANT_ID", "default")
         )
         
         # Get additional keyword suggestions using DataForSEO if available
-        all_keywords = list(request.keywords)
+        all_keywords = list(limited_keywords)
         if enhanced_analyzer and enhanced_analyzer._df_client:
             try:
                 tenant_id = os.getenv("TENANT_ID", "default")
                 await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
                 
-                # Get suggestions for each seed keyword
-                for seed_keyword in request.keywords[:5]:  # Limit to top 5 seed keywords to avoid too many API calls
-                    if len(all_keywords) >= 200:  # Max limit
+                # Get suggestions for each seed keyword (apply testing limits)
+                max_seed_keywords = limits.get("max_keywords", 5) if is_testing_mode() else 5
+                for seed_keyword in limited_keywords[:max_seed_keywords]:
+                    if len(all_keywords) >= max_total:
                         break
                     
                     try:
@@ -2221,13 +2251,15 @@ async def analyze_keywords_enhanced(
                             location_name=effective_location,
                             language_code=request.language or "en",
                             tenant_id=tenant_id,
-                            limit=min(request.max_suggestions_per_keyword, 150)
+                            limit=max_suggestions
                         )
                         
-                        # Add new keywords that aren't already in the list
+                        # Add new keywords that aren't already in the list (apply testing limits)
                         for suggestion in df_suggestions:
+                            if len(all_keywords) >= max_total:
+                                break
                             kw = suggestion.get("keyword", "").strip()
-                            if kw and kw not in all_keywords and len(all_keywords) < 200:
+                            if kw and kw not in all_keywords:
                                 all_keywords.append(kw)
                     except Exception as e:
                         logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
@@ -2255,10 +2287,13 @@ async def analyze_keywords_enhanced(
         
         clustering = KeywordClustering(knowledge_graph_client=kg_client)
         try:
+            # Apply testing mode clustering limits
+            max_clusters, max_keywords_per_cluster = apply_clustering_limits()
             clustering_result = clustering.cluster_keywords(
                 keywords=all_keywords,
                 min_cluster_size=1,  # Allow single keywords to form clusters
-                max_clusters=None
+                max_clusters=max_clusters,
+                max_keywords_per_cluster=max_keywords_per_cluster
             )
             # Log clustering results for debugging
             logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")

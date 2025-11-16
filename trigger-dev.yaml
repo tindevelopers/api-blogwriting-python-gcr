@@ -1,0 +1,13 @@
+name: deploy-dev-on-develop
+description: Deploy to dev environment on develop branch pushes
+sourceToBuild:
+  repository: projects/api-ai-blog-writer/locations/us-central1/connections/github-connection/repositories/api-blogwriting-python-gcr
+  ref: refs/heads/develop
+github:
+  push:
+    branch: "^develop$"
+filename: cloudbuild.yaml
+substitutions:
+  _REGION: europe-west9
+  _ENV: dev
+  _SERVICE_NAME: blog-writer-api-dev

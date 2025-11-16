@@ -1,0 +1,18 @@
+{
+  "name": "deploy-prod-on-main",
+  "description": "Deploy to production environment on main branch pushes",
+  "filename": "cloudbuild.yaml",
+  "repositoryEventConfig": {
+    "push": {
+      "branch": "^main$"
+    },
+    "repository": "projects/api-ai-blog-writer/locations/europe-west9/connections/europe-west9-paris/repositories/tindevelopers-api-blogwriting-python-gcr",
+    "repositoryType": "GITHUB"
+  },
+  "substitutions": {
+    "_REGION": "us-east1",
+    "_ENV": "prod",
+    "_SERVICE_NAME": "blog-writer-api-prod"
+  }
+}
+
