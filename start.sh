@@ -22,18 +22,24 @@ if [ -f /secrets/env ]; then
     else
         # Plain text format (env file) - load selectively to avoid overriding individual secrets
         # Individual secrets (set via --update-secrets) take precedence
-        while IFS='=' read -r key value || [ -n "$key" ]; do
+        while IFS= read -r line || [ -n "$line" ]; do
             # Skip comments and empty lines
-            [[ "$key" =~ ^#.*$ ]] && continue
-            [[ -z "$key" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line// }" ]] && continue
+            [[ ! "$line" =~ = ]] && continue
             
-            # Remove leading/trailing whitespace from key
+            # Split on first = only
+            key="${line%%=*}"
+            value="${line#*=}"
+            
+            # Remove leading/trailing whitespace
             key=$(echo "$key" | xargs)
+            value=$(echo "$value" | xargs)
             
             # Skip if key is already set (individual secrets take precedence)
             if [ -z "${!key}" ]; then
                 # Skip placeholder values
-                if [[ ! "$value" =~ ^(your_|YOUR_|placeholder).* ]] && [[ -n "$value" ]]; then
+                if [[ ! "$value" =~ ^(your_|YOUR_|placeholder) ]] && [[ -n "$value" ]]; then
                     export "$key=$value"
                 fi
             fi
