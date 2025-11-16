@@ -468,3 +468,78 @@ async def delete_role(
     
     return None
 
+
+def initialize_default_data():
+    """Initialize default roles and system admin user."""
+    from datetime import datetime
+    from uuid import uuid4
+    from ..models.user_models import UserRole, UserStatus, Permission
+    
+    now = datetime.utcnow()
+    
+    # Only initialize if databases are empty
+    if roles_db or users_db:
+        return
+    
+    # Initialize default roles
+    default_roles = [
+        {
+            "id": str(uuid4()),
+            "name": "Admin",
+            "description": "Full system access and management capabilities",
+            "permissions": [p.value for p in Permission],
+            "created_at": now,
+            "updated_at": now
+        },
+        {
+            "id": str(uuid4()),
+            "name": "Manager",
+            "description": "Team management and operational oversight",
+            "permissions": [
+                Permission.CREATE_BLOG.value,
+                Permission.READ_BLOG.value,
+                Permission.UPDATE_BLOG.value,
+                Permission.READ_USER.value,
+                Permission.VIEW_ANALYTICS.value
+            ],
+            "created_at": now,
+            "updated_at": now
+        },
+        {
+            "id": str(uuid4()),
+            "name": "User",
+            "description": "Standard user with basic blog creation access",
+            "permissions": [
+                Permission.CREATE_BLOG.value,
+                Permission.READ_BLOG.value,
+                Permission.UPDATE_BLOG.value
+            ],
+            "created_at": now,
+            "updated_at": now
+        }
+    ]
+    
+    for role in default_roles:
+        roles_db[role["id"]] = role
+    
+    # Initialize system admin user
+    system_admin_id = str(uuid4())
+    users_db[system_admin_id] = {
+        "id": system_admin_id,
+        "email": "systemadmin@example.com",
+        "password": "admin123",  # In production, hash this
+        "name": "System Admin",
+        "role": UserRole.SYSTEM_ADMIN.value,
+        "department": "IT",
+        "status": UserStatus.ACTIVE.value,
+        "created_at": now,
+        "updated_at": now,
+        "last_login": now
+    }
+    
+    logger.info("Default roles and system admin user initialized")
+
+
+# Initialize default data on module import
+initialize_default_data()
+

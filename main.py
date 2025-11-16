@@ -619,6 +619,8 @@ app.include_router(image_generation_router)
 
 # Include integrations router
 app.include_router(integrations_router)
+# Include user management router
+app.include_router(user_management_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
