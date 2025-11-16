@@ -1,9 +1,12 @@
-name: Deploy Production to US-East1
+# DISABLED: Replaced by Cloud Build trigger
+# Cloud Build trigger deploys to us-east1 automatically on push to main branch
+name: Deploy Production to US-East1 (DISABLED)
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:  # Allow manual deployment
+  # Disabled - using Cloud Build trigger instead
+  # push:
+  #   branches: [ main, master ]
+  workflow_dispatch:  # Allow manual deployment only
 
 env:
   PROJECT_ID: api-ai-blog-writer
