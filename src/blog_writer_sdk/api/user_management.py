@@ -539,7 +539,3 @@ def initialize_default_data():
     
     logger.info("Default roles and system admin user initialized")
 
-
-# Initialize default data on module import
-initialize_default_data()
-

@@ -300,6 +300,14 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Blog Writer SDK API starting up...")
     
+    # Initialize user management default data
+    try:
+        from src.blog_writer_sdk.api.user_management import initialize_default_data
+        initialize_default_data()
+        print("✅ User management initialized with default roles and system admin")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize user management: {e}")
+    
     # Load environment variables from mounted secrets
     load_env_from_secrets()
     
