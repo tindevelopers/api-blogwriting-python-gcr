@@ -1245,6 +1245,21 @@ class MultiStageGenerationPipeline:
             # Return all generated links even if not inserted (for response metadata)
             inserted_links = [{'text': link['anchor_text'], 'url': link['url']} for link in internal_links[:5]]
         
-        return '\n'.join(fixed_lines), inserted_links
+        # Ensure all links are proper dictionaries with 'text' and 'url' keys
+        formatted_links = []
+        for link in inserted_links:
+            if isinstance(link, dict) and 'text' in link and 'url' in link:
+                formatted_links.append({'text': str(link['text']), 'url': str(link['url'])})
+            elif isinstance(link, dict):
+                # Handle different dict formats
+                if 'anchor_text' in link:
+                    formatted_links.append({'text': str(link['anchor_text']), 'url': str(link.get('url', '/'))})
+                elif 'text' in link:
+                    formatted_links.append({'text': str(link['text']), 'url': str(link.get('url', '/'))})
+            else:
+                # Skip non-dict values (shouldn't happen, but be safe)
+                logger.warning(f"Skipping invalid internal link format: {link}")
+        
+        return '\n'.join(fixed_lines), formatted_links
     
 
