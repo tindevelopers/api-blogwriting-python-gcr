@@ -73,9 +73,9 @@ class DataForSEOClient:
         # Fallback to environment variables if credential service is not used or no credentials found
         # Prefer KEY/SECRET, fallback to LOGIN/PASSWORD for legacy environments
         if not self.api_key:
-            self.api_key = os.getenv("DATAFORSEO_API_KEY") or os.getenv("DATAFORSEO_API_LOGIN")
+            self.api_key = (os.getenv("DATAFORSEO_API_KEY") or os.getenv("DATAFORSEO_API_LOGIN") or "").strip()
         if not self.api_secret:
-            self.api_secret = os.getenv("DATAFORSEO_API_SECRET") or os.getenv("DATAFORSEO_API_PASSWORD")
+            self.api_secret = (os.getenv("DATAFORSEO_API_SECRET") or os.getenv("DATAFORSEO_API_PASSWORD") or "").strip()
         if self.api_key and self.api_secret:
             self.is_configured = True
             logger.warning("DataforSEO credentials loaded from environment variables. Consider using credential service.")
