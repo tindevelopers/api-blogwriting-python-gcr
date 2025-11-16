@@ -91,6 +91,7 @@ from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
+from src.blog_writer_sdk.api.user_management import router as user_management_router
 from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
     EnhancedBlogGenerationResponse
