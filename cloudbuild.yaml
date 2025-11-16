@@ -44,9 +44,9 @@ images:
 
 # Substitution variables
 substitutions:
-  _REGION: 'europe-west1'  # Default to dev region, will be overridden by GitHub Actions
+  _REGION: 'europe-west9'  # Default to dev region, will be overridden by trigger substitutions
   _ENV: 'dev'
-  _SERVICE_NAME: 'blog-writer-api-dev'  # Default to dev service, will be overridden by GitHub Actions
+  _SERVICE_NAME: 'blog-writer-api-dev'  # Default to dev service, will be overridden by trigger substitutions
 
 # Build options
 options:
