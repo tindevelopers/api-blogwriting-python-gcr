@@ -20,11 +20,25 @@ if [ -f /secrets/env ]; then
         done < <(cat /secrets/env | jq -r 'to_entries[] | "\(.key)=\(.value)"')
         echo "✅ Secrets loaded from /secrets/env (JSON format)"
     else
-        # Plain text format (env file) - source it directly
-        set -a  # Automatically export all variables
-        source /secrets/env
-        set +a
-        echo "✅ Secrets loaded from /secrets/env (plain text format)"
+        # Plain text format (env file) - load selectively to avoid overriding individual secrets
+        # Individual secrets (set via --update-secrets) take precedence
+        while IFS='=' read -r key value || [ -n "$key" ]; do
+            # Skip comments and empty lines
+            [[ "$key" =~ ^#.*$ ]] && continue
+            [[ -z "$key" ]] && continue
+            
+            # Remove leading/trailing whitespace from key
+            key=$(echo "$key" | xargs)
+            
+            # Skip if key is already set (individual secrets take precedence)
+            if [ -z "${!key}" ]; then
+                # Skip placeholder values
+                if [[ ! "$value" =~ ^(your_|YOUR_|placeholder).* ]] && [[ -n "$value" ]]; then
+                    export "$key=$value"
+                fi
+            fi
+        done < /secrets/env
+        echo "✅ Secrets loaded from /secrets/env (plain text format, placeholders skipped)"
     fi
 else
     echo "⚠️  No secrets file found at /secrets/env, using environment variables only"
