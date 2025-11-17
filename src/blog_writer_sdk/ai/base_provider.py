@@ -18,7 +18,6 @@ class AIProviderType(str, Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
     COHERE = "cohere"
-    AZURE_OPENAI = "azure_openai"
     HUGGINGFACE = "huggingface"
 
 

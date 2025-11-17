@@ -24,11 +24,6 @@ def check_ai_environment_variables():
             "key": "ANTHROPIC_API_KEY",
             "model": "ANTHROPIC_DEFAULT_MODEL"
         },
-        "Azure OpenAI": {
-            "key": "AZURE_OPENAI_API_KEY",
-            "endpoint": "AZURE_OPENAI_ENDPOINT",
-            "model": "AZURE_OPENAI_DEFAULT_MODEL"
-        },
         "DeepSeek": {
             "key": "DEEPSEEK_API_KEY",
             "base": "DEEPSEEK_API_BASE",

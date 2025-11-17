@@ -15,7 +15,7 @@ This document outlines recommendations to significantly improve the quality and 
 ## Current State Analysis
 
 ### Strengths
-- Multi-provider AI support (OpenAI, Anthropic, Azure OpenAI)
+- Multi-provider AI support (OpenAI, Anthropic)
 - DataForSEO integration for keyword research
 - Basic SEO optimization
 - Content generation pipeline

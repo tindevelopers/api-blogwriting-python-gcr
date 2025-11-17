@@ -18,7 +18,7 @@ from .base_provider import (
     AIGenerationConfig,
     AIProviderError
 )
-from .openai_provider import OpenAIProvider, AzureOpenAIProvider
+from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
 from ..models.blog_models import ContentTone, ContentLength
 
@@ -100,34 +100,6 @@ class AIContentGenerator:
                     
                 except Exception as e:
                     logger.error(f"Failed to initialize OpenAI provider: {e}")
-        
-        # Initialize Azure OpenAI if configured
-        if 'azure_openai' in providers_config:
-            azure_config = providers_config['azure_openai']
-            if azure_config.get('api_key') and azure_config.get('azure_endpoint'):
-                try:
-                    provider = AzureOpenAIProvider(
-                        api_key=azure_config['api_key'],
-                        azure_endpoint=azure_config['azure_endpoint'],
-                        api_version=azure_config.get('api_version', '2024-02-15-preview'),
-                        max_retries=azure_config.get('max_retries', 3),
-                        timeout=azure_config.get('timeout', 30)
-                    )
-                    
-                    from .base_provider import AIProviderConfig, AIProviderType
-                    config = AIProviderConfig(
-                        provider_type=AIProviderType.AZURE_OPENAI,
-                        api_key=azure_config['api_key'],
-                        default_model=azure_config.get('default_model', 'gpt-4o-mini'),
-                        enabled=azure_config.get('enabled', True),
-                        priority=azure_config.get('priority', 2)
-                    )
-                    
-                    self.provider_manager.add_provider('azure_openai', provider, config)
-                    logger.info("Azure OpenAI provider initialized successfully")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to initialize Azure OpenAI provider: {e}")
         
         # Initialize Anthropic if configured
         if 'anthropic' in providers_config:

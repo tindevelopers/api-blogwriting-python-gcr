@@ -1,9 +1,12 @@
-name: Deploy Develop to Europe-West1
+# DISABLED: Replaced by Cloud Build trigger (deploy-dev-on-develop)
+# Cloud Build trigger deploys to europe-west9 automatically on push to develop branch
+name: Deploy Develop to Europe-West1 (DISABLED)
 
 on:
-  push:
-    branches: [ develop ]
-  workflow_dispatch:  # Allow manual deployment
+  # Disabled - using Cloud Build trigger instead
+  # push:
+  #   branches: [ develop ]
+  workflow_dispatch:  # Allow manual deployment only
 
 env:
   PROJECT_ID: api-ai-blog-writer

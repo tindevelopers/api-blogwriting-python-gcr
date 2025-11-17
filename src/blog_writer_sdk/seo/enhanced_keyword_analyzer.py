@@ -234,20 +234,28 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             # Ensure credentials are initialized
             await self._df_client.initialize_credentials(tenant_id)
             
-            # Get search volume data with proper parameters
+            # Get search volume data with proper parameters (this uses basic endpoint that should work)
             sv_data = await self._df_client.get_search_volume_data(
                 keywords=[keyword],
                 location_name=self.location,
                 language_code=self.language_code,
                 tenant_id=tenant_id
             )
-            diff_data = await self._df_client.get_keyword_difficulty(
-                keywords=[keyword],
-                location_name=self.location,
-                language_code=self.language_code,
-                tenant_id=tenant_id
-            )
             m = sv_data.get(keyword, {})
+            
+            # Get difficulty data (this uses Labs endpoint - may fail, but we'll handle it gracefully)
+            diff_data = {}
+            try:
+                diff_data = await self._df_client.get_keyword_difficulty(
+                    keywords=[keyword],
+                    location_name=self.location,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+            except Exception as diff_error:
+                logger.warning(f"Keyword difficulty fetch failed (Labs endpoint may require paid plan): {diff_error}")
+                # Continue with default difficulty score
+            
             return {
                 "search_volume": m.get("search_volume", 0) or 0,  # Ensure numeric, default to 0
                 "cpc": m.get("cpc", 0.0) or 0.0,  # Ensure numeric, default to 0.0
@@ -256,7 +264,7 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 "difficulty_score": diff_data.get(keyword, 50.0) or 50.0,
             }
         except Exception as e:
-            print(f"Error fetching DataForSEO metrics for {keyword}: {e}")
+            logger.error(f"Error fetching DataForSEO metrics for {keyword}: {e}")
             # Return defaults instead of None
             return {
                 "search_volume": 0,

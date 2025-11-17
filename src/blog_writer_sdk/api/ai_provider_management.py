@@ -26,7 +26,6 @@ from ..ai.base_provider import (
 )
 from ..ai.openai_provider import OpenAIProvider
 from ..ai.anthropic_provider import AnthropicProvider
-from ..ai.azure_openai_provider import AzureOpenAIProvider
 from ..models.ai_provider_models import (
     AIProviderConfigRequest,
     AIProviderConfigResponse,
@@ -63,7 +62,6 @@ def get_provider_class(provider_type: AIProviderType):
     provider_classes = {
         AIProviderType.OPENAI: OpenAIProvider,
         AIProviderType.ANTHROPIC: AnthropicProvider,
-        AIProviderType.AZURE_OPENAI: AzureOpenAIProvider,
     }
     
     if provider_type not in provider_classes:
@@ -573,24 +571,6 @@ async def initialize_from_env():
                     api_key=anthropic_key,
                     default_model=os.getenv("ANTHROPIC_DEFAULT_MODEL", "claude-3-5-haiku-20241022"),
                     priority=2
-                ),
-                BackgroundTasks()
-            )
-        
-        # Azure OpenAI
-        azure_key = os.getenv("AZURE_OPENAI_API_KEY")
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        if azure_key and azure_endpoint:
-            await configure_provider(
-                AIProviderConfigRequest(
-                    provider_type=AIProviderType.AZURE_OPENAI,
-                    api_key=azure_key,
-                    default_model=os.getenv("AZURE_OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-                    priority=3,
-                    custom_config={
-                        "azure_endpoint": azure_endpoint,
-                        "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
-                    }
                 ),
                 BackgroundTasks()
             )

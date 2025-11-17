@@ -14,6 +14,7 @@ import math
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
+import jwt
 
 # Track startup time for uptime calculation
 startup_time = time.time()
@@ -36,7 +37,15 @@ from src.blog_writer_sdk.models.blog_models import (
     ContentFormat,
 )
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
+from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
+from src.blog_writer_sdk.config.testing_limits import (
+    is_testing_mode,
+    apply_keyword_limits,
+    apply_suggestions_limit,
+    apply_clustering_limits,
+    get_testing_limits
+)
 from src.blog_writer_sdk.ai import (
     BlogWriterAbstraction,
     BlogWriterFactory,
@@ -77,10 +86,12 @@ except Exception:
 
 from google.cloud import secretmanager
 from supabase import create_client, Client
+from src.blog_writer_sdk.integrations.supabase_client import SupabaseClient
 from src.blog_writer_sdk.batch.batch_processor import BatchProcessor
 from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider_router, initialize_from_env
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
+from src.blog_writer_sdk.api.user_management import router as user_management_router
 from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
     EnhancedBlogGenerationResponse
@@ -151,6 +162,7 @@ class KeywordAnalysisRequest(BaseModel):
     keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
+    search_type: Optional[str] = Field("keyword_analysis", description="Keyword search type (e.g., keyword_analysis, competitor)")
     text: Optional[str] = Field(None, description="Optional text content (ignored if keywords provided)")
     max_suggestions_per_keyword: Optional[int] = Field(None, description="Optional: if provided, routes to enhanced analysis")
     
@@ -162,6 +174,7 @@ class EnhancedKeywordAnalysisRequest(BaseModel):
     keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200 for comprehensive research)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
     language: Optional[str] = Field("en", description="Language code for analysis")
+    search_type: Optional[str] = Field("enhanced_keyword_analysis", description="Keyword search type (e.g., keyword_analysis, competitor, enhanced_keyword_analysis)")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
     max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
 
@@ -250,17 +263,34 @@ class ErrorResponse(BaseModel):
 
 # Application lifespan management
 def load_env_from_secrets():
-    """Load environment variables from mounted secrets file."""
+    """Load environment variables from mounted secrets file.
+    
+    Note: Individual secrets (set via --update-secrets) take precedence over
+    values in the mounted secret file to avoid placeholder values overriding real credentials.
+    """
     secrets_file = "/secrets/env"
     if os.path.exists(secrets_file):
         print("📁 Loading environment variables from mounted secrets...")
+        loaded_count = 0
+        skipped_count = 0
         with open(secrets_file, 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
-                    os.environ[key] = value
-        print("✅ Environment variables loaded from secrets")
+                    # Only set if not already set (individual secrets take precedence)
+                    # Also skip placeholder values
+                    if key not in os.environ:
+                        # Skip placeholder values that look like templates
+                        if not (value.startswith('your_') or value.startswith('YOUR_') or 
+                                'placeholder' in value.lower() or value == ''):
+                            os.environ[key] = value
+                            loaded_count += 1
+                        else:
+                            skipped_count += 1
+                    else:
+                        skipped_count += 1
+        print(f"✅ Environment variables loaded from secrets: {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
     else:
         print("⚠️ No secrets file found at /secrets/env, using system environment variables")
 
@@ -269,6 +299,14 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan."""
     # Startup
     print("🚀 Blog Writer SDK API starting up...")
+    
+    # Initialize user management default data
+    try:
+        from src.blog_writer_sdk.api.user_management import initialize_default_data
+        initialize_default_data()
+        print("✅ User management initialized with default roles and system admin")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize user management: {e}")
     
     # Load environment variables from mounted secrets
     load_env_from_secrets()
@@ -324,11 +362,21 @@ async def lifespan(app: FastAPI):
     
     # Initialize Supabase client
     supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_KEY")
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
     if supabase_url and supabase_key:
-        global supabase_client
+        global supabase_client, supabase_server_client
         supabase_client = create_client(supabase_url, supabase_key)
         print("✅ Supabase client initialized.")
+        try:
+            supabase_server_client = SupabaseClient(
+                supabase_url=supabase_url,
+                supabase_key=supabase_key,
+                environment=os.getenv("ENVIRONMENT", "dev"),
+            )
+            print("✅ Supabase server client initialized.")
+        except Exception as supabase_exc:
+            supabase_server_client = None
+            print(f"⚠️ Supabase server client not initialized: {supabase_exc}")
     else:
         print("⚠️ Supabase credentials not found. Supabase client not initialized.")
 
@@ -484,7 +532,7 @@ app = FastAPI(
     
     ### 🤖 AI Provider Management
     - **Dynamic Provider Configuration**: Add, update, and remove AI providers without service restarts
-    - **Multi-Provider Support**: OpenAI, Anthropic, Azure OpenAI with automatic fallback
+    - **Multi-Provider Support**: OpenAI and Anthropic with automatic fallback
     - **Real-time Health Monitoring**: Live status checks and usage statistics
     - **Secure API Key Management**: Encrypted storage and validation
     - **Provider Switching**: Dynamic switching between providers based on performance
@@ -579,6 +627,8 @@ app.include_router(image_generation_router)
 
 # Include integrations router
 app.include_router(integrations_router)
+# Include user management router
+app.include_router(user_management_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
@@ -625,19 +675,6 @@ def create_ai_content_generator() -> Optional[AIContentGenerator]:
             'priority': 1
         }
     
-    # Check for Azure OpenAI configuration
-    azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    if azure_api_key and azure_endpoint:
-        ai_config['providers']['azure_openai'] = {
-            'api_key': azure_api_key,
-            'azure_endpoint': azure_endpoint,
-            'api_version': os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-            'default_model': os.getenv("AZURE_OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            'enabled': True,
-            'priority': 2
-        }
-    
     # Check for Anthropic configuration
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
     if anthropic_api_key:
@@ -681,6 +718,8 @@ blog_writer = BlogWriter(
 # Phase 1-3 global services (initialized in lifespan)
 quota_manager = None
 keyword_difficulty_analyzer = None
+supabase_client: Optional[Client] = None
+supabase_server_client: Optional[SupabaseClient] = None
 
 
 # Dependency to get blog writer instance
@@ -787,6 +826,7 @@ async def root():
         "message": "Blog Writer SDK API",
         "version": APP_VERSION,
         "environment": "cloud-run",
+        "testing_mode": is_testing_mode(),
         "docs": "/docs",
         "health": "/health",
         "ready": "/ready",
@@ -1771,7 +1811,8 @@ async def analyze_content(
 # Keyword analysis endpoint
 @app.post("/api/v1/keywords/analyze")
 async def analyze_keywords(
-    request: KeywordAnalysisRequest,
+    keyword_request: KeywordAnalysisRequest,
+    http_request: Request,
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
@@ -1789,32 +1830,47 @@ async def analyze_keywords(
     - Recommendations
     """
     try:
-        if not request.keywords:
+        if not keyword_request.keywords:
             raise HTTPException(
                 status_code=400,
                 detail="No keywords provided. Please provide at least one keyword in the 'keywords' array."
             )
         
+        # Apply testing mode limits
+        limited_keywords = apply_keyword_limits(keyword_request.keywords)
+        if is_testing_mode():
+            logger.info(f"🧪 TESTING MODE: Limited keywords from {len(keyword_request.keywords)} to {len(limited_keywords)}")
+        
         # If max_suggestions_per_keyword is provided (even if 0), use enhanced analysis for better results
-        if request.max_suggestions_per_keyword is not None:
+        if keyword_request.max_suggestions_per_keyword is not None:
+            # Apply testing mode limits to suggestions
+            max_suggestions = apply_suggestions_limit(
+                max(5, min(keyword_request.max_suggestions_per_keyword, 150)) if keyword_request.max_suggestions_per_keyword > 0 else 20
+            )
             # Convert to EnhancedKeywordAnalysisRequest format
             enhanced_request = EnhancedKeywordAnalysisRequest(
-                keywords=request.keywords,
-                location=request.location,
-                language=request.language,
+                keywords=limited_keywords,
+                location=keyword_request.location,
+                language=keyword_request.language,
+                search_type=keyword_request.search_type or "keyword_analysis",
                 include_serp=False,
-                max_suggestions_per_keyword=max(5, min(request.max_suggestions_per_keyword, 150)) if request.max_suggestions_per_keyword > 0 else 20
+                max_suggestions_per_keyword=max_suggestions
             )
             # Route to enhanced endpoint for better results
-            return await analyze_keywords_enhanced(enhanced_request)
+            enhanced_response = await analyze_keywords_enhanced(enhanced_request, http_request)
+            return enhanced_response
         
         # Standard analysis - but prefer enhanced if available
+        # Apply testing mode limits to keywords
+        limited_keywords = apply_keyword_limits(keyword_request.keywords)
+        analysis_mode = "standard"
         if enhanced_analyzer:
             try:
                 results = await enhanced_analyzer.analyze_keywords_comprehensive(
-                    keywords=request.keywords,
+                    keywords=limited_keywords,
                     tenant_id=os.getenv("TENANT_ID", "default")
                 )
+                analysis_mode = "enhanced"
                 # Convert to expected format
                 keyword_analysis = {}
                 for kw, analysis in results.items():
@@ -1851,13 +1907,14 @@ async def analyze_keywords(
                         "first_seen": analysis.first_seen,
                         "last_updated": analysis.last_updated,
                     }
-                return {"keyword_analysis": keyword_analysis}
+                response_payload = {"keyword_analysis": keyword_analysis}
+                return response_payload
             except Exception as e:
                 logger.warning(f"Enhanced analysis failed, falling back to standard: {e}")
         
         # Fallback to standard analysis
         results: Dict[str, Dict[str, Any]] = {}
-        for keyword in request.keywords:
+        for keyword in keyword_request.keywords:
             analysis = await writer.keyword_analyzer.analyze_keyword(keyword)
             
             # Normalize analysis to plain dict with numeric defaults
@@ -1890,7 +1947,8 @@ async def analyze_keywords(
                 "long_tail_keywords": analysis_dict.get("long_tail_keywords", []),
             }
         
-        return {"keyword_analysis": results}
+        response_payload = {"keyword_analysis": results}
+        return response_payload
         
     except HTTPException:
         raise
@@ -2169,23 +2227,33 @@ async def analyze_keywords_enhanced(
         effective_location = detected_location or request.location or "United States"
         from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
         
+        # Apply testing mode limits
+        limited_keywords = apply_keyword_limits(request.keywords)
+        max_suggestions = apply_suggestions_limit(request.max_suggestions_per_keyword)
+        limits = get_testing_limits() if is_testing_mode() else {}
+        max_total = limits.get("max_total_keywords", 200) if is_testing_mode() else 200
+        
+        if is_testing_mode():
+            logger.info(f"🧪 TESTING MODE: Keyword limits - {len(limited_keywords)} primary, {max_suggestions} suggestions/keyword, {max_total} total max")
+        
         if not enhanced_analyzer:
             raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
         results = await enhanced_analyzer.analyze_keywords_comprehensive(
-            keywords=request.keywords,
+            keywords=limited_keywords,
             tenant_id=os.getenv("TENANT_ID", "default")
         )
         
         # Get additional keyword suggestions using DataForSEO if available
-        all_keywords = list(request.keywords)
+        all_keywords = list(limited_keywords)
         if enhanced_analyzer and enhanced_analyzer._df_client:
             try:
                 tenant_id = os.getenv("TENANT_ID", "default")
                 await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
                 
-                # Get suggestions for each seed keyword
-                for seed_keyword in request.keywords[:5]:  # Limit to top 5 seed keywords to avoid too many API calls
-                    if len(all_keywords) >= 200:  # Max limit
+                # Get suggestions for each seed keyword (apply testing limits)
+                max_seed_keywords = limits.get("max_keywords", 5) if is_testing_mode() else 5
+                for seed_keyword in limited_keywords[:max_seed_keywords]:
+                    if len(all_keywords) >= max_total:
                         break
                     
                     try:
@@ -2194,13 +2262,15 @@ async def analyze_keywords_enhanced(
                             location_name=effective_location,
                             language_code=request.language or "en",
                             tenant_id=tenant_id,
-                            limit=min(request.max_suggestions_per_keyword, 150)
+                            limit=max_suggestions
                         )
                         
-                        # Add new keywords that aren't already in the list
+                        # Add new keywords that aren't already in the list (apply testing limits)
                         for suggestion in df_suggestions:
+                            if len(all_keywords) >= max_total:
+                                break
                             kw = suggestion.get("keyword", "").strip()
-                            if kw and kw not in all_keywords and len(all_keywords) < 200:
+                            if kw and kw not in all_keywords:
                                 all_keywords.append(kw)
                     except Exception as e:
                         logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
@@ -2228,10 +2298,13 @@ async def analyze_keywords_enhanced(
         
         clustering = KeywordClustering(knowledge_graph_client=kg_client)
         try:
+            # Apply testing mode clustering limits
+            max_clusters, max_keywords_per_cluster = apply_clustering_limits()
             clustering_result = clustering.cluster_keywords(
                 keywords=all_keywords,
                 min_cluster_size=1,  # Allow single keywords to form clusters
-                max_clusters=None
+                max_clusters=max_clusters,
+                max_keywords_per_cluster=max_keywords_per_cluster
             )
             # Log clustering results for debugging
             logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")
@@ -2381,7 +2454,7 @@ async def analyze_keywords_enhanced(
             except Exception as e:
                 logger.warning(f"Keyword discovery enrichment failed: {e}")
         
-        return {
+        response_payload = {
             "enhanced_analysis": out,
             "total_keywords": len(all_keywords),
             "original_keywords": request.keywords,
@@ -2401,6 +2474,8 @@ async def analyze_keywords_enhanced(
             "serp_analysis": serp_analysis_summary,
             "serp_ai_summary": serp_ai_summary
         }
+        
+        return response_payload
     except HTTPException:
         raise
     except Exception as e:

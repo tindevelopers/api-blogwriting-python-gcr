@@ -1,0 +1,13 @@
+{
+  "name": "deploy-staging-on-staging",
+  "description": "Deploy to staging environment on staging branch pushes",
+  "filename": "cloudbuild.yaml",
+  "repositoryEventConfig": {
+    "push": {
+      "branch": "^staging$"
+    },
+    "repository": "projects/api-ai-blog-writer/locations/europe-west9/connections/europe-west9-paris/repositories/tindevelopers-api-blogwriting-python-gcr",
+    "repositoryType": "GITHUB"
+  }
+}
+

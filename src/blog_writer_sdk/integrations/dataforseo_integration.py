@@ -46,8 +46,9 @@ class DataForSEOClient:
         self.base_url = "https://api.dataforseo.com/v3"
         self.credential_service = credential_service
         # Accept credentials directly or from env vars
-        self.api_key = api_key or os.getenv("DATAFORSEO_API_KEY")
-        self.api_secret = api_secret or os.getenv("DATAFORSEO_API_SECRET")
+        # Strip whitespace to avoid authentication issues
+        self.api_key = (api_key or os.getenv("DATAFORSEO_API_KEY") or "").strip()
+        self.api_secret = (api_secret or os.getenv("DATAFORSEO_API_SECRET") or "").strip()
         self.location = location or os.getenv("DATAFORSEO_LOCATION", "United States")
         self.language_code = language_code or os.getenv("DATAFORSEO_LANGUAGE", "en")
         self.is_configured = bool(self.api_key and self.api_secret)
@@ -72,9 +73,9 @@ class DataForSEOClient:
         # Fallback to environment variables if credential service is not used or no credentials found
         # Prefer KEY/SECRET, fallback to LOGIN/PASSWORD for legacy environments
         if not self.api_key:
-            self.api_key = os.getenv("DATAFORSEO_API_KEY") or os.getenv("DATAFORSEO_API_LOGIN")
+            self.api_key = (os.getenv("DATAFORSEO_API_KEY") or os.getenv("DATAFORSEO_API_LOGIN") or "").strip()
         if not self.api_secret:
-            self.api_secret = os.getenv("DATAFORSEO_API_SECRET") or os.getenv("DATAFORSEO_API_PASSWORD")
+            self.api_secret = (os.getenv("DATAFORSEO_API_SECRET") or os.getenv("DATAFORSEO_API_PASSWORD") or "").strip()
         if self.api_key and self.api_secret:
             self.is_configured = True
             logger.warning("DataforSEO credentials loaded from environment variables. Consider using credential service.")
@@ -197,6 +198,11 @@ class DataForSEOClient:
             pass  # DataForSEO .ai format may require different handling - keeping original for now
         
         url = f"{self.base_url}/{endpoint}"
+        # Debug: Log credential status (without exposing full values)
+        api_key_preview = f"{self.api_key[:10]}..." if self.api_key and len(self.api_key) > 10 else "None"
+        api_secret_preview = f"{self.api_secret[:10]}..." if self.api_secret and len(self.api_secret) > 10 else "None"
+        logger.debug(f"DataForSEO API call to {endpoint}: API_KEY={api_key_preview}, API_SECRET={api_secret_preview}, is_configured={self.is_configured}")
+        
         credentials = f"{self.api_key}:{self.api_secret}"
         encoded_credentials = base64.b64encode(credentials.encode()).decode()
         headers = {
@@ -214,7 +220,11 @@ class DataForSEOClient:
             log_api_request("dataforseo", endpoint, response.status_code, duration, message="Success", tenant_id=tenant_id)
             return response.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"DataForSEO API request failed due to HTTP error for {endpoint}: {e.response.status_code} - {e.response.text}")
+            error_text = e.response.text[:500] if e.response.text else "No error text"
+            logger.error(f"DataForSEO API request failed due to HTTP error for {endpoint}: {e.response.status_code} - {error_text}")
+            # Log credential status for debugging (without exposing full values)
+            if e.response.status_code == 401:
+                logger.error(f"401 Unauthorized - Credential check: API_KEY present={bool(self.api_key)}, API_SECRET present={bool(self.api_secret)}, is_configured={self.is_configured}")
             log_api_request("dataforseo", endpoint, e.response.status_code, 0.0, message=f"HTTP Error: {e.response.status_code}", tenant_id=tenant_id)
             return self._fallback_data(endpoint, payload)
         except httpx.RequestError as e:

@@ -18,12 +18,6 @@ The Blog Writer SDK API includes a comprehensive AI Provider Management system t
 - **Features**: Text generation, long context windows
 - **Pricing**: Per-token pricing model
 
-### 3. Azure OpenAI
-- **Provider Type**: `azure_openai`
-- **Models**: Same as OpenAI (hosted on Azure)
-- **Features**: Enterprise-grade security, compliance
-- **Pricing**: Azure-specific pricing
-
 ## API Endpoints
 
 ### Base URL
@@ -397,7 +391,6 @@ export const useAIProviders = () => {
         <select v-model="newProvider.provider_type">
           <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic</option>
-          <option value="azure_openai">Azure OpenAI</option>
         </select>
         <input 
           v-model="newProvider.api_key" 
@@ -521,12 +514,6 @@ OPENAI_ORGANIZATION=org-...
 # Anthropic
 ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_DEFAULT_MODEL=claude-3-5-haiku-20241022
-
-# Azure OpenAI
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_API_VERSION=2024-02-15-preview
-AZURE_OPENAI_DEFAULT_MODEL=gpt-4o-mini
 ```
 
 ## Troubleshooting

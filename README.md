@@ -8,12 +8,13 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 
 **Version**: 1.3.2  
 **Publish date**: 2025-11-15  
+**Last deployment test**: 2025-11-16 (develop branch - permissions fixed)  
 See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ## 🚀 Features
 
 ### Core Capabilities
-- **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic, Azure OpenAI) with intelligent fallback
+- **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic) with intelligent fallback
 - **🚀 Direct AI Provider Integration**: Direct integration with OpenAI, Anthropic, and other AI providers
 - **📊 SEO-First Architecture**: Built-in SEO optimization and analysis
 - **🔍 Enhanced Keyword Analysis**: Optional DataForSEO integration for real search volume, competition, and trends data
@@ -210,7 +211,6 @@ The SDK supports multiple AI providers with intelligent fallback for robust cont
 #### Supported AI Providers
 - **OpenAI**: GPT-4o, GPT-4o-mini, GPT-4 Turbo, GPT-3.5 Turbo
 - **Anthropic**: Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus
-- **Azure OpenAI**: All OpenAI models via Azure endpoints
 
 #### AI Features
 - **Smart Content Generation**: Context-aware blog posts, titles, meta descriptions
@@ -693,6 +693,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **Built with ❤️ for content creators and developers**
 
 Ready to revolutionize your content creation process? Get started with the Blog Writer SDK today!
-**Last deployment test**: 2025-11-16 (staging branch)
 
-**Last deployment test**: 2025-11-16 (staging branch)
+**Last deployment test**: 2025-11-16 (staging branch - Supabase integration merged)

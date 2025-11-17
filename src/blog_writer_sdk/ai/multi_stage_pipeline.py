@@ -716,11 +716,14 @@ class MultiStageGenerationPipeline:
         )
         
         # Generate and insert internal links
-        enhanced_content = await self._generate_and_insert_internal_links(
+        enhanced_content, internal_links_list = await self._generate_and_insert_internal_links(
             enhanced_content,
             keywords,
             topic
         )
+        
+        # Store internal links in seo_metadata for response
+        seo_metadata["internal_links"] = internal_links_list
         
         # Finalization
         await self._emit_progress(
@@ -1061,10 +1064,11 @@ class MultiStageGenerationPipeline:
         if desc_match:
             metadata["meta_description"] = desc_match.group(1).strip()
         
-        # Extract internal links
-        links_match = re.findall(r'Internal Link[:\s]+(.+?)(?:\n|$)', seo_response, re.IGNORECASE)
-        if links_match:
-            metadata["internal_links"] = [link.strip() for link in links_match]
+        # Extract internal links - but don't set here as they're generated properly in _generate_and_insert_internal_links
+        # The internal_links will be set from the actual link generation method
+        # links_match = re.findall(r'Internal Link[:\s]+(.+?)(?:\n|$)', seo_response, re.IGNORECASE)
+        # if links_match:
+        #     metadata["internal_links"] = [link.strip() for link in links_match]
         
         return metadata
     
@@ -1162,7 +1166,7 @@ class MultiStageGenerationPipeline:
         content: str,
         keywords: List[str],
         topic: str
-    ) -> str:
+    ) -> tuple:
         """
         Generate and insert actual internal links into content.
         
@@ -1172,7 +1176,7 @@ class MultiStageGenerationPipeline:
             topic: Blog topic
             
         Returns:
-            Content with internal links inserted
+            Tuple of (content with internal links inserted, list of internal link dictionaries)
         """
         # Generate internal link opportunities based on keywords
         internal_links = []
@@ -1181,11 +1185,11 @@ class MultiStageGenerationPipeline:
         for keyword in keywords[:5]:  # Use top 5 keywords
             # Generate URL-friendly slug
             slug = keyword.lower().replace(' ', '-').replace(',', '').replace('.', '')
-            # Create link opportunity
+            # Create link opportunity as proper dictionary format
             internal_links.append({
                 'anchor_text': keyword,
                 'url': f'/{slug}',
-                'keyword': keyword
+                'text': keyword  # Add text field for compatibility
             })
         
         # Find natural insertion points in content
@@ -1193,6 +1197,7 @@ class MultiStageGenerationPipeline:
         fixed_lines = []
         links_inserted = 0
         target_link_count = min(5, len(internal_links))
+        inserted_links = []  # Track which links were actually inserted
         
         for i, line in enumerate(lines):
             fixed_lines.append(line)
@@ -1207,9 +1212,9 @@ class MultiStageGenerationPipeline:
                 
                 # Check if any keyword appears in this line
                 for link_info in internal_links:
-                    if link_info['keyword'].lower() in line.lower() and links_inserted < target_link_count:
+                    if link_info['anchor_text'].lower() in line.lower() and links_inserted < target_link_count:
                         # Insert link after first occurrence of keyword
-                        keyword_lower = link_info['keyword'].lower()
+                        keyword_lower = link_info['anchor_text'].lower()
                         line_lower = line.lower()
                         if keyword_lower in line_lower:
                             # Find position and insert link
@@ -1217,14 +1222,19 @@ class MultiStageGenerationPipeline:
                             if idx != -1:
                                 # Replace keyword with linked version
                                 before = line[:idx]
-                                keyword_text = line[idx:idx+len(link_info['keyword'])]
-                                after = line[idx+len(link_info['keyword']):]
+                                keyword_text = line[idx:idx+len(link_info['anchor_text'])]
+                                after = line[idx+len(link_info['anchor_text']):]
                                 
                                 # Check if already linked
                                 if '[' not in before[-20:] and '](' not in before[-20:]:
                                     linked_keyword = f"[{keyword_text}]({link_info['url']})"
                                     fixed_lines[-1] = before + linked_keyword + after
                                     links_inserted += 1
+                                    # Add to inserted links list (format: Dict[str, str] as expected by model)
+                                    inserted_links.append({
+                                        'text': link_info['anchor_text'],
+                                        'url': link_info['url']
+                                    })
                                     logger.info(f"Inserted internal link: {link_info['anchor_text']} -> {link_info['url']}")
                                     break
         
@@ -1232,7 +1242,24 @@ class MultiStageGenerationPipeline:
             logger.info(f"Inserted {links_inserted} internal links into content")
         else:
             logger.warning("No internal links were inserted - may need manual review")
+            # Return all generated links even if not inserted (for response metadata)
+            inserted_links = [{'text': link['anchor_text'], 'url': link['url']} for link in internal_links[:5]]
         
-        return '\n'.join(fixed_lines)
+        # Ensure all links are proper dictionaries with 'text' and 'url' keys
+        formatted_links = []
+        for link in inserted_links:
+            if isinstance(link, dict) and 'text' in link and 'url' in link:
+                formatted_links.append({'text': str(link['text']), 'url': str(link['url'])})
+            elif isinstance(link, dict):
+                # Handle different dict formats
+                if 'anchor_text' in link:
+                    formatted_links.append({'text': str(link['anchor_text']), 'url': str(link.get('url', '/'))})
+                elif 'text' in link:
+                    formatted_links.append({'text': str(link['text']), 'url': str(link.get('url', '/'))})
+            else:
+                # Skip non-dict values (shouldn't happen, but be safe)
+                logger.warning(f"Skipping invalid internal link format: {link}")
+        
+        return '\n'.join(fixed_lines), formatted_links
     
 
