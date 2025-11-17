@@ -1,5 +1,58 @@
 # Frontend Testing Guide - Backend API Endpoints
 
+## 🔐 Authentication
+
+All user management endpoints require JWT authentication using Supabase Auth tokens.
+
+### Getting a JWT Token
+
+1. **Sign in with Supabase Auth** (frontend):
+```javascript
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+// Sign in
+const { data, error } = await supabase.auth.signInWithPassword({
+  email: 'user@example.com',
+  password: 'password123'
+})
+
+// Get the access token
+const token = data.session.access_token
+```
+
+2. **Use token in API requests**:
+```javascript
+const response = await fetch('https://blog-writer-api-dev-613248238610.europe-west9.run.app/api/v1/users', {
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  }
+})
+```
+
+### Authentication Flow
+
+1. User signs in via Supabase Auth (frontend)
+2. Frontend receives JWT token from Supabase
+3. Frontend includes token in `Authorization: Bearer <token>` header
+4. Backend verifies token with Supabase Auth
+5. Backend retrieves user profile from Supabase database
+6. Backend checks user role and permissions
+7. Request is authorized or rejected based on role
+
+### Required Environment Variables
+
+For the backend to work with Supabase:
+- `SUPABASE_URL` - Your Supabase project URL
+- `SUPABASE_ANON_KEY` - Supabase anon key (for token verification)
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key (for database operations)
+
+---
+
+# Frontend Testing Guide - Backend API Endpoints
+
 ## Base URL
 
 **Development Environment:**
