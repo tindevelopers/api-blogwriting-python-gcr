@@ -1139,10 +1139,14 @@ async def generate_blog_enhanced(
                         )
                         featured_image_response = await image_provider_manager.generate_image(featured_image_request)
                         if featured_image_response.success and featured_image_response.images:
+                            image = featured_image_response.images[0]
+                            # GeneratedImage is a Pydantic model, use attribute access not .get()
+                            image_url = str(image.image_url) if image.image_url else None
+                            image_data = image.image_data if image.image_data else None
                             generated_images.append({
                                 "type": "featured",
                                 "prompt": featured_image_request.prompt,
-                                "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
+                                "image_url": image_url or (f"data:image/png;base64,{image_data}" if image_data else None),
                                 "alt_text": f"Featured image for {request.topic}"
                             })
                             logger.info("Featured image generated successfully")
@@ -1168,11 +1172,15 @@ async def generate_blog_enhanced(
                                 )
                                 brand_image_response = await image_provider_manager.generate_image(brand_image_request)
                                 if brand_image_response.success and brand_image_response.images:
+                                    brand_image = brand_image_response.images[0]
+                                    # GeneratedImage is a Pydantic model, use attribute access not .get()
+                                    brand_image_url = str(brand_image.image_url) if brand_image.image_url else None
+                                    brand_image_data = brand_image.image_data if brand_image.image_data else None
                                     generated_images.append({
                                         "type": "product",
                                         "brand": brand,
                                         "prompt": brand_image_request.prompt,
-                                        "image_url": brand_image_response.images[0].get("image_url") or brand_image_response.images[0].get("image_data"),
+                                        "image_url": brand_image_url or (f"data:image/png;base64,{brand_image_data}" if brand_image_data else None),
                                         "alt_text": f"{brand} product image"
                                     })
                                 else:
@@ -1262,7 +1270,7 @@ async def generate_blog_enhanced(
         # Get featured image URL if available
         featured_image_url = None
         if generated_images and len(generated_images) > 0:
-            featured_image_url = generated_images[0].get("image_url") or generated_images[0].get("image_data")
+            featured_image_url = generated_images[0].get("image_url")
         elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
             featured_image_url = pipeline_result.structured_data.get("image")
         
@@ -1528,10 +1536,14 @@ async def blog_generation_worker(request: Dict[str, Any]):
                             )
                             featured_image_response = await image_provider_manager.generate_image(featured_image_request)
                             if featured_image_response.success and featured_image_response.images:
+                                image = featured_image_response.images[0]
+                                # GeneratedImage is a Pydantic model, use attribute access not .get()
+                                image_url = str(image.image_url) if image.image_url else None
+                                image_data = image.image_data if image.image_data else None
                                 generated_images.append({
                                     "type": "featured",
                                     "prompt": featured_image_request.prompt,
-                                    "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
+                                    "image_url": image_url or (f"data:image/png;base64,{image_data}" if image_data else None),
                                     "alt_text": f"Featured image for {blog_request.topic}"
                                 })
                         except Exception as e:
@@ -1607,7 +1619,7 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Get featured image URL
             featured_image_url = None
             if generated_images and len(generated_images) > 0:
-                featured_image_url = generated_images[0].get("image_url") or generated_images[0].get("image_data")
+                featured_image_url = generated_images[0].get("image_url")
             elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
                 featured_image_url = pipeline_result.structured_data.get("image")
             
