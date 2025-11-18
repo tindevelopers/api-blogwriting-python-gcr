@@ -66,6 +66,12 @@ class JobStatusResponse(BaseModel):
     progress_percentage: float = Field(..., ge=0, le=100, description="Progress percentage")
     current_stage: Optional[str] = Field(None, description="Current stage")
     
+    # Progress updates for stage tracking
+    progress_updates: list[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="All progress updates from pipeline stages. Use this to track stage completion."
+    )
+    
     # Timestamps
     created_at: datetime = Field(..., description="Creation time")
     started_at: Optional[datetime] = Field(None, description="Start time")

@@ -1106,113 +1106,9 @@ async def generate_blog_enhanced(
             additional_context=additional_context
         )
         
-        # Generate images if this is a product-related topic
-        generated_images = []
-        image_generation_warnings = []
-        
-        if request.use_google_search:  # Only if Google Search is enabled (indicates research was done)
-            try:
-                from src.blog_writer_sdk.api.image_generation import image_provider_manager
-                from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
-                
-                # Check if topic suggests product content
-                product_indicators = ["best", "top", "review", "compare", "guide"]
-                is_product_topic = any(indicator in request.topic.lower() for indicator in product_indicators)
-                
-                # Check if image providers are available
-                if not image_provider_manager:
-                    image_generation_warnings.append("Image provider manager not initialized")
-                    logger.warning("Image provider manager not available")
-                elif not image_provider_manager.providers:
-                    image_generation_warnings.append("No image providers configured. STABILITY_AI_API_KEY may be missing.")
-                    logger.warning("No image providers available. Check STABILITY_AI_API_KEY configuration.")
-                elif is_product_topic:
-                    logger.info("Generating images for product blog post")
-                    
-                    # Generate featured image
-                    try:
-                        featured_image_request = ImageGenerationRequest(
-                            prompt=f"Professional product photography: {request.topic}. High quality, clean background, professional lighting",
-                            style=ImageStyle.PHOTOGRAPHIC,
-                            aspect_ratio=ImageAspectRatio.WIDE,
-                            quality=ImageQuality.HIGH
-                        )
-                        featured_image_response = await image_provider_manager.generate_image(featured_image_request)
-                        if featured_image_response.success and featured_image_response.images:
-                            image = featured_image_response.images[0]
-                            # GeneratedImage is a Pydantic model, use attribute access not .get()
-                            image_url = str(image.image_url) if image.image_url else None
-                            image_data = image.image_data if image.image_data else None
-                            generated_images.append({
-                                "type": "featured",
-                                "prompt": featured_image_request.prompt,
-                                "image_url": image_url or (f"data:image/png;base64,{image_data}" if image_data else None),
-                                "alt_text": f"Featured image for {request.topic}"
-                            })
-                            logger.info("Featured image generated successfully")
-                        else:
-                            error_msg = featured_image_response.error_message if hasattr(featured_image_response, 'error_message') else "Unknown error"
-                            image_generation_warnings.append(f"Featured image generation failed: {error_msg}")
-                            logger.warning(f"Featured image generation failed: {error_msg}")
-                    except Exception as e:
-                        error_msg = f"Featured image generation exception: {str(e)}"
-                        image_generation_warnings.append(error_msg)
-                        logger.error(error_msg, exc_info=True)
-                    
-                    # Generate section images (if brand recommendations exist)
-                    if additional_context.get("brand_recommendations"):
-                        brands = additional_context["brand_recommendations"].get("brands", [])[:3]
-                        for brand in brands:
-                            try:
-                                brand_image_request = ImageGenerationRequest(
-                                    prompt=f"Professional product image: {brand} {request.keywords[0] if request.keywords else ''}. Clean, professional, product photography style",
-                                    style=ImageStyle.PHOTOGRAPHIC,
-                                    aspect_ratio=ImageAspectRatio.FOUR_THREE,
-                                    quality=ImageQuality.STANDARD
-                                )
-                                brand_image_response = await image_provider_manager.generate_image(brand_image_request)
-                                if brand_image_response.success and brand_image_response.images:
-                                    brand_image = brand_image_response.images[0]
-                                    # GeneratedImage is a Pydantic model, use attribute access not .get()
-                                    brand_image_url = str(brand_image.image_url) if brand_image.image_url else None
-                                    brand_image_data = brand_image.image_data if brand_image.image_data else None
-                                    generated_images.append({
-                                        "type": "product",
-                                        "brand": brand,
-                                        "prompt": brand_image_request.prompt,
-                                        "image_url": brand_image_url or (f"data:image/png;base64,{brand_image_data}" if brand_image_data else None),
-                                        "alt_text": f"{brand} product image"
-                                    })
-                                else:
-                                    error_msg = brand_image_response.error_message if hasattr(brand_image_response, 'error_message') else "Unknown error"
-                                    logger.warning(f"Brand image generation failed for {brand}: {error_msg}")
-                            except Exception as e:
-                                logger.warning(f"Brand image generation failed for {brand}: {e}", exc_info=True)
-                else:
-                    logger.debug(f"Topic '{request.topic}' does not match product indicators, skipping image generation")
-            except ImportError as e:
-                error_msg = f"Image generation module not available: {str(e)}"
-                image_generation_warnings.append(error_msg)
-                logger.error(error_msg, exc_info=True)
-            except Exception as e:
-                error_msg = f"Image generation integration failed: {str(e)}"
-                image_generation_warnings.append(error_msg)
-                logger.error(error_msg, exc_info=True)
-        
-        # Auto-insert generated images into content
-        if generated_images and len(generated_images) > 0:
-            try:
-                from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
-                final_content = insert_images_into_markdown(
-                    pipeline_result.final_content,
-                    generated_images
-                )
-                logger.info(f"Inserted {len(generated_images)} images into content")
-            except Exception as e:
-                logger.warning(f"Failed to insert images into content: {e}")
-                final_content = pipeline_result.final_content
-        else:
-            final_content = pipeline_result.final_content
+        # Image generation has been moved to a separate endpoint
+        # Frontend should call /api/v1/images/generate separately after blog generation
+        final_content = pipeline_result.final_content
         
         # Add citations if enabled
         citations = []
@@ -1267,11 +1163,9 @@ async def generate_blog_enhanced(
         # Enhance SEO metadata with OG and Twitter tags
         enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
         
-        # Get featured image URL if available
+        # Get featured image URL if available (from structured data)
         featured_image_url = None
-        if generated_images and len(generated_images) > 0:
-            featured_image_url = generated_images[0].get("image_url")
-        elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
+        if pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
             featured_image_url = pipeline_result.structured_data.get("image")
         
         # Generate canonical URL (should be set by frontend, but provide default)
@@ -1366,10 +1260,10 @@ async def generate_blog_enhanced(
             structured_data=enhanced_structured_data,
             semantic_keywords=semantic_keywords,
             content_metadata=content_metadata,
-            generated_images=generated_images if generated_images else None,
+            generated_images=None,  # Image generation moved to separate endpoint
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=image_generation_warnings if image_generation_warnings else [],
+            warnings=[],  # Image generation warnings removed (use separate endpoint)
             progress_updates=progress_updates  # Include progress updates for frontend
         )
         
@@ -1513,57 +1407,9 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 additional_context=additional_context
             )
             
-            # Generate images if needed (same logic as synchronous endpoint)
-            generated_images = []
-            image_generation_warnings = []
-            
-            if blog_request.use_google_search:
-                try:
-                    from src.blog_writer_sdk.api.image_generation import image_provider_manager
-                    from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
-                    
-                    product_indicators = ["best", "top", "review", "compare", "guide"]
-                    is_product_topic = any(indicator in blog_request.topic.lower() for indicator in product_indicators)
-                    
-                    if image_provider_manager and image_provider_manager.providers and is_product_topic:
-                        # Generate featured image
-                        try:
-                            featured_image_request = ImageGenerationRequest(
-                                prompt=f"Professional product photography: {blog_request.topic}. High quality, clean background, professional lighting",
-                                style=ImageStyle.PHOTOGRAPHIC,
-                                aspect_ratio=ImageAspectRatio.WIDE,
-                                quality=ImageQuality.HIGH
-                            )
-                            featured_image_response = await image_provider_manager.generate_image(featured_image_request)
-                            if featured_image_response.success and featured_image_response.images:
-                                image = featured_image_response.images[0]
-                                # GeneratedImage is a Pydantic model, use attribute access not .get()
-                                image_url = str(image.image_url) if image.image_url else None
-                                image_data = image.image_data if image.image_data else None
-                                generated_images.append({
-                                    "type": "featured",
-                                    "prompt": featured_image_request.prompt,
-                                    "image_url": image_url or (f"data:image/png;base64,{image_data}" if image_data else None),
-                                    "alt_text": f"Featured image for {blog_request.topic}"
-                                })
-                        except Exception as e:
-                            image_generation_warnings.append(f"Featured image generation failed: {str(e)}")
-                except Exception as e:
-                    image_generation_warnings.append(f"Image generation failed: {str(e)}")
-            
-            # Auto-insert generated images into content
-            if generated_images and len(generated_images) > 0:
-                try:
-                    from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
-                    final_content = insert_images_into_markdown(
-                        pipeline_result.final_content,
-                        generated_images
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to insert images: {e}")
-                    final_content = pipeline_result.final_content
-            else:
-                final_content = pipeline_result.final_content
+            # Image generation has been moved to a separate endpoint
+            # Frontend should call /api/v1/images/generate separately after blog generation
+            final_content = pipeline_result.final_content
             
             # Add citations if enabled
             citations = []
@@ -1616,11 +1462,9 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Enhance SEO metadata
             enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
             
-            # Get featured image URL
+            # Get featured image URL if available (from structured data)
             featured_image_url = None
-            if generated_images and len(generated_images) > 0:
-                featured_image_url = generated_images[0].get("image_url")
-            elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
+            if pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
                 featured_image_url = pipeline_result.structured_data.get("image")
             
             # Generate canonical URL
@@ -1698,10 +1542,10 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 structured_data=enhanced_structured_data,
                 semantic_keywords=semantic_keywords,
                 content_metadata=content_metadata,
-                generated_images=generated_images if generated_images else None,
+                generated_images=None,  # Image generation moved to separate endpoint
                 brand_recommendations=brand_recommendations,
                 success=True,
-                warnings=image_generation_warnings if image_generation_warnings else [],
+                warnings=[],  # Image generation warnings removed (use separate endpoint)
                 progress_updates=progress_updates
             )
             
@@ -1779,6 +1623,7 @@ async def get_job_status(job_id: str):
         status=job.status,
         progress_percentage=job.progress_percentage,
         current_stage=job.current_stage,
+        progress_updates=job.progress_updates,  # Include all progress updates for stage tracking
         created_at=job.created_at,
         started_at=job.started_at,
         completed_at=job.completed_at,
