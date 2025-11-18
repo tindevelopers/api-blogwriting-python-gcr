@@ -1134,7 +1134,7 @@ async def generate_blog_enhanced(
                         featured_image_request = ImageGenerationRequest(
                             prompt=f"Professional product photography: {request.topic}. High quality, clean background, professional lighting",
                             style=ImageStyle.PHOTOGRAPHIC,
-                            aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
+                            aspect_ratio=ImageAspectRatio.WIDE,
                             quality=ImageQuality.HIGH
                         )
                         featured_image_response = await image_provider_manager.generate_image(featured_image_request)
@@ -1523,7 +1523,7 @@ async def blog_generation_worker(request: Dict[str, Any]):
                             featured_image_request = ImageGenerationRequest(
                                 prompt=f"Professional product photography: {blog_request.topic}. High quality, clean background, professional lighting",
                                 style=ImageStyle.PHOTOGRAPHIC,
-                                aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
+                                aspect_ratio=ImageAspectRatio.WIDE,
                                 quality=ImageQuality.HIGH
                             )
                             featured_image_response = await image_provider_manager.generate_image(featured_image_request)
