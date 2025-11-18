@@ -735,12 +735,20 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         except (ValueError, TypeError):
             trend_score = float(basic.trend_score) if basic.trend_score is not None else 0.0
         
+        # Get difficulty_score from enhanced data
+        difficulty_score_val = enhanced.get("difficulty_score")
+        if difficulty_score_val is not None:
+            try:
+                difficulty_score_val = float(difficulty_score_val)
+            except (ValueError, TypeError):
+                difficulty_score_val = None
+        
         # Recalculate difficulty based on real metrics
         difficulty = self._calculate_enhanced_difficulty(
             basic.keyword,
             search_volume,
             competition,
-            enhanced.get("difficulty_score")
+            difficulty_score_val
         )
         
         # Update recommendation based on enhanced data
@@ -752,7 +760,8 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             cpc
         )
         
-        return KeywordAnalysis(
+        # Create KeywordAnalysis and store difficulty_score in model's extra fields if possible
+        analysis = KeywordAnalysis(
             keyword=basic.keyword,
             search_volume=search_volume,
             global_search_volume=enhanced.get("global_search_volume"),
@@ -781,6 +790,24 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             recommended=recommended,
             reason=reason,
         )
+        
+        # Store difficulty_score as an attribute on the model instance for API access
+        # This allows us to access it later even though it's not in the model definition
+        if difficulty_score_val is not None:
+            setattr(analysis, 'difficulty_score', difficulty_score_val)
+        else:
+            # Calculate approximate score from difficulty enum if not available
+            enum_to_score = {
+                "VERY_EASY": 10.0,
+                "EASY": 30.0,
+                "MEDIUM": 50.0,
+                "HARD": 70.0,
+                "VERY_HARD": 90.0
+            }
+            difficulty_enum = difficulty.value if hasattr(difficulty, "value") else str(difficulty)
+            setattr(analysis, 'difficulty_score', enum_to_score.get(difficulty_enum, 50.0))
+        
+        return analysis
 
     @staticmethod
     def _safe_int(value: Any, default: int = 0) -> int:

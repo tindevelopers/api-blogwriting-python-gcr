@@ -1879,8 +1879,25 @@ async def analyze_keywords(
                     cpc_value = analysis.cpc if analysis.cpc is not None else 0.0
                     competition_value = analysis.competition if analysis.competition is not None else 0.0
                     
+                    # Get difficulty_score from analysis object (stored as attribute)
+                    difficulty_score = getattr(analysis, 'difficulty_score', None)
+                    
+                    # If difficulty_score not available, calculate from difficulty enum
+                    if difficulty_score is None:
+                        difficulty_enum = analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty)
+                        # Map enum to approximate numeric score
+                        enum_to_score = {
+                            "VERY_EASY": 10.0,
+                            "EASY": 30.0,
+                            "MEDIUM": 50.0,
+                            "HARD": 70.0,
+                            "VERY_HARD": 90.0
+                        }
+                        difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+                    
                     keyword_analysis[kw] = {
                         "difficulty": analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty),
+                        "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,  # Numeric score for gauge
                         "search_volume": search_volume,  # Always numeric
                         "global_search_volume": analysis.global_search_volume or 0,
                         "search_volume_by_country": analysis.search_volume_by_country,
@@ -1921,8 +1938,20 @@ async def analyze_keywords(
             analysis_dict = analysis.model_dump()
             difficulty_value = analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty)
             
+            # Calculate difficulty_score from difficulty enum for fallback
+            difficulty_enum = difficulty_value
+            enum_to_score = {
+                "VERY_EASY": 10.0,
+                "EASY": 30.0,
+                "MEDIUM": 50.0,
+                "HARD": 70.0,
+                "VERY_HARD": 90.0
+            }
+            difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+            
             results[keyword] = {
                 "difficulty": difficulty_value,
+                "difficulty_score": difficulty_score,  # Numeric score for gauge
                 "search_volume": analysis_dict.get("search_volume") or 0,
                 "global_search_volume": analysis_dict.get("global_search_volume") or 0,
                 "search_volume_by_country": analysis_dict.get("search_volume_by_country") or {},
@@ -2375,12 +2404,27 @@ async def analyze_keywords_enhanced(
             ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
             ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
             
+            # Get difficulty_score from analysis object (stored as attribute)
+            difficulty_score = getattr(v, 'difficulty_score', None)
+            if difficulty_score is None:
+                # Calculate from difficulty enum if not available
+                difficulty_enum = v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty)
+                enum_to_score = {
+                    "VERY_EASY": 10.0,
+                    "EASY": 30.0,
+                    "MEDIUM": 50.0,
+                    "HARD": 70.0,
+                    "VERY_HARD": 90.0
+                }
+                difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+            
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
                 "global_search_volume": v.global_search_volume or 0,
                 "search_volume_by_country": v.search_volume_by_country,
                 "monthly_searches": v.monthly_searches,
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
+                "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,  # Numeric score for gauge
                 "competition": competition_value,
                 "cpc": cpc_value,  # Always numeric
                 "cpc_currency": v.cpc_currency,
