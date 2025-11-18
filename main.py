@@ -983,11 +983,10 @@ async def generate_blog_enhanced(
                 # Get worker URL (Cloud Run service URL)
                 worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
                 if not worker_url:
-                    # Fallback: construct from environment
-                    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-                    region = os.getenv("GCP_LOCATION", "europe-west1")
-                    service_name = os.getenv("CLOUD_RUN_SERVICE_NAME", "blog-writer-api-dev")
-                    worker_url = f"https://{service_name}-{project_id}.{region}.run.app/api/v1/blog/worker"
+                    # Fallback: Use the actual service URL (Cloud Run URLs have unique hashes)
+                    # Default to the known dev service URL
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/blog/worker"
                 
                 # Create Cloud Task
                 task_name = cloud_tasks_service.create_blog_generation_task(

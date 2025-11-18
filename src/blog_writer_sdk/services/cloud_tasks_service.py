@@ -46,7 +46,10 @@ class CloudTasksService:
             return
             
         self.project_id = project_id or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT_ID")
-        self.location = location or os.getenv("GCP_LOCATION", "europe-west1")
+        # Cloud Tasks queue location (must be a valid Cloud Tasks region)
+        # Note: Queue can be in different region than Cloud Run service
+        # Using europe-west1 as it's closest to europe-west9 and is a valid Cloud Tasks location
+        self.location = location or os.getenv("CLOUD_TASKS_QUEUE_LOCATION", "europe-west1")
         self.queue_name = queue_name or os.getenv("CLOUD_TASKS_QUEUE_NAME", "blog-generation-queue")
         
         if not self.project_id:

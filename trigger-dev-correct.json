@@ -12,7 +12,7 @@
   },
   "filename": "cloudbuild.yaml",
   "substitutions": {
-    "_REGION": "europe-west1",
+    "_REGION": "europe-west9",
     "_ENV": "dev",
     "_SERVICE_NAME": "blog-writer-api-dev"
   }

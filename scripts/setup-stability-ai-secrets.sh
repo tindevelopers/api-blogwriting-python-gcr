@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 PROJECT_ID=${GOOGLE_CLOUD_PROJECT:-"api-ai-blog-writer"}
-REGION=${REGION:-"europe-west1"}
+REGION=${REGION:-"europe-west9"}
 SERVICE_NAME=${SERVICE_NAME:-"blog-writer-api-dev"}
 
 echo -e "${BLUE}🎨 Setting up Stability AI Secrets for Cloud Run${NC}"

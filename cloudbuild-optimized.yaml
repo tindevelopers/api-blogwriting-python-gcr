@@ -61,7 +61,7 @@ images:
 
 # Substitution variables
 substitutions:
-  _REGION: 'europe-west1'
+  _REGION: 'europe-west9'
   _ENV: 'dev'
   _SERVICE_NAME: 'blog-writer-api-dev'
 

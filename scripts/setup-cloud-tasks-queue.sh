@@ -4,7 +4,10 @@
 set -e
 
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-${GCP_PROJECT_ID}}"
-LOCATION="${GCP_LOCATION:-europe-west1}"
+# Cloud Tasks queue location (must be a valid Cloud Tasks region)
+# Note: Queue can be in different region than Cloud Run service
+# Using europe-west1 as it's closest to europe-west9 and is a valid Cloud Tasks location
+LOCATION="${CLOUD_TASKS_QUEUE_LOCATION:-europe-west1}"
 QUEUE_NAME="${CLOUD_TASKS_QUEUE_NAME:-blog-generation-queue}"
 
 if [ -z "$PROJECT_ID" ]; then
