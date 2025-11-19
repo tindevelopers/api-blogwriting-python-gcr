@@ -468,10 +468,22 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                     overview_entry.get("cpc") if overview_entry.get("cpc") 
                     else m.get("cpc", 0.0)
                 )
-                competition = self._safe_float(
-                    overview_entry.get("competition") if overview_entry.get("competition") is not None
-                    else m.get("competition", 0.0)
-                )
+                # Get competition - search_volume_data endpoint is more reliable for competition metrics
+                # Check search_volume_data first (Google Ads endpoint has better competition data)
+                search_volume_competition = m.get("competition")
+                overview_competition = overview_entry.get("competition")
+                
+                # Prioritize search_volume_data competition (more reliable), fall back to overview if not available
+                if search_volume_competition is not None and search_volume_competition > 0:
+                    competition = self._safe_float(search_volume_competition, 0.0)
+                elif overview_competition is not None and overview_competition > 0:
+                    competition = self._safe_float(overview_competition, 0.0)
+                elif search_volume_competition is not None:
+                    # Use search_volume_data even if 0 (it's the authoritative source)
+                    competition = self._safe_float(search_volume_competition, 0.0)
+                else:
+                    # Last resort: use overview or default to 0
+                    competition = self._safe_float(overview_competition, 0.0)
                 trend_score = self._safe_float(
                     overview_entry.get("trend_score") if overview_entry.get("trend_score") is not None
                     else m.get("trend", 0.0)
@@ -1021,6 +1033,34 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             or impressions_info.get("cost_per_sale")
         )
         
+        # Extract competition - check multiple possible locations
+        competition = (
+            keyword_info.get("competition")
+            or keyword_info.get("competition_index")
+            or keyword_properties.get("competition")
+            or keyword_properties.get("competition_index")
+            or item.get("competition")
+            or item.get("competition_index")
+            or 0.0
+        )
+        # Convert competition_level to numeric if needed (LOW=0.33, MEDIUM=0.66, HIGH=1.0)
+        if competition == 0.0:
+            competition_level = (
+                keyword_info.get("competition_level")
+                or keyword_properties.get("competition_level")
+                or item.get("competition_level")
+            )
+            if competition_level:
+                level_map = {
+                    "LOW": 0.33,
+                    "MEDIUM": 0.66,
+                    "HIGH": 1.0,
+                    "low": 0.33,
+                    "medium": 0.66,
+                    "high": 1.0,
+                }
+                competition = level_map.get(str(competition_level).upper(), 0.0)
+        
         entry = {
             "keyword": keyword,
             "search_volume": keyword_info.get("search_volume", 0),
@@ -1030,7 +1070,7 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             "monthly_searches": keyword_info.get("monthly_searches", []),
             "cpc": keyword_info.get("cpc", 0.0),
             "cpc_currency": keyword_info.get("currency"),
-            "competition": keyword_info.get("competition", 0.0),
+            "competition": self._safe_float(competition, 0.0),
             "trend_score": keyword_info.get("trend", 0.0),
             "keyword_difficulty": keyword_properties.get("keyword_difficulty", keyword_info.get("keyword_difficulty")),
             "cps": cps,
