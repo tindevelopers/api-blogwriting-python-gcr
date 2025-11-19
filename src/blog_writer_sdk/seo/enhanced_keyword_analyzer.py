@@ -220,52 +220,8 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
             return []
     
     async def _get_dataforseo_metrics(self, keyword: str, tenant_id: str = "default") -> Dict[str, Any]:
-        """Get comprehensive keyword metrics from DataForSEO (direct API if available)."""
+        """Get comprehensive keyword metrics from DataForSEO using multiple endpoints."""
         if not (self.use_dataforseo and self._df_client):
-            return {
-                "search_volume": 0,  # Return 0 instead of None
-                "cpc": 0.0,  # Return 0.0 instead of None
-                "competition": 0.0,
-                "trend_score": 0.0,
-                "difficulty_score": 50.0,  # Return default instead of None
-            }
-
-        try:
-            # Ensure credentials are initialized
-            await self._df_client.initialize_credentials(tenant_id)
-            
-            # Get search volume data with proper parameters (this uses basic endpoint that should work)
-            sv_data = await self._df_client.get_search_volume_data(
-                keywords=[keyword],
-                location_name=self.location,
-                language_code=self.language_code,
-                tenant_id=tenant_id
-            )
-            m = sv_data.get(keyword, {})
-            
-            # Get difficulty data (this uses Labs endpoint - may fail, but we'll handle it gracefully)
-            diff_data = {}
-            try:
-                diff_data = await self._df_client.get_keyword_difficulty(
-                    keywords=[keyword],
-                    location_name=self.location,
-                    language_code=self.language_code,
-                    tenant_id=tenant_id
-                )
-            except Exception as diff_error:
-                logger.warning(f"Keyword difficulty fetch failed (Labs endpoint may require paid plan): {diff_error}")
-                # Continue with default difficulty score
-            
-            return {
-                "search_volume": m.get("search_volume", 0) or 0,  # Ensure numeric, default to 0
-                "cpc": m.get("cpc", 0.0) or 0.0,  # Ensure numeric, default to 0.0
-                "competition": m.get("competition", 0.0) or 0.0,
-                "trend_score": m.get("trend", 0.0) or 0.0,
-                "difficulty_score": diff_data.get(keyword, 50.0) or 50.0,
-            }
-        except Exception as e:
-            logger.error(f"Error fetching DataForSEO metrics for {keyword}: {e}")
-            # Return defaults instead of None
             return {
                 "search_volume": 0,
                 "cpc": 0.0,
@@ -273,6 +229,137 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 "trend_score": 0.0,
                 "difficulty_score": 50.0,
             }
+
+        try:
+            # Ensure credentials are initialized
+            await self._df_client.initialize_credentials(tenant_id)
+            
+            # Try keyword overview first (most comprehensive endpoint)
+            overview_data = {}
+            try:
+                overview_response = await self._df_client.get_keyword_overview(
+                    keywords=[keyword],
+                    location_name=self.location,
+                    language_code=self.language_code,
+                    tenant_id=tenant_id
+                )
+                # Parse overview response
+                overview_map, _ = self._parse_keyword_overview_response(overview_response)
+                overview_entry = overview_map.get(keyword, {})
+                if overview_entry:
+                    overview_data = {
+                        "search_volume": self._safe_int(overview_entry.get("search_volume"), 0),
+                        "global_search_volume": self._safe_int(overview_entry.get("global_search_volume"), 0),
+                        "cpc": self._safe_float(overview_entry.get("cpc"), 0.0),
+                        "competition": self._safe_float(overview_entry.get("competition"), 0.0),
+                        "monthly_searches": overview_entry.get("monthly_searches", []),
+                        "clicks": overview_entry.get("clicks"),
+                        "cps": overview_entry.get("cps"),
+                        "traffic_potential": overview_entry.get("traffic_potential"),
+                        "search_volume_by_country": overview_entry.get("search_volume_by_country", {}),
+                        "difficulty_score": self._safe_float(overview_entry.get("keyword_difficulty"), 50.0),
+                        "trend_score": self._safe_float(overview_entry.get("trend_score"), 0.0),
+                    }
+                    logger.debug(f"Keyword '{keyword}': Using overview data. SV: {overview_data.get('search_volume')}, CPC: {overview_data.get('cpc')}")
+            except Exception as overview_error:
+                logger.warning(f"Keyword overview failed for '{keyword}', trying search volume: {overview_error}")
+            
+            # Fallback to search volume endpoint if overview didn't work or returned no data
+            if not overview_data.get("search_volume"):
+                try:
+                    sv_data = await self._df_client.get_search_volume_data(
+                        keywords=[keyword],
+                        location_name=self.location,
+                        language_code=self.language_code,
+                        tenant_id=tenant_id
+                    )
+                    m = sv_data.get(keyword, {})
+                    if m.get("search_volume") or m.get("cpc"):
+                        overview_data.update({
+                            "search_volume": self._safe_int(m.get("search_volume"), 0),
+                            "cpc": self._safe_float(m.get("cpc"), 0.0),
+                            "competition": self._safe_float(m.get("competition"), 0.0),
+                            "monthly_searches": m.get("monthly_searches", []),
+                            "trend_score": self._safe_float(m.get("trend", 0.0), 0.0),
+                        })
+                        logger.debug(f"Keyword '{keyword}': Using search volume data. SV: {overview_data.get('search_volume')}, CPC: {overview_data.get('cpc')}")
+                except Exception as sv_error:
+                    logger.warning(f"Search volume endpoint also failed for '{keyword}': {sv_error}")
+            
+            # Get difficulty if not already in overview data
+            if not overview_data.get("difficulty_score") or overview_data.get("difficulty_score") == 50.0:
+                try:
+                    diff_data = await self._df_client.get_keyword_difficulty(
+                        keywords=[keyword],
+                        location_name=self.location,
+                        language_code=self.language_code,
+                        tenant_id=tenant_id
+                    )
+                    difficulty_score = diff_data.get(keyword)
+                    if difficulty_score is not None:
+                        overview_data["difficulty_score"] = self._safe_float(difficulty_score, 50.0)
+                except Exception as diff_error:
+                    logger.warning(f"Keyword difficulty fetch failed: {diff_error}")
+            
+            # Calculate trend score from monthly searches if not available
+            if not overview_data.get("trend_score") and overview_data.get("monthly_searches"):
+                overview_data["trend_score"] = self._calculate_trend_score(overview_data["monthly_searches"])
+            
+            return {
+                "search_volume": overview_data.get("search_volume", 0),
+                "global_search_volume": overview_data.get("global_search_volume", 0),
+                "cpc": overview_data.get("cpc", 0.0),
+                "competition": overview_data.get("competition", 0.0),
+                "trend_score": overview_data.get("trend_score", 0.0),
+                "difficulty_score": overview_data.get("difficulty_score", 50.0),
+                "monthly_searches": overview_data.get("monthly_searches", []),
+                "clicks": overview_data.get("clicks"),
+                "cps": overview_data.get("cps"),
+                "traffic_potential": overview_data.get("traffic_potential"),
+                "search_volume_by_country": overview_data.get("search_volume_by_country", {}),
+            }
+        except Exception as e:
+            logger.error(f"Error fetching DataForSEO metrics for {keyword}: {e}")
+            return {
+                "search_volume": 0,
+                "cpc": 0.0,
+                "competition": 0.0,
+                "trend_score": 0.0,
+                "difficulty_score": 50.0,
+            }
+    
+    def _calculate_trend_score(self, monthly_searches: List[Dict[str, Any]]) -> float:
+        """Calculate trend score from monthly searches data."""
+        if not monthly_searches or len(monthly_searches) < 2:
+            return 0.0
+        
+        try:
+            # Get last 6 months if available
+            recent = monthly_searches[-6:] if len(monthly_searches) >= 6 else monthly_searches
+            volumes = []
+            for entry in recent:
+                if isinstance(entry, dict):
+                    vol = entry.get("search_volume") or entry.get("value") or 0
+                else:
+                    vol = int(entry) if isinstance(entry, (int, float)) else 0
+                volumes.append(vol)
+            
+            if len(volumes) < 2:
+                return 0.0
+            
+            # Calculate trend: positive if increasing, negative if decreasing
+            first_half = sum(volumes[:len(volumes)//2]) / (len(volumes)//2)
+            second_half = sum(volumes[len(volumes)//2:]) / (len(volumes) - len(volumes)//2)
+            
+            if first_half == 0:
+                return 0.0
+            
+            trend = (second_half - first_half) / first_half
+            # Normalize to -1.0 to 1.0 range
+            return max(-1.0, min(1.0, trend))
+        except Exception as e:
+            logger.warning(f"Failed to calculate trend score: {e}")
+            return 0.0
     
     async def _get_dataforseo_batch_metrics(self, keywords: List[str], tenant_id: str = "default") -> Dict[str, Dict[str, Any]]:
         """Get metrics for multiple keywords in batch from DataForSEO (direct API)."""

@@ -2227,6 +2227,114 @@ async def analyze_keywords_enhanced(
                 logger.warning(f"Failed to get AI optimization data: {e}")
                 # Continue without AI data
         
+        # Get related keywords and keyword ideas (questions/topics) for primary keywords
+        related_keywords_data = {}
+        keyword_ideas_data = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                # Get related keywords (graph-based) and keyword ideas for primary keywords only
+                max_primary = min(len(limited_keywords), 5)  # Limit to 5 primary keywords to avoid too many API calls
+                for primary_keyword in limited_keywords[:max_primary]:
+                    try:
+                        # Get related keywords (graph traversal)
+                        related_response = await enhanced_analyzer._df_client.get_related_keywords(
+                            keyword=primary_keyword,
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            depth=1,  # Start with depth 1 for speed
+                            limit=20  # Limit to top 20 related keywords
+                        )
+                        # Parse related keywords response
+                        related_keywords_list = []
+                        if related_response.get("tasks") and related_response["tasks"][0].get("result"):
+                            for item in related_response["tasks"][0]["result"][:20]:  # Limit to 20
+                                kw_data = item.get("keyword_data", {}).get("keyword_info", {})
+                                related_keywords_list.append({
+                                    "keyword": item.get("keyword") or kw_data.get("keyword", ""),
+                                    "search_volume": kw_data.get("search_volume", 0) or 0,
+                                    "cpc": kw_data.get("cpc", 0.0) or 0.0,
+                                    "competition": kw_data.get("competition", 0.0) or 0.0,
+                                    "difficulty_score": kw_data.get("keyword_difficulty", 50.0) or 50.0,
+                                })
+                        related_keywords_data[primary_keyword] = related_keywords_list
+                    except Exception as e:
+                        logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
+                        related_keywords_data[primary_keyword] = []
+                    
+                    try:
+                        # Get keyword ideas (includes questions and topics)
+                        ideas_response = await enhanced_analyzer._df_client.get_keyword_ideas(
+                            keywords=[primary_keyword],
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            limit=50  # Limit to 50 ideas per keyword
+                        )
+                        # Parse keyword ideas response (returns list directly)
+                        ideas_list = []
+                        questions_list = []
+                        topics_list = []
+                        
+                        # ideas_response is already a list of items
+                        if isinstance(ideas_response, list):
+                            for item in ideas_response[:50]:  # Limit to 50
+                                keyword_text = item.get("keyword", "")
+                                keyword_info = item.get("keyword_info", {})
+                                idea_item = {
+                                    "keyword": keyword_text,
+                                    "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                    "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                    "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                    "difficulty_score": keyword_info.get("keyword_difficulty", 0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                }
+                                ideas_list.append(idea_item)
+                                
+                                # Categorize as question or topic
+                                keyword_lower = keyword_text.lower()
+                                if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                    questions_list.append(idea_item)
+                                else:
+                                    topics_list.append(idea_item)
+                        elif isinstance(ideas_response, dict) and ideas_response.get("tasks"):
+                            # Handle task-based response format
+                            for task in ideas_response.get("tasks", []):
+                                for item in task.get("result", [])[:50]:
+                                    keyword_text = item.get("keyword", "")
+                                    keyword_info = item.get("keyword_data", {}).get("keyword_info", {})
+                                    idea_item = {
+                                        "keyword": keyword_text,
+                                        "search_volume": keyword_info.get("search_volume", 0) or 0,
+                                        "cpc": keyword_info.get("cpc", 0.0) or 0.0,
+                                        "competition": keyword_info.get("competition", 0.0) or 0.0,
+                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or 50.0,
+                                    }
+                                    ideas_list.append(idea_item)
+                                    
+                                    keyword_lower = keyword_text.lower()
+                                    if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                        questions_list.append(idea_item)
+                                    else:
+                                        topics_list.append(idea_item)
+                        
+                        keyword_ideas_data[primary_keyword] = {
+                            "all_ideas": ideas_list,
+                            "questions": questions_list,
+                            "topics": topics_list,
+                        }
+                    except Exception as e:
+                        logger.warning(f"Failed to get keyword ideas for {primary_keyword}: {e}")
+                        keyword_ideas_data[primary_keyword] = {
+                            "all_ideas": [],
+                            "questions": [],
+                            "topics": [],
+                        }
+            except Exception as e:
+                logger.warning(f"Failed to get related keywords and ideas: {e}")
+        
         # Shape into a simple dict for API response with parent topics
         out = {}
         for k, v in results.items():
@@ -2274,6 +2382,14 @@ async def analyze_keywords_enhanced(
                 }
                 difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
             
+            # Get related keywords and ideas for this keyword if available
+            related_keywords_enhanced = related_keywords_data.get(k, [])
+            keyword_ideas_enhanced = keyword_ideas_data.get(k, {
+                "all_ideas": [],
+                "questions": [],
+                "topics": [],
+            })
+            
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
                 "global_search_volume": v.global_search_volume or 0,
@@ -2289,8 +2405,12 @@ async def analyze_keywords_enhanced(
                 "trend_score": trend_score_value,
                 "recommended": v.recommended,
                 "reason": v.reason,
-                "related_keywords": v.related_keywords,
+                "related_keywords": v.related_keywords,  # Basic related keywords from content analysis
+                "related_keywords_enhanced": related_keywords_enhanced,  # Graph-based related keywords from DataForSEO
                 "long_tail_keywords": v.long_tail_keywords,
+                "questions": keyword_ideas_enhanced.get("questions", []),  # Question-type keywords
+                "topics": keyword_ideas_enhanced.get("topics", []),  # Topic-type keywords
+                "keyword_ideas": keyword_ideas_enhanced.get("all_ideas", []),  # All keyword ideas
                 "parent_topic": parent_topic,
                 "category_type": category_type,
                 "cluster_score": cluster_score,
