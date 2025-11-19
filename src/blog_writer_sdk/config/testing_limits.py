@@ -22,11 +22,11 @@ def get_testing_limits() -> Dict[str, Any]:
         Dictionary with all testing limits
     """
     return {
-        # Keyword research limits
-        "max_keywords": 5,  # Primary keywords per search session
-        "max_suggestions_per_keyword": 5,  # Related keywords per primary
-        "max_long_tail": 5,  # Long-tail variations per primary
-        "max_total_keywords": 25,  # Total keywords per session (primary + related + long-tail)
+        # Keyword research limits (optimized for testing: good coverage, reasonable costs)
+        "max_keywords": 3,  # Primary keywords per search session (reduced from 5 to save credits)
+        "max_suggestions_per_keyword": 15,  # Related keywords per primary (increased from 5 to see full response structure)
+        "max_long_tail": 10,  # Long-tail variations per primary (increased from 5 for better variety)
+        "max_total_keywords": 50,  # Total keywords per session (increased from 25 to test clustering properly)
         
         # Backlinks data limits
         "max_backlinks": 20,  # Backlinks per domain
