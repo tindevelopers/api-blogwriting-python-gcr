@@ -528,7 +528,7 @@ See [CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md) for detailed instructions
 1. **Setup Google Cloud**: Configure your Google Cloud project and enable Cloud Run
 2. **Environment Variables**: Set up your environment variables in Google Cloud Secret Manager
 3. **Deploy**: Push to branches triggers automatic deployment via GitHub Actions
-   - `develop` branch → Deploys to `europe-west1` (dev environment)
+   - `develop` branch → Deploys to `europe-west9` (dev environment)
    - `main`/`master` branch → Deploys to `us-east1` (prod environment)
 
 ```bash

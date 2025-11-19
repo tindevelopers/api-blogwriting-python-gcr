@@ -11,6 +11,7 @@ import logging
 import asyncio
 import uuid
 import math
+import json
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
@@ -983,11 +984,10 @@ async def generate_blog_enhanced(
                 # Get worker URL (Cloud Run service URL)
                 worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
                 if not worker_url:
-                    # Fallback: construct from environment
-                    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-                    region = os.getenv("GCP_LOCATION", "europe-west1")
-                    service_name = os.getenv("CLOUD_RUN_SERVICE_NAME", "blog-writer-api-dev")
-                    worker_url = f"https://{service_name}-{project_id}.{region}.run.app/api/v1/blog/worker"
+                    # Fallback: Use the actual service URL (Cloud Run URLs have unique hashes)
+                    # Default to the known dev service URL
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/blog/worker"
                 
                 # Create Cloud Task
                 task_name = cloud_tasks_service.create_blog_generation_task(
@@ -1107,105 +1107,9 @@ async def generate_blog_enhanced(
             additional_context=additional_context
         )
         
-        # Generate images if this is a product-related topic
-        generated_images = []
-        image_generation_warnings = []
-        
-        if request.use_google_search:  # Only if Google Search is enabled (indicates research was done)
-            try:
-                from src.blog_writer_sdk.api.image_generation import image_provider_manager
-                from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
-                
-                # Check if topic suggests product content
-                product_indicators = ["best", "top", "review", "compare", "guide"]
-                is_product_topic = any(indicator in request.topic.lower() for indicator in product_indicators)
-                
-                # Check if image providers are available
-                if not image_provider_manager:
-                    image_generation_warnings.append("Image provider manager not initialized")
-                    logger.warning("Image provider manager not available")
-                elif not image_provider_manager.providers:
-                    image_generation_warnings.append("No image providers configured. STABILITY_AI_API_KEY may be missing.")
-                    logger.warning("No image providers available. Check STABILITY_AI_API_KEY configuration.")
-                elif is_product_topic:
-                    logger.info("Generating images for product blog post")
-                    
-                    # Generate featured image
-                    try:
-                        featured_image_request = ImageGenerationRequest(
-                            prompt=f"Professional product photography: {request.topic}. High quality, clean background, professional lighting",
-                            style=ImageStyle.PHOTOGRAPHIC,
-                            aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
-                            quality=ImageQuality.HIGH
-                        )
-                        featured_image_response = await image_provider_manager.generate_image(featured_image_request)
-                        if featured_image_response.success and featured_image_response.images:
-                            generated_images.append({
-                                "type": "featured",
-                                "prompt": featured_image_request.prompt,
-                                "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
-                                "alt_text": f"Featured image for {request.topic}"
-                            })
-                            logger.info("Featured image generated successfully")
-                        else:
-                            error_msg = featured_image_response.error_message if hasattr(featured_image_response, 'error_message') else "Unknown error"
-                            image_generation_warnings.append(f"Featured image generation failed: {error_msg}")
-                            logger.warning(f"Featured image generation failed: {error_msg}")
-                    except Exception as e:
-                        error_msg = f"Featured image generation exception: {str(e)}"
-                        image_generation_warnings.append(error_msg)
-                        logger.error(error_msg, exc_info=True)
-                    
-                    # Generate section images (if brand recommendations exist)
-                    if additional_context.get("brand_recommendations"):
-                        brands = additional_context["brand_recommendations"].get("brands", [])[:3]
-                        for brand in brands:
-                            try:
-                                brand_image_request = ImageGenerationRequest(
-                                    prompt=f"Professional product image: {brand} {request.keywords[0] if request.keywords else ''}. Clean, professional, product photography style",
-                                    style=ImageStyle.PHOTOGRAPHIC,
-                                    aspect_ratio=ImageAspectRatio.FOUR_THREE,
-                                    quality=ImageQuality.STANDARD
-                                )
-                                brand_image_response = await image_provider_manager.generate_image(brand_image_request)
-                                if brand_image_response.success and brand_image_response.images:
-                                    generated_images.append({
-                                        "type": "product",
-                                        "brand": brand,
-                                        "prompt": brand_image_request.prompt,
-                                        "image_url": brand_image_response.images[0].get("image_url") or brand_image_response.images[0].get("image_data"),
-                                        "alt_text": f"{brand} product image"
-                                    })
-                                else:
-                                    error_msg = brand_image_response.error_message if hasattr(brand_image_response, 'error_message') else "Unknown error"
-                                    logger.warning(f"Brand image generation failed for {brand}: {error_msg}")
-                            except Exception as e:
-                                logger.warning(f"Brand image generation failed for {brand}: {e}", exc_info=True)
-                else:
-                    logger.debug(f"Topic '{request.topic}' does not match product indicators, skipping image generation")
-            except ImportError as e:
-                error_msg = f"Image generation module not available: {str(e)}"
-                image_generation_warnings.append(error_msg)
-                logger.error(error_msg, exc_info=True)
-            except Exception as e:
-                error_msg = f"Image generation integration failed: {str(e)}"
-                image_generation_warnings.append(error_msg)
-                logger.error(error_msg, exc_info=True)
-        
-        # Auto-insert generated images into content
-        if generated_images and len(generated_images) > 0:
-            try:
-                from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
-                final_content = insert_images_into_markdown(
-                    pipeline_result.final_content,
-                    generated_images
-                )
-                logger.info(f"Inserted {len(generated_images)} images into content")
-            except Exception as e:
-                logger.warning(f"Failed to insert images into content: {e}")
-                final_content = pipeline_result.final_content
-        else:
-            final_content = pipeline_result.final_content
+        # Image generation has been moved to a separate endpoint
+        # Frontend should call /api/v1/images/generate separately after blog generation
+        final_content = pipeline_result.final_content
         
         # Add citations if enabled
         citations = []
@@ -1260,11 +1164,9 @@ async def generate_blog_enhanced(
         # Enhance SEO metadata with OG and Twitter tags
         enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
         
-        # Get featured image URL if available
+        # Get featured image URL if available (from structured data)
         featured_image_url = None
-        if generated_images and len(generated_images) > 0:
-            featured_image_url = generated_images[0].get("image_url") or generated_images[0].get("image_data")
-        elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
+        if pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
             featured_image_url = pipeline_result.structured_data.get("image")
         
         # Generate canonical URL (should be set by frontend, but provide default)
@@ -1359,10 +1261,10 @@ async def generate_blog_enhanced(
             structured_data=enhanced_structured_data,
             semantic_keywords=semantic_keywords,
             content_metadata=content_metadata,
-            generated_images=generated_images if generated_images else None,
+            generated_images=None,  # Image generation moved to separate endpoint
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=image_generation_warnings if image_generation_warnings else [],
+            warnings=[],  # Image generation warnings removed (use separate endpoint)
             progress_updates=progress_updates  # Include progress updates for frontend
         )
         
@@ -1506,53 +1408,9 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 additional_context=additional_context
             )
             
-            # Generate images if needed (same logic as synchronous endpoint)
-            generated_images = []
-            image_generation_warnings = []
-            
-            if blog_request.use_google_search:
-                try:
-                    from src.blog_writer_sdk.api.image_generation import image_provider_manager
-                    from src.blog_writer_sdk.models.image_models import ImageGenerationRequest, ImageStyle, ImageAspectRatio, ImageQuality
-                    
-                    product_indicators = ["best", "top", "review", "compare", "guide"]
-                    is_product_topic = any(indicator in blog_request.topic.lower() for indicator in product_indicators)
-                    
-                    if image_provider_manager and image_provider_manager.providers and is_product_topic:
-                        # Generate featured image
-                        try:
-                            featured_image_request = ImageGenerationRequest(
-                                prompt=f"Professional product photography: {blog_request.topic}. High quality, clean background, professional lighting",
-                                style=ImageStyle.PHOTOGRAPHIC,
-                                aspect_ratio=ImageAspectRatio.SIXTEEN_NINE,
-                                quality=ImageQuality.HIGH
-                            )
-                            featured_image_response = await image_provider_manager.generate_image(featured_image_request)
-                            if featured_image_response.success and featured_image_response.images:
-                                generated_images.append({
-                                    "type": "featured",
-                                    "prompt": featured_image_request.prompt,
-                                    "image_url": featured_image_response.images[0].get("image_url") or featured_image_response.images[0].get("image_data"),
-                                    "alt_text": f"Featured image for {blog_request.topic}"
-                                })
-                        except Exception as e:
-                            image_generation_warnings.append(f"Featured image generation failed: {str(e)}")
-                except Exception as e:
-                    image_generation_warnings.append(f"Image generation failed: {str(e)}")
-            
-            # Auto-insert generated images into content
-            if generated_images and len(generated_images) > 0:
-                try:
-                    from src.blog_writer_sdk.utils.content_metadata import insert_images_into_markdown
-                    final_content = insert_images_into_markdown(
-                        pipeline_result.final_content,
-                        generated_images
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to insert images: {e}")
-                    final_content = pipeline_result.final_content
-            else:
-                final_content = pipeline_result.final_content
+            # Image generation has been moved to a separate endpoint
+            # Frontend should call /api/v1/images/generate separately after blog generation
+            final_content = pipeline_result.final_content
             
             # Add citations if enabled
             citations = []
@@ -1605,11 +1463,9 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Enhance SEO metadata
             enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
             
-            # Get featured image URL
+            # Get featured image URL if available (from structured data)
             featured_image_url = None
-            if generated_images and len(generated_images) > 0:
-                featured_image_url = generated_images[0].get("image_url") or generated_images[0].get("image_data")
-            elif pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
+            if pipeline_result.structured_data and pipeline_result.structured_data.get("image"):
                 featured_image_url = pipeline_result.structured_data.get("image")
             
             # Generate canonical URL
@@ -1687,10 +1543,10 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 structured_data=enhanced_structured_data,
                 semantic_keywords=semantic_keywords,
                 content_metadata=content_metadata,
-                generated_images=generated_images if generated_images else None,
+                generated_images=None,  # Image generation moved to separate endpoint
                 brand_recommendations=brand_recommendations,
                 success=True,
-                warnings=image_generation_warnings if image_generation_warnings else [],
+                warnings=[],  # Image generation warnings removed (use separate endpoint)
                 progress_updates=progress_updates
             )
             
@@ -1768,6 +1624,7 @@ async def get_job_status(job_id: str):
         status=job.status,
         progress_percentage=job.progress_percentage,
         current_stage=job.current_stage,
+        progress_updates=job.progress_updates,  # Include all progress updates for stage tracking
         created_at=job.created_at,
         started_at=job.started_at,
         completed_at=job.completed_at,
@@ -1879,8 +1736,25 @@ async def analyze_keywords(
                     cpc_value = analysis.cpc if analysis.cpc is not None else 0.0
                     competition_value = analysis.competition if analysis.competition is not None else 0.0
                     
+                    # Get difficulty_score from analysis object (stored as attribute)
+                    difficulty_score = getattr(analysis, 'difficulty_score', None)
+                    
+                    # If difficulty_score not available, calculate from difficulty enum
+                    if difficulty_score is None:
+                        difficulty_enum = analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty)
+                        # Map enum to approximate numeric score
+                        enum_to_score = {
+                            "VERY_EASY": 10.0,
+                            "EASY": 30.0,
+                            "MEDIUM": 50.0,
+                            "HARD": 70.0,
+                            "VERY_HARD": 90.0
+                        }
+                        difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+                    
                     keyword_analysis[kw] = {
                         "difficulty": analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty),
+                        "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,  # Numeric score for gauge
                         "search_volume": search_volume,  # Always numeric
                         "global_search_volume": analysis.global_search_volume or 0,
                         "search_volume_by_country": analysis.search_volume_by_country,
@@ -1921,8 +1795,20 @@ async def analyze_keywords(
             analysis_dict = analysis.model_dump()
             difficulty_value = analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty)
             
+            # Calculate difficulty_score from difficulty enum for fallback
+            difficulty_enum = difficulty_value
+            enum_to_score = {
+                "VERY_EASY": 10.0,
+                "EASY": 30.0,
+                "MEDIUM": 50.0,
+                "HARD": 70.0,
+                "VERY_HARD": 90.0
+            }
+            difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+            
             results[keyword] = {
                 "difficulty": difficulty_value,
+                "difficulty_score": difficulty_score,  # Numeric score for gauge
                 "search_volume": analysis_dict.get("search_volume") or 0,
                 "global_search_volume": analysis_dict.get("global_search_volume") or 0,
                 "search_volume_by_country": analysis_dict.get("search_volume_by_country") or {},
@@ -2215,6 +2101,31 @@ async def analyze_keywords_enhanced(
     - Falls back to "United States" if IP detection fails or is unavailable
     """
     try:
+        # Use shared function without progress callbacks for standard endpoint
+        return await _analyze_keywords_with_progress(
+            request=request,
+            http_request=http_request,
+            progress_callback=None
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Enhanced keyword analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
+
+async def _analyze_keywords_with_progress_legacy(
+    request: EnhancedKeywordAnalysisRequest,
+    http_request: Request
+):
+    """
+    Legacy implementation - kept for reference.
+    Use _analyze_keywords_with_progress instead.
+    """
+    try:
         # Detect location from IP if not explicitly specified
         detected_location = None
         if not request.location or request.location == "United States":
@@ -2342,6 +2253,114 @@ async def analyze_keywords_enhanced(
                 logger.warning(f"Failed to get AI optimization data: {e}")
                 # Continue without AI data
         
+        # Get related keywords and keyword ideas (questions/topics) for primary keywords
+        related_keywords_data = {}
+        keyword_ideas_data = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                # Get related keywords (graph-based) and keyword ideas for primary keywords only
+                max_primary = min(len(limited_keywords), 5)  # Limit to 5 primary keywords to avoid too many API calls
+                for primary_keyword in limited_keywords[:max_primary]:
+                    try:
+                        # Get related keywords (graph traversal)
+                        related_response = await enhanced_analyzer._df_client.get_related_keywords(
+                            keyword=primary_keyword,
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            depth=1,  # Start with depth 1 for speed
+                            limit=20  # Limit to top 20 related keywords
+                        )
+                        # Parse related keywords response
+                        related_keywords_list = []
+                        if related_response.get("tasks") and related_response["tasks"][0].get("result"):
+                            for item in related_response["tasks"][0]["result"][:20]:  # Limit to 20
+                                kw_data = item.get("keyword_data", {}).get("keyword_info", {})
+                                related_keywords_list.append({
+                                    "keyword": item.get("keyword") or kw_data.get("keyword", ""),
+                                    "search_volume": kw_data.get("search_volume", 0) or 0,
+                                    "cpc": kw_data.get("cpc", 0.0) or 0.0,
+                                    "competition": kw_data.get("competition", 0.0) or 0.0,
+                                    "difficulty_score": kw_data.get("keyword_difficulty", 50.0) or 50.0,
+                                })
+                        related_keywords_data[primary_keyword] = related_keywords_list
+                    except Exception as e:
+                        logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
+                        related_keywords_data[primary_keyword] = []
+                    
+                    try:
+                        # Get keyword ideas (includes questions and topics)
+                        ideas_response = await enhanced_analyzer._df_client.get_keyword_ideas(
+                            keywords=[primary_keyword],
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            limit=50  # Limit to 50 ideas per keyword
+                        )
+                        # Parse keyword ideas response (returns list directly)
+                        ideas_list = []
+                        questions_list = []
+                        topics_list = []
+                        
+                        # ideas_response is already a list of items
+                        if isinstance(ideas_response, list):
+                            for item in ideas_response[:50]:  # Limit to 50
+                                keyword_text = item.get("keyword", "")
+                                keyword_info = item.get("keyword_info", {})
+                                idea_item = {
+                                    "keyword": keyword_text,
+                                    "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                    "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                    "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                    "difficulty_score": keyword_info.get("keyword_difficulty", 0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                }
+                                ideas_list.append(idea_item)
+                                
+                                # Categorize as question or topic
+                                keyword_lower = keyword_text.lower()
+                                if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                    questions_list.append(idea_item)
+                                else:
+                                    topics_list.append(idea_item)
+                        elif isinstance(ideas_response, dict) and ideas_response.get("tasks"):
+                            # Handle task-based response format
+                            for task in ideas_response.get("tasks", []):
+                                for item in task.get("result", [])[:50]:
+                                    keyword_text = item.get("keyword", "")
+                                    keyword_info = item.get("keyword_data", {}).get("keyword_info", {})
+                                    idea_item = {
+                                        "keyword": keyword_text,
+                                        "search_volume": keyword_info.get("search_volume", 0) or 0,
+                                        "cpc": keyword_info.get("cpc", 0.0) or 0.0,
+                                        "competition": keyword_info.get("competition", 0.0) or 0.0,
+                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or 50.0,
+                                    }
+                                    ideas_list.append(idea_item)
+                                    
+                                    keyword_lower = keyword_text.lower()
+                                    if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                        questions_list.append(idea_item)
+                                    else:
+                                        topics_list.append(idea_item)
+                        
+                        keyword_ideas_data[primary_keyword] = {
+                            "all_ideas": ideas_list,
+                            "questions": questions_list,
+                            "topics": topics_list,
+                        }
+                    except Exception as e:
+                        logger.warning(f"Failed to get keyword ideas for {primary_keyword}: {e}")
+                        keyword_ideas_data[primary_keyword] = {
+                            "all_ideas": [],
+                            "questions": [],
+                            "topics": [],
+                        }
+            except Exception as e:
+                logger.warning(f"Failed to get related keywords and ideas: {e}")
+        
         # Shape into a simple dict for API response with parent topics
         out = {}
         for k, v in results.items():
@@ -2375,12 +2394,40 @@ async def analyze_keywords_enhanced(
             ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
             ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
             
+            # Get difficulty_score from analysis object (stored as attribute, may not be in model)
+            # Use getattr with try/except to handle Pydantic strictness
+            try:
+                difficulty_score = getattr(v, 'difficulty_score', None)
+            except (AttributeError, ValueError):
+                difficulty_score = None
+            
+            if difficulty_score is None:
+                # Calculate from difficulty enum if not available
+                difficulty_enum = v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty)
+                enum_to_score = {
+                    "VERY_EASY": 10.0,
+                    "EASY": 30.0,
+                    "MEDIUM": 50.0,
+                    "HARD": 70.0,
+                    "VERY_HARD": 90.0
+                }
+                difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+            
+            # Get related keywords and ideas for this keyword if available
+            related_keywords_enhanced = related_keywords_data.get(k, [])
+            keyword_ideas_enhanced = keyword_ideas_data.get(k, {
+                "all_ideas": [],
+                "questions": [],
+                "topics": [],
+            })
+            
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
                 "global_search_volume": v.global_search_volume or 0,
                 "search_volume_by_country": v.search_volume_by_country,
                 "monthly_searches": v.monthly_searches,
                 "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
+                "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,  # Numeric score for gauge
                 "competition": competition_value,
                 "cpc": cpc_value,  # Always numeric
                 "cpc_currency": v.cpc_currency,
@@ -2389,8 +2436,12 @@ async def analyze_keywords_enhanced(
                 "trend_score": trend_score_value,
                 "recommended": v.recommended,
                 "reason": v.reason,
-                "related_keywords": v.related_keywords,
+                "related_keywords": v.related_keywords,  # Basic related keywords from content analysis
+                "related_keywords_enhanced": related_keywords_enhanced,  # Graph-based related keywords from DataForSEO
                 "long_tail_keywords": v.long_tail_keywords,
+                "questions": keyword_ideas_enhanced.get("questions", []),  # Question-type keywords
+                "topics": keyword_ideas_enhanced.get("topics", []),  # Topic-type keywords
+                "keyword_ideas": keyword_ideas_enhanced.get("all_ideas", []),  # All keyword ideas
                 "parent_topic": parent_topic,
                 "category_type": category_type,
                 "cluster_score": cluster_score,
@@ -2484,6 +2535,752 @@ async def analyze_keywords_enhanced(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
         )
+
+
+async def _analyze_keywords_with_progress(
+    request: EnhancedKeywordAnalysisRequest,
+    http_request: Request,
+    progress_callback: Optional[Any] = None
+) -> Dict[str, Any]:
+    """
+    Internal function to analyze keywords with optional progress callbacks.
+    Used by both standard and streaming endpoints.
+    """
+    import time
+    from src.blog_writer_sdk.models.progress_models import ProgressUpdate
+    
+    total_stages = 10
+    
+    async def emit_progress(stage: str, stage_num: int, progress: float, status: str, details: str = None, metadata: Dict[str, Any] = None):
+        """Helper to emit progress updates."""
+        if progress_callback:
+            update = ProgressUpdate(
+                stage=stage,
+                stage_number=stage_num,
+                total_stages=total_stages,
+                progress_percentage=progress,
+                status=status,
+                details=details,
+                metadata=metadata or {},
+                timestamp=time.time()
+            )
+            try:
+                await progress_callback(update)
+            except Exception as e:
+                logger.warning(f"Progress callback failed: {e}")
+    
+    try:
+        # Stage 1: Initialization (5%)
+        current_stage = 1
+        await emit_progress(
+            "initialization",
+            current_stage,
+            5.0,
+            "Initializing keyword analysis",
+            f"Setting up analysis for {len(request.keywords)} keywords",
+            {"keywords_count": len(request.keywords), "keywords": request.keywords[:3]}
+        )
+        # Detect location from IP if not explicitly specified
+        detected_location = None
+        if not request.location or request.location == "United States":
+            if http_request:
+                detected_location = await detect_location_from_ip(http_request)
+                if detected_location:
+                    logger.info(f"Detected location from IP: {detected_location}")
+        
+        effective_location = detected_location or request.location or "United States"
+        from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+        
+        # Apply testing mode limits
+        limited_keywords = apply_keyword_limits(request.keywords)
+        max_suggestions = apply_suggestions_limit(request.max_suggestions_per_keyword)
+        limits = get_testing_limits() if is_testing_mode() else {}
+        max_total = limits.get("max_total_keywords", 200) if is_testing_mode() else 200
+        
+        if is_testing_mode():
+            logger.info(f"🧪 TESTING MODE: Keyword limits - {len(limited_keywords)} primary, {max_suggestions} suggestions/keyword, {max_total} total max")
+        
+        if not enhanced_analyzer:
+            raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
+        
+        # Stage 2: Primary Keyword Analysis (20%)
+        current_stage = 2
+        await emit_progress(
+            "keyword_analysis",
+            current_stage,
+            20.0,
+            "Analyzing primary keywords",
+            f"Analyzing {len(limited_keywords)} keywords for search volume, CPC, and competition",
+            {"keywords": limited_keywords}
+        )
+        
+        results = await enhanced_analyzer.analyze_keywords_comprehensive(
+            keywords=limited_keywords,
+            tenant_id=os.getenv("TENANT_ID", "default")
+        )
+        
+        await emit_progress(
+            "keyword_analysis",
+            current_stage,
+            20.0,
+            "Primary keyword analysis complete",
+            f"Analyzed {len(results)} keywords",
+            {"keywords_analyzed": len(results)}
+        )
+        
+        # Stage 3: Getting Suggestions (40%)
+        current_stage = 3
+        all_keywords = list(limited_keywords)
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                max_seed_keywords = limits.get("max_keywords", 5) if is_testing_mode() else 5
+                for idx, seed_keyword in enumerate(limited_keywords[:max_seed_keywords]):
+                    if len(all_keywords) >= max_total:
+                        break
+                    
+                    progress_pct = 20.0 + (idx + 1) * 20.0 / max_seed_keywords
+                    await emit_progress(
+                        "getting_suggestions",
+                        current_stage,
+                        progress_pct,
+                        "Getting keyword suggestions",
+                        f"Fetching suggestions for '{seed_keyword}' ({idx + 1}/{min(len(limited_keywords), max_seed_keywords)})",
+                        {"seed_keyword": seed_keyword, "progress": idx + 1, "total": min(len(limited_keywords), max_seed_keywords)}
+                    )
+                    
+                    try:
+                        df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
+                            seed_keyword=seed_keyword,
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            limit=max_suggestions
+                        )
+                        
+                        for suggestion in df_suggestions:
+                            if len(all_keywords) >= max_total:
+                                break
+                            kw = suggestion.get("keyword", "").strip()
+                            if kw and kw not in all_keywords:
+                                all_keywords.append(kw)
+                    except Exception as e:
+                        logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
+                        continue
+            except Exception as e:
+                logger.warning(f"DataForSEO suggestions failed: {e}")
+        
+        await emit_progress(
+            "getting_suggestions",
+            current_stage,
+            40.0,
+            "Keyword suggestions complete",
+            f"Found {len(all_keywords) - len(limited_keywords)} additional keywords",
+            {"total_keywords": len(all_keywords), "suggestions_count": len(all_keywords) - len(limited_keywords)}
+        )
+        
+        # Stage 4: Analyzing Suggestions (60%)
+        current_stage = 4
+        if len(all_keywords) > len(request.keywords):
+            await emit_progress(
+                "analyzing_suggestions",
+                current_stage,
+                50.0,
+                "Analyzing suggested keywords",
+                f"Analyzing {len(all_keywords) - len(request.keywords)} suggested keywords",
+                {"suggestions_to_analyze": len(all_keywords) - len(request.keywords)}
+            )
+            
+            additional_results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                keywords=all_keywords[len(request.keywords):],
+                tenant_id=os.getenv("TENANT_ID", "default")
+            )
+            results.update(additional_results)
+            
+            await emit_progress(
+                "analyzing_suggestions",
+                current_stage,
+                60.0,
+                "Suggested keywords analyzed",
+                f"Analyzed {len(additional_results)} additional keywords",
+                {"analyzed_count": len(additional_results)}
+            )
+        
+        # Stage 5: Clustering Keywords (75%)
+        current_stage = 5
+        await emit_progress(
+            "clustering",
+            current_stage,
+            65.0,
+            "Clustering keywords",
+            f"Grouping {len(all_keywords)} keywords by parent topics",
+            {"keywords_to_cluster": len(all_keywords)}
+        )
+        
+        kg_client = None
+        try:
+            kg_client = google_knowledge_graph_client if 'google_knowledge_graph_client' in globals() else None
+        except:
+            pass
+        
+        clustering = KeywordClustering(knowledge_graph_client=kg_client)
+        try:
+            max_clusters, max_keywords_per_cluster = apply_clustering_limits()
+            clustering_result = clustering.cluster_keywords(
+                keywords=all_keywords,
+                min_cluster_size=1,
+                max_clusters=max_clusters,
+                max_keywords_per_cluster=max_keywords_per_cluster
+            )
+            logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")
+        except Exception as e:
+            logger.warning(f"Clustering failed: {e}, continuing without clustering")
+            from src.blog_writer_sdk.seo.keyword_clustering import ClusteringResult, KeywordCluster
+            clustering_result = ClusteringResult(
+                clusters=[KeywordCluster(
+                    parent_topic=kw,
+                    keywords=[kw],
+                    cluster_score=0.5,
+                    dominant_words=kw.split()[:3],
+                    category_type="topic"
+                ) for kw in all_keywords[:50]],
+                unclustered=all_keywords[50:] if len(all_keywords) > 50 else [],
+                total_keywords=len(all_keywords),
+                cluster_count=min(len(all_keywords), 50)
+            )
+        
+        await emit_progress(
+            "clustering",
+            current_stage,
+            75.0,
+            "Clustering complete",
+            f"Created {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords",
+            {"cluster_count": clustering_result.cluster_count, "total_keywords": clustering_result.total_keywords}
+        )
+        
+        # Stage 6: AI Optimization Data (85%)
+        current_stage = 6
+        await emit_progress(
+            "ai_optimization",
+            current_stage,
+            80.0,
+            "Getting AI optimization data",
+            "Fetching AI search volume metrics",
+            {}
+        )
+        
+        ai_optimization_data = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                ai_optimization_data = await enhanced_analyzer._df_client.get_ai_search_volume(
+                    keywords=list(results.keys()),
+                    location_name=effective_location,
+                    language_code=request.language or "en",
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to get AI optimization data: {e}")
+        
+        await emit_progress(
+            "ai_optimization",
+            current_stage,
+            85.0,
+            "AI optimization data complete",
+            f"Retrieved AI metrics for {len(ai_optimization_data)} keywords",
+            {"ai_metrics_count": len(ai_optimization_data)}
+        )
+        
+        # Stage 7: Related Keywords (92%)
+        current_stage = 7
+        await emit_progress(
+            "related_keywords",
+            current_stage,
+            87.0,
+            "Getting related keywords",
+            f"Fetching related keywords for {min(len(limited_keywords), 5)} primary keywords",
+            {}
+        )
+        
+        related_keywords_data = {}
+        keyword_ideas_data = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                max_primary = min(len(limited_keywords), 5)
+                for idx, primary_keyword in enumerate(limited_keywords[:max_primary]):
+                    try:
+                        related_response = await enhanced_analyzer._df_client.get_related_keywords(
+                            keyword=primary_keyword,
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            depth=1,
+                            limit=20
+                        )
+                        related_keywords_list = []
+                        if related_response.get("tasks") and related_response["tasks"][0].get("result"):
+                            for item in related_response["tasks"][0]["result"][:20]:
+                                kw_data = item.get("keyword_data", {}).get("keyword_info", {})
+                                related_keywords_list.append({
+                                    "keyword": item.get("keyword") or kw_data.get("keyword", ""),
+                                    "search_volume": kw_data.get("search_volume", 0) or 0,
+                                    "cpc": kw_data.get("cpc", 0.0) or 0.0,
+                                    "competition": kw_data.get("competition", 0.0) or 0.0,
+                                    "difficulty_score": kw_data.get("keyword_difficulty", 50.0) or 50.0,
+                                })
+                        related_keywords_data[primary_keyword] = related_keywords_list
+                    except Exception as e:
+                        logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
+                        related_keywords_data[primary_keyword] = []
+            except Exception as e:
+                logger.warning(f"Failed to get related keywords: {e}")
+        
+        await emit_progress(
+            "related_keywords",
+            current_stage,
+            90.0,
+            "Related keywords complete",
+            f"Retrieved related keywords for {len(related_keywords_data)} keywords",
+            {"related_keywords_count": len(related_keywords_data)}
+        )
+        
+        # Stage 8: Keyword Ideas (97%)
+        current_stage = 8
+        await emit_progress(
+            "keyword_ideas",
+            current_stage,
+            92.0,
+            "Getting keyword ideas",
+            f"Fetching questions and topics for {min(len(limited_keywords), 5)} primary keywords",
+            {}
+        )
+        
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                max_primary = min(len(limited_keywords), 5)
+                for primary_keyword in limited_keywords[:max_primary]:
+                    try:
+                        ideas_response = await enhanced_analyzer._df_client.get_keyword_ideas(
+                            keywords=[primary_keyword],
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            limit=50
+                        )
+                        ideas_list = []
+                        questions_list = []
+                        topics_list = []
+                        
+                        if isinstance(ideas_response, list):
+                            for item in ideas_response[:50]:
+                                keyword_text = item.get("keyword", "")
+                                keyword_info = item.get("keyword_info", {})
+                                idea_item = {
+                                    "keyword": keyword_text,
+                                    "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                    "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                    "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                    "difficulty_score": keyword_info.get("keyword_difficulty", 0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                }
+                                ideas_list.append(idea_item)
+                                
+                                keyword_lower = keyword_text.lower()
+                                if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                    questions_list.append(idea_item)
+                                else:
+                                    topics_list.append(idea_item)
+                        elif isinstance(ideas_response, dict) and ideas_response.get("tasks"):
+                            for task in ideas_response.get("tasks", []):
+                                for item in task.get("result", [])[:50]:
+                                    keyword_text = item.get("keyword", "")
+                                    keyword_info = item.get("keyword_data", {}).get("keyword_info", {})
+                                    idea_item = {
+                                        "keyword": keyword_text,
+                                        "search_volume": keyword_info.get("search_volume", 0) or 0,
+                                        "cpc": keyword_info.get("cpc", 0.0) or 0.0,
+                                        "competition": keyword_info.get("competition", 0.0) or 0.0,
+                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or 50.0,
+                                    }
+                                    ideas_list.append(idea_item)
+                                    
+                                    keyword_lower = keyword_text.lower()
+                                    if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                        questions_list.append(idea_item)
+                                    else:
+                                        topics_list.append(idea_item)
+                        
+                        keyword_ideas_data[primary_keyword] = {
+                            "all_ideas": ideas_list,
+                            "questions": questions_list,
+                            "topics": topics_list,
+                        }
+                    except Exception as e:
+                        logger.warning(f"Failed to get keyword ideas for {primary_keyword}: {e}")
+                        keyword_ideas_data[primary_keyword] = {
+                            "all_ideas": [],
+                            "questions": [],
+                            "topics": [],
+                        }
+            except Exception as e:
+                logger.warning(f"Failed to get keyword ideas: {e}")
+        
+        await emit_progress(
+            "keyword_ideas",
+            current_stage,
+            97.0,
+            "Keyword ideas complete",
+            f"Retrieved ideas for {len(keyword_ideas_data)} keywords",
+            {"keyword_ideas_count": len(keyword_ideas_data)}
+        )
+        
+        # Stage 9: SERP Analysis (99%) - Optional
+        current_stage = 9
+        serp_analysis_summary = {}
+        serp_ai_summary = {}
+        discovery_data = {}
+        if request.include_serp and enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
+            await emit_progress(
+                "serp_analysis",
+                current_stage,
+                98.0,
+                "Analyzing SERP",
+                f"Analyzing search results for '{request.keywords[0]}'",
+                {"primary_keyword": request.keywords[0]}
+            )
+            
+            try:
+                tenant_id_env = os.getenv("TENANT_ID", "default")
+                enrichment = await _build_keyword_discovery(
+                    seed_keyword=request.keywords[0],
+                    location=effective_location,
+                    language=request.language or "en",
+                    tenant_id=tenant_id_env,
+                    df_client=enhanced_analyzer._df_client
+                )
+                serp_analysis_summary = enrichment.pop("serp_analysis", {})
+                serp_ai_summary = enrichment.pop("serp_ai_summary", {})
+                discovery_data = enrichment
+            except Exception as e:
+                logger.warning(f"SERP analysis failed: {e}")
+        elif enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
+            # Build discovery data even if SERP not requested
+            try:
+                tenant_id_env = os.getenv("TENANT_ID", "default")
+                enrichment = await _build_keyword_discovery(
+                    seed_keyword=request.keywords[0],
+                    location=effective_location,
+                    language=request.language or "en",
+                    tenant_id=tenant_id_env,
+                    df_client=enhanced_analyzer._df_client
+                )
+                serp_analysis_summary = enrichment.pop("serp_analysis", {})
+                serp_ai_summary = enrichment.pop("serp_ai_summary", {})
+                discovery_data = enrichment
+            except Exception as e:
+                logger.warning(f"Keyword discovery enrichment failed: {e}")
+        
+        # Stage 10: Finalization (100%)
+        current_stage = 10
+        await emit_progress(
+            "finalization",
+            current_stage,
+            99.0,
+            "Finalizing response",
+            "Compiling results and formatting response",
+            {}
+        )
+        
+        # Build response (reuse existing logic)
+        out = {}
+        for k, v in results.items():
+            parent_topic = None
+            category_type = None
+            cluster_score = None
+            
+            for cluster in clustering_result.clusters:
+                if k in cluster.keywords:
+                    parent_topic = cluster.parent_topic
+                    category_type = cluster.category_type
+                    cluster_score = cluster.cluster_score
+                    break
+            
+            if not parent_topic:
+                parent_topic = clustering._extract_parent_topic_from_keyword(k)
+                category_type = clustering._classify_keyword_type(k)
+                cluster_score = 0.5
+            
+            search_volume = v.search_volume if v.search_volume is not None else 0
+            cpc_value = v.cpc if v.cpc is not None else 0.0
+            competition_value = v.competition if v.competition is not None else 0.0
+            trend_score_value = v.trend_score if v.trend_score is not None else 0.0
+            
+            ai_metrics = ai_optimization_data.get(k, {})
+            ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
+            ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
+            ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
+            
+            try:
+                difficulty_score = getattr(v, 'difficulty_score', None)
+            except (AttributeError, ValueError):
+                difficulty_score = None
+            
+            if difficulty_score is None:
+                difficulty_enum = v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty)
+                enum_to_score = {
+                    "VERY_EASY": 10.0,
+                    "EASY": 30.0,
+                    "MEDIUM": 50.0,
+                    "HARD": 70.0,
+                    "VERY_HARD": 90.0
+                }
+                difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+            
+            related_keywords_enhanced = related_keywords_data.get(k, [])
+            keyword_ideas_enhanced = keyword_ideas_data.get(k, {
+                "all_ideas": [],
+                "questions": [],
+                "topics": [],
+            })
+            
+            out[k] = {
+                "search_volume": search_volume,
+                "global_search_volume": v.global_search_volume or 0,
+                "search_volume_by_country": v.search_volume_by_country,
+                "monthly_searches": v.monthly_searches,
+                "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
+                "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,
+                "competition": competition_value,
+                "cpc": cpc_value,
+                "cpc_currency": v.cpc_currency,
+                "cps": v.cps,
+                "clicks": v.clicks,
+                "trend_score": trend_score_value,
+                "recommended": v.recommended,
+                "reason": v.reason,
+                "related_keywords": v.related_keywords,
+                "related_keywords_enhanced": related_keywords_enhanced,
+                "long_tail_keywords": v.long_tail_keywords,
+                "questions": keyword_ideas_enhanced.get("questions", []),
+                "topics": keyword_ideas_enhanced.get("topics", []),
+                "keyword_ideas": keyword_ideas_enhanced.get("all_ideas", []),
+                "parent_topic": parent_topic,
+                "category_type": category_type,
+                "cluster_score": cluster_score,
+                "ai_search_volume": ai_search_volume,
+                "ai_trend": ai_trend,
+                "ai_monthly_searches": ai_monthly_searches,
+                "traffic_potential": v.traffic_potential,
+                "serp_features": v.serp_features,
+                "serp_feature_counts": v.serp_feature_counts,
+                "primary_intent": v.primary_intent,
+                "intent_probabilities": v.intent_probabilities,
+                "also_rank_for": v.also_rank_for,
+                "also_talk_about": v.also_talk_about,
+                "top_competitors": v.top_competitors,
+                "first_seen": v.first_seen,
+                "last_updated": v.last_updated,
+            }
+        
+        clusters_list = [
+            {
+                "parent_topic": c.parent_topic,
+                "keywords": c.keywords,
+                "cluster_score": c.cluster_score,
+                "category_type": c.category_type,
+                "keyword_count": len(c.keywords)
+            }
+            for c in clustering_result.clusters
+        ]
+        
+        if not clusters_list and all_keywords:
+            for kw in all_keywords[:50]:
+                parent_topic = clustering._extract_parent_topic_from_keyword(kw)
+                clusters_list.append({
+                    "parent_topic": parent_topic,
+                    "keywords": [kw],
+                    "cluster_score": 0.5,
+                    "category_type": clustering._classify_keyword_type(kw),
+                    "keyword_count": 1
+                })
+        
+        response_payload = {
+            "enhanced_analysis": out,
+            "total_keywords": len(all_keywords),
+            "original_keywords": request.keywords,
+            "suggested_keywords": all_keywords[len(request.keywords):] if len(all_keywords) > len(request.keywords) else [],
+            "clusters": clusters_list,
+            "cluster_summary": {
+                "total_keywords": clustering_result.total_keywords if clustering_result else len(all_keywords),
+                "cluster_count": len(clusters_list),
+                "unclustered_count": len(clustering_result.unclustered) if clustering_result else 0
+            },
+            "location": {
+                "used": effective_location,
+                "detected_from_ip": detected_location is not None,
+                "specified": request.location is not None and request.location != "United States"
+            },
+            "discovery": discovery_data,
+            "serp_analysis": serp_analysis_summary,
+            "serp_ai_summary": serp_ai_summary
+        }
+        
+        await emit_progress(
+            "finalization",
+            current_stage,
+            100.0,
+            "Analysis complete",
+            f"Processed {len(all_keywords)} keywords across {len(clusters_list)} clusters",
+            {"total_keywords": len(all_keywords), "clusters": len(clusters_list)}
+        )
+        
+        return response_payload
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Keyword analysis with progress failed: {e}", exc_info=True)
+        raise
+
+
+@app.post("/api/v1/keywords/enhanced/stream")
+async def analyze_keywords_enhanced_stream(
+    request: EnhancedKeywordAnalysisRequest,
+    http_request: Request
+):
+    """
+    Enhanced keyword analysis with Server-Sent Events (SSE) streaming for real-time progress updates.
+    
+    Returns progress updates as SSE events, followed by the final JSON response.
+    
+    Usage (Note: EventSource doesn't support POST, use fetch with ReadableStream):
+    ```typescript
+    const response = await fetch('/api/v1/keywords/enhanced/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({keywords: ['pet grooming']})
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = JSON.parse(line.slice(6));
+          if (data.type === 'complete') {
+            console.log('Analysis complete:', data.result);
+          } else {
+            console.log(`${data.progress_percentage}% - ${data.status}`);
+          }
+        }
+      }
+    }
+    ```
+    """
+    from src.blog_writer_sdk.models.progress_models import ProgressUpdate
+    import asyncio
+    
+    async def generate_stream():
+        """Generate SSE stream with progress updates."""
+        progress_queue = asyncio.Queue()
+        result_container = {"result": None, "error": None}
+        
+        async def progress_callback(update: ProgressUpdate):
+            """Queue progress updates for streaming."""
+            await progress_queue.put(("progress", update.dict()))
+        
+        async def process_analysis():
+            """Process keyword analysis in background."""
+            try:
+                result = await _analyze_keywords_with_progress(
+                    request=request,
+                    http_request=http_request,
+                    progress_callback=progress_callback
+                )
+                result_container["result"] = result
+                await progress_queue.put(("complete", None))
+            except HTTPException as e:
+                result_container["error"] = {
+                    "type": "error",
+                    "error": e.detail,
+                    "status_code": e.status_code
+                }
+                await progress_queue.put(("error", None))
+            except Exception as e:
+                logger.error(f"SSE streaming failed: {e}", exc_info=True)
+                result_container["error"] = {
+                    "type": "error",
+                    "error": str(e),
+                    "status_code": 500
+                }
+                await progress_queue.put(("error", None))
+        
+        # Start processing in background
+        analysis_task = asyncio.create_task(process_analysis())
+        
+        try:
+            # Stream progress updates as they arrive
+            while True:
+                try:
+                    # Wait for progress update or completion with timeout
+                    event_type, data = await asyncio.wait_for(progress_queue.get(), timeout=30.0)
+                    
+                    if event_type == "progress":
+                        # Emit progress update
+                        yield f"data: {json.dumps(data)}\n\n"
+                    elif event_type == "complete":
+                        # Emit completion with result
+                        yield f"data: {json.dumps({'type': 'complete', 'result': result_container['result']})}\n\n"
+                        break
+                    elif event_type == "error":
+                        # Emit error
+                        yield f"data: {json.dumps(result_container['error'])}\n\n"
+                        break
+                        
+                except asyncio.TimeoutError:
+                    # Send keepalive to prevent connection timeout
+                    yield f": keepalive\n\n"
+                    continue
+            
+            # Wait for analysis task to complete
+            await analysis_task
+            
+        except Exception as e:
+            logger.error(f"Stream generation failed: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'status_code': 500})}\n\n"
+        finally:
+            # Cancel task if still running
+            if not analysis_task.done():
+                analysis_task.cancel()
+                try:
+                    await analysis_task
+                except asyncio.CancelledError:
+                    pass
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable buffering for nginx
+        }
+    )
 
 
 @app.post("/api/v1/keywords/ai-optimization")

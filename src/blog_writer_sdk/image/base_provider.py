@@ -256,8 +256,10 @@ class BaseImageProvider(ABC):
             ImageAspectRatio.SQUARE: (1024, 1024),
             ImageAspectRatio.PORTRAIT: (768, 1024),
             ImageAspectRatio.LANDSCAPE: (1024, 768),
-            ImageAspectRatio.WIDE: (1024, 576),
-            ImageAspectRatio.ULTRA_WIDE: (1024, 432),
+            # WIDE (16:9) - Use Stability AI SDXL supported dimensions: 1344x768 or 1536x640
+            # Using 1344x768 as it's closer to standard 16:9 and better quality
+            ImageAspectRatio.WIDE: (1344, 768),
+            ImageAspectRatio.ULTRA_WIDE: (1536, 640),  # 21:9 - closest supported
             ImageAspectRatio.TALL: (768, 1152),
         }
         

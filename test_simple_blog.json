@@ -1,0 +1,13 @@
+{
+  "topic": "Introduction to Python Programming",
+  "keywords": ["python", "programming", "coding"],
+  "tone": "professional",
+  "length": "short",
+  "use_google_search": false,
+  "use_fact_checking": false,
+  "use_citations": false,
+  "use_serp_optimization": false,
+  "use_knowledge_graph": false,
+  "use_semantic_keywords": false,
+  "use_quality_scoring": false
+}

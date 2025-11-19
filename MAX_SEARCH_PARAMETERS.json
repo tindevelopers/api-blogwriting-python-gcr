@@ -1,0 +1,240 @@
+{
+  "endpoints": {
+    "/api/v1/keywords/enhanced": {
+      "description": "Enhanced keyword analysis with maximum suggestions",
+      "method": "POST",
+      "max_parameters": {
+        "keywords": {
+          "max": 200,
+          "description": "Maximum number of primary keywords to analyze",
+          "example": ["keyword1", "keyword2", "... up to 200 keywords"]
+        },
+        "max_suggestions_per_keyword": {
+          "max": 150,
+          "min": 5,
+          "default": 20,
+          "description": "Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)",
+          "note": "This generates related keywords, questions, and topics automatically"
+        },
+        "location": {
+          "optional": true,
+          "default": "United States",
+          "description": "Location for keyword analysis"
+        },
+        "language": {
+          "optional": true,
+          "default": "en",
+          "description": "Language code for analysis"
+        },
+        "include_serp": {
+          "optional": true,
+          "default": false,
+          "description": "Include SERP scrape preview (slower but more comprehensive)"
+        }
+      },
+      "example_request_max": {
+        "keywords": [
+          "pet grooming",
+          "dog care",
+          "cat health"
+        ],
+        "location": "United States",
+        "language": "en",
+        "max_suggestions_per_keyword": 150,
+        "include_serp": false
+      },
+      "expected_total_keywords": "Up to 200 primary keywords × 150 suggestions = 30,000 potential keywords (capped at 200 total in response)"
+    },
+    
+    "/api/v1/keywords/analyze": {
+      "description": "Standard keyword analysis (routes to enhanced if max_suggestions_per_keyword provided)",
+      "method": "POST",
+      "max_parameters": {
+        "keywords": {
+          "max": 200,
+          "description": "Maximum number of keywords to analyze"
+        },
+        "max_suggestions_per_keyword": {
+          "optional": true,
+          "max": 150,
+          "min": 5,
+          "description": "If provided, automatically routes to enhanced analysis for better results"
+        },
+        "location": {
+          "optional": true,
+          "default": "United States"
+        },
+        "language": {
+          "optional": true,
+          "default": "en"
+        }
+      },
+      "example_request_max": {
+        "keywords": [
+          "pet grooming",
+          "dog care"
+        ],
+        "location": "United States",
+        "language": "en",
+        "max_suggestions_per_keyword": 150
+      }
+    },
+    
+    "/api/v1/keywords/suggest": {
+      "description": "Get keyword variations and suggestions",
+      "method": "POST",
+      "max_parameters": {
+        "keyword": {
+          "max_length": 100,
+          "min_length": 2,
+          "description": "Base keyword for suggestions"
+        },
+        "limit": {
+          "max": 150,
+          "min": 5,
+          "default": 20,
+          "description": "Maximum number of keyword suggestions to return (up to 150 for comprehensive research)"
+        }
+      },
+      "example_request_max": {
+        "keyword": "pet grooming",
+        "limit": 150
+      }
+    },
+    
+    "/api/v1/keywords/extract": {
+      "description": "Extract keywords from existing content",
+      "method": "POST",
+      "max_parameters": {
+        "content": {
+          "min_length": 100,
+          "description": "Content to extract keywords from"
+        },
+        "max_keywords": {
+          "max": 200,
+          "min": 5,
+          "default": 20,
+          "description": "Maximum keywords to extract (up to 200 for comprehensive research)"
+        },
+        "max_ngram": {
+          "max": 5,
+          "min": 1,
+          "default": 3,
+          "description": "Maximum words per keyphrase (phrase mode)"
+        },
+        "dedup_lim": {
+          "max": 0.99,
+          "min": 0.1,
+          "default": 0.7,
+          "description": "Deduplication threshold for phrases"
+        }
+      },
+      "example_request_max": {
+        "content": "Your long-form content here...",
+        "max_keywords": 200,
+        "max_ngram": 5,
+        "dedup_lim": 0.7
+      }
+    },
+    
+    "/api/v1/topics/recommend": {
+      "description": "Recommend high-ranking blog topics",
+      "method": "POST",
+      "max_parameters": {
+        "seed_keywords": {
+          "max": 10,
+          "min": 1,
+          "description": "Seed keywords to base recommendations on"
+        },
+        "max_topics": {
+          "max": 50,
+          "min": 5,
+          "default": 20,
+          "description": "Maximum number of topics to return"
+        },
+        "min_search_volume": {
+          "min": 0,
+          "default": 100,
+          "description": "Minimum monthly search volume"
+        },
+        "max_difficulty": {
+          "max": 100,
+          "min": 0,
+          "default": 70.0,
+          "description": "Maximum keyword difficulty (0-100)"
+        },
+        "include_ai_suggestions": {
+          "default": true,
+          "description": "Use Claude AI for intelligent topic generation"
+        }
+      },
+      "example_request_max": {
+        "seed_keywords": [
+          "pet grooming",
+          "dog care",
+          "cat health"
+        ],
+        "location": "United States",
+        "language": "en",
+        "max_topics": 50,
+        "min_search_volume": 100,
+        "max_difficulty": 70.0,
+        "include_ai_suggestions": true
+      }
+    }
+  },
+  
+  "quick_reference": {
+    "most_comprehensive": {
+      "endpoint": "/api/v1/keywords/enhanced",
+      "parameters": {
+        "keywords": ["keyword1", "keyword2"],
+        "max_suggestions_per_keyword": 150,
+        "include_serp": true
+      },
+      "note": "This gives you the most comprehensive keyword research with SERP analysis"
+    },
+    
+    "maximum_keywords": {
+      "endpoint": "/api/v1/keywords/enhanced",
+      "parameters": {
+        "keywords": ["keyword1", "keyword2", "... up to 200 keywords"],
+        "max_suggestions_per_keyword": 150
+      },
+      "note": "Up to 200 primary keywords, each generating up to 150 suggestions"
+    },
+    
+    "maximum_suggestions": {
+      "endpoint": "/api/v1/keywords/suggest",
+      "parameters": {
+        "keyword": "your keyword",
+        "limit": 150
+      },
+      "note": "Get up to 150 keyword variations for a single keyword"
+    }
+  },
+  
+  "curl_examples": {
+    "enhanced_max": "curl -X POST 'https://blog-writer-api-dev-613248238610.europe-west9.run.app/api/v1/keywords/enhanced' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\n    \"keywords\": [\"pet grooming\", \"dog care\"],\n    \"location\": \"United States\",\n    \"language\": \"en\",\n    \"max_suggestions_per_keyword\": 150,\n    \"include_serp\": false\n  }'",
+    
+    "suggest_max": "curl -X POST 'https://blog-writer-api-dev-613248238610.europe-west9.run.app/api/v1/keywords/suggest' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\n    \"keyword\": \"pet grooming\",\n    \"limit\": 150\n  }'",
+    
+    "extract_max": "curl -X POST 'https://blog-writer-api-dev-613248238610.europe-west9.run.app/api/v1/keywords/extract' \\\n  -H 'Content-Type: application/json' \\\n  -d '{\n    \"content\": \"Your content here...\",\n    \"max_keywords\": 200,\n    \"max_ngram\": 5,\n    \"dedup_lim\": 0.7\n  }'"
+  },
+  
+  "typescript_examples": {
+    "enhanced_max": "const response = await fetch('/api/v1/keywords/enhanced', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify({\n    keywords: ['pet grooming', 'dog care'],\n    location: 'United States',\n    language: 'en',\n    max_suggestions_per_keyword: 150,  // MAX: 150\n    include_serp: false\n  })\n});",
+    
+    "suggest_max": "const response = await fetch('/api/v1/keywords/suggest', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify({\n    keyword: 'pet grooming',\n    limit: 150  // MAX: 150\n  })\n});",
+    
+    "extract_max": "const response = await fetch('/api/v1/keywords/extract', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/json' },\n  body: JSON.stringify({\n    content: 'Your content here...',\n    max_keywords: 200,  // MAX: 200\n    max_ngram: 5,       // MAX: 5\n    dedup_lim: 0.7\n  })\n});"
+  },
+  
+  "notes": {
+    "testing_mode": "In testing mode, limits may be reduced automatically",
+    "rate_limits": "Rate limits may apply for high-volume requests",
+    "response_time": "Higher max values = longer response times",
+    "cost": "Higher max values may consume more API credits"
+  }
+}
+

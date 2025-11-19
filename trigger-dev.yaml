@@ -11,3 +11,4 @@ substitutions:
   _REGION: europe-west9
   _ENV: dev
   _SERVICE_NAME: blog-writer-api-dev
+  _TESTING_MODE: 'true'  # Enable testing mode for develop branch
