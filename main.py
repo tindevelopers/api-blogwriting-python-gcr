@@ -2368,8 +2368,13 @@ async def analyze_keywords_enhanced(
             ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
             ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
             
-            # Get difficulty_score from analysis object (stored as attribute)
-            difficulty_score = getattr(v, 'difficulty_score', None)
+            # Get difficulty_score from analysis object (stored as attribute, may not be in model)
+            # Use getattr with try/except to handle Pydantic strictness
+            try:
+                difficulty_score = getattr(v, 'difficulty_score', None)
+            except (AttributeError, ValueError):
+                difficulty_score = None
+            
             if difficulty_score is None:
                 # Calculate from difficulty enum if not available
                 difficulty_enum = v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty)

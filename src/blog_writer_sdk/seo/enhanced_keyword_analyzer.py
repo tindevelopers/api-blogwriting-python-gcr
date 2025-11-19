@@ -879,9 +879,9 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         )
         
         # Store difficulty_score as an attribute on the model instance for API access
-        # This allows us to access it later even though it's not in the model definition
+        # Use object.__setattr__ to bypass Pydantic validation for this extra field
         if difficulty_score_val is not None:
-            setattr(analysis, 'difficulty_score', difficulty_score_val)
+            object.__setattr__(analysis, 'difficulty_score', difficulty_score_val)
         else:
             # Calculate approximate score from difficulty enum if not available
             enum_to_score = {
@@ -892,7 +892,7 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 "VERY_HARD": 90.0
             }
             difficulty_enum = difficulty.value if hasattr(difficulty, "value") else str(difficulty)
-            setattr(analysis, 'difficulty_score', enum_to_score.get(difficulty_enum, 50.0))
+            object.__setattr__(analysis, 'difficulty_score', enum_to_score.get(difficulty_enum, 50.0))
         
         return analysis
 
