@@ -504,7 +504,7 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                 # Priority 2: overview competition
                 if competition is None or competition == 0.0:
                     if overview_competition is not None:
-                    competition = self._safe_float(overview_competition, 0.0)
+                        competition = self._safe_float(overview_competition, 0.0)
                     elif overview_competition_index is not None:
                         comp_idx = self._safe_float(overview_competition_index, 0.0)
                         competition = comp_idx if comp_idx <= 1.0 else comp_idx / 100.0
