@@ -645,12 +645,24 @@ class DataForSEOClient:
             
             if data.get("tasks") and len(data["tasks"]) > 0:
                 first_task = data["tasks"][0]
+                
+                # Check task status first (20000 = Ok)
+                task_status = first_task.get("status_code")
+                if task_status != 20000:
+                    logger.warning(f"SERP analysis task failed for keyword '{keyword}': status_code={task_status}, message={first_task.get('status_message')}")
+                    return result
+                
                 result_data = first_task.get("result")
                 
                 # Check if result is None or empty
                 if result_data is None:
                     logger.warning(f"SERP analysis result is None for keyword: {keyword}")
-                    logger.debug(f"Task status: {first_task.get('status_code')}, message: {first_task.get('status_message')}")
+                    logger.info(f"Task status: {task_status}, message: {first_task.get('status_message')}")
+                    return result
+                
+                # Check if result is empty array
+                if isinstance(result_data, list) and len(result_data) == 0:
+                    logger.warning(f"SERP analysis returned empty result array for keyword: {keyword}")
                     return result
                 
                 # Handle case where result might be a list or a single dict
