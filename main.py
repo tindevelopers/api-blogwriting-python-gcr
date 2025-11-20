@@ -1942,20 +1942,13 @@ async def _build_keyword_discovery(
                 tenant_id=tenant_id,
                 depth=20
             ),
-            df_client.get_serp_ai_summary(
-                keyword=seed_keyword,
-                location_name=location,
-                language_code=language,
-                tenant_id=tenant_id,
-                depth=10
-            ),
             return_exceptions=True
         )
     except Exception as e:
         logger.warning(f"Keyword discovery tasks failed to start: {e}")
         return discovery
     
-    related_resp, ideas_resp, serp_analysis_raw, serp_ai_summary = tasks
+    related_resp, ideas_resp, serp_analysis_raw = tasks
     
     if not isinstance(related_resp, Exception):
         matching_terms = _extract_keywords_from_related_response(related_resp)
@@ -1973,14 +1966,10 @@ async def _build_keyword_discovery(
     
     if not isinstance(serp_analysis_raw, Exception):
         discovery["serp_analysis"] = _summarize_serp_analysis(serp_analysis_raw)
+        logger.info(f"SERP analysis completed for keyword: {seed_keyword}")
     else:
-        logger.warning(f"SERP analysis summary failed: {serp_analysis_raw}")
+        logger.warning(f"SERP analysis failed: {serp_analysis_raw}")
         discovery["serp_analysis"] = {}
-    
-    if isinstance(serp_ai_summary, Exception):
-        logger.warning(f"SERP AI summary failed: {serp_ai_summary}")
-        serp_ai_summary = {}
-    discovery["serp_ai_summary"] = serp_ai_summary if isinstance(serp_ai_summary, dict) else {}
     
     return discovery
 
@@ -1993,8 +1982,15 @@ def _extract_keywords_from_related_response(response: Any, limit: int = 200) -> 
     items = []
     if isinstance(response, dict) and "tasks" in response:
         for task in response.get("tasks", []):
-            for result in task.get("result", []):
-                items.extend(result.get("items", []))
+            result_data = task.get("result")
+            if result_data is None:
+                continue
+            if isinstance(result_data, list):
+                for result in result_data:
+                    if isinstance(result, dict):
+                        items.extend(result.get("items", []))
+            elif isinstance(result_data, dict):
+                items.extend(result_data.get("items", []))
     elif isinstance(response, list):
         items = response
     
@@ -2013,8 +2009,13 @@ def _extract_keywords_from_ideas_response(response: Any, limit: int = 200) -> Li
     elif isinstance(response, dict) and "tasks" in response:
         records = []
         for task in response.get("tasks", []):
-            for result in task.get("result", []):
-                records.append(result)
+            result_data = task.get("result")
+            if result_data is None:
+                continue
+            if isinstance(result_data, list):
+                records.extend(result_data)
+            elif isinstance(result_data, dict):
+                records.append(result_data)
     else:
         return []
     
@@ -2066,7 +2067,10 @@ def _looks_like_question(keyword: str) -> bool:
 
 
 def _summarize_serp_analysis(raw: Any) -> Dict[str, Any]:
-    """Summarize SERP analysis response, handling both dict and string responses."""
+    """
+    Process SERP analysis response, returning complete SERP data.
+    Handles both dict and string responses, returns full SERP analysis data.
+    """
     if not raw:
         return {}
     # Handle string responses (error messages or raw text)
@@ -2076,18 +2080,28 @@ def _summarize_serp_analysis(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         logger.warning(f"SERP analysis returned unexpected type: {type(raw)}")
         return {}
-    summary = {
+    
+    # Return full SERP analysis data (not just a summary)
+    # This includes all organic results, PAA questions, featured snippets, etc.
+    serp_data = {
         "keyword": raw.get("keyword"),
-        "serp_features": raw.get("serp_features_summary") or raw.get("serp_features"),
-        "people_also_ask": raw.get("people_also_ask", [])[:10],
+        "organic_results": raw.get("organic_results", []),
+        "people_also_ask": raw.get("people_also_ask", []),
         "featured_snippet": raw.get("featured_snippet"),
-        "video_results": raw.get("video_results", [])[:5],
-        "image_results": raw.get("image_results", [])[:5],
-        "related_searches": raw.get("related_searches", [])[:10],
-        "top_domains": raw.get("top_domains", [])[:10],
-        "competition_level": raw.get("competition_level"),
+        "video_results": raw.get("video_results", []),
+        "image_results": raw.get("image_results", []),
+        "related_searches": raw.get("related_searches", []),
+        "top_domains": raw.get("top_domains", []),
+        "competition_level": raw.get("competition_level", "medium"),
+        "content_gaps": raw.get("content_gaps", []),
+        "serp_features": raw.get("serp_features", {
+            "has_featured_snippet": False,
+            "has_people_also_ask": False,
+            "has_videos": False,
+            "has_images": False
+        })
     }
-    return summary
+    return serp_data
 
 
 # Enhanced keyword analysis endpoint using DataForSEO (if configured)
@@ -2523,22 +2537,34 @@ async def analyze_keywords_enhanced(
         
         discovery_data = {}
         serp_analysis_summary = {}
-        serp_ai_summary = {}
         if enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
             try:
                 tenant_id_env = os.getenv("TENANT_ID", "default")
-                enrichment = await _build_keyword_discovery(
-                    seed_keyword=request.keywords[0],
-                    location=effective_location,
-                    language=request.language or "en",
-                    tenant_id=tenant_id_env,
-                    df_client=enhanced_analyzer._df_client
-                )
-                serp_analysis_summary = enrichment.pop("serp_analysis", {})
-                serp_ai_summary = enrichment.pop("serp_ai_summary", {})
-                discovery_data = enrichment
+                # Ensure credentials are initialized
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id_env)
+                
+                if not enhanced_analyzer._df_client.is_configured:
+                    logger.warning("DataForSEO credentials not configured, skipping SERP analysis and discovery")
+                else:
+                    enrichment = await _build_keyword_discovery(
+                        seed_keyword=request.keywords[0],
+                        location=effective_location,
+                        language=request.language or "en",
+                        tenant_id=tenant_id_env,
+                        df_client=enhanced_analyzer._df_client
+                    )
+                    serp_analysis_summary = enrichment.pop("serp_analysis", {})
+                    discovery_data = enrichment
+                    logger.info(f"SERP analysis and discovery data retrieved for keyword: {request.keywords[0]}")
             except Exception as e:
-                logger.warning(f"Keyword discovery enrichment failed: {e}")
+                logger.warning(f"Keyword discovery enrichment failed: {e}", exc_info=True)
+        else:
+            if not enhanced_analyzer:
+                logger.debug("Enhanced analyzer not available")
+            elif not enhanced_analyzer._df_client:
+                logger.debug("DataForSEO client not initialized in enhanced analyzer")
+            elif not request.keywords:
+                logger.debug("No keywords provided for discovery")
         
         response_payload = {
             "enhanced_analysis": out,
@@ -2557,8 +2583,7 @@ async def analyze_keywords_enhanced(
                 "specified": request.location is not None and request.location != "United States"
             },
             "discovery": discovery_data,
-            "serp_analysis": serp_analysis_summary,
-            "serp_ai_summary": serp_ai_summary
+            "serp_analysis": serp_analysis_summary
         }
         
         return response_payload

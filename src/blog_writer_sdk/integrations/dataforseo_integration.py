@@ -621,11 +621,27 @@ class DataForSEOClient:
             }
             
             if data.get("tasks") and data["tasks"][0].get("result"):
-                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                result_data = data["tasks"][0]["result"]
+                # Handle case where result might be a list or a single dict
+                if isinstance(result_data, list) and len(result_data) > 0:
+                    task_result = result_data[0] if isinstance(result_data[0], dict) else {}
+                elif isinstance(result_data, dict):
+                    task_result = result_data
+                else:
+                    logger.warning(f"Unexpected result format in SERP analysis: {type(result_data)}")
+                    task_result = {}
                 
                 # Extract organic results
-                if "items" in task_result:
-                    for item in task_result["items"]:
+                if isinstance(task_result, dict) and "items" in task_result:
+                    items = task_result["items"]
+                    if not isinstance(items, list):
+                        logger.warning(f"SERP items is not a list: {type(items)}")
+                        items = []
+                    
+                    for item in items:
+                        if not isinstance(item, dict):
+                            logger.warning(f"SERP item is not a dict: {type(item)}")
+                            continue
                         item_type = item.get("type", "")
                         
                         if item_type == "organic":
