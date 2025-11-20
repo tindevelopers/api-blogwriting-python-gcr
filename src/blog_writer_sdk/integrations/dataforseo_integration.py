@@ -643,19 +643,27 @@ class DataForSEOClient:
                 }
             }
             
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                result_data = data["tasks"][0]["result"]
+            if data.get("tasks") and len(data["tasks"]) > 0:
+                first_task = data["tasks"][0]
+                result_data = first_task.get("result")
+                
+                # Check if result is None or empty
+                if result_data is None:
+                    logger.warning(f"SERP analysis result is None for keyword: {keyword}")
+                    logger.debug(f"Task status: {first_task.get('status_code')}, message: {first_task.get('status_message')}")
+                    return result
+                
                 # Handle case where result might be a list or a single dict
                 if isinstance(result_data, list) and len(result_data) > 0:
                     task_result = result_data[0] if isinstance(result_data[0], dict) else {}
                 elif isinstance(result_data, dict):
                     task_result = result_data
                 else:
-                    logger.warning(f"Unexpected result format in SERP analysis: {type(result_data)}")
+                    logger.warning(f"Unexpected result format in SERP analysis: {type(result_data)}, value: {str(result_data)[:200]}")
                     task_result = {}
                 
                 # Debug logging to understand response structure
-                logger.debug(f"SERP analysis result_data type: {type(result_data)}, task_result keys: {list(task_result.keys()) if isinstance(task_result, dict) else 'N/A'}")
+                logger.info(f"SERP analysis - result_data type: {type(result_data)}, task_result keys: {list(task_result.keys()) if isinstance(task_result, dict) else 'N/A'}")
                 
                 # Extract organic results
                 if isinstance(task_result, dict) and "items" in task_result:
