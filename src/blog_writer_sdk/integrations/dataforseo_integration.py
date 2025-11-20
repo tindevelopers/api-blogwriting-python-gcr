@@ -611,6 +611,18 @@ class DataForSEOClient:
             
             data = await self._make_request("serp/google/organic/live/advanced", payload, tenant_id)
             
+            # Debug: Log response structure
+            if data and isinstance(data, dict):
+                tasks_count = len(data.get("tasks", []))
+                logger.debug(f"SERP API response: {tasks_count} tasks, data keys: {list(data.keys())[:10]}")
+                if tasks_count > 0 and data["tasks"][0].get("result"):
+                    result_data = data["tasks"][0]["result"]
+                    logger.debug(f"SERP result_data type: {type(result_data)}, is_list: {isinstance(result_data, list)}, is_dict: {isinstance(result_data, dict)}")
+                    if isinstance(result_data, list) and len(result_data) > 0:
+                        logger.debug(f"SERP result_data[0] keys: {list(result_data[0].keys())[:10] if isinstance(result_data[0], dict) else 'N/A'}")
+                    elif isinstance(result_data, dict):
+                        logger.debug(f"SERP result_data keys: {list(result_data.keys())[:10]}")
+            
             # Process enhanced SERP data
             result = {
                 "keyword": keyword,
@@ -642,12 +654,17 @@ class DataForSEOClient:
                     logger.warning(f"Unexpected result format in SERP analysis: {type(result_data)}")
                     task_result = {}
                 
+                # Debug logging to understand response structure
+                logger.debug(f"SERP analysis result_data type: {type(result_data)}, task_result keys: {list(task_result.keys()) if isinstance(task_result, dict) else 'N/A'}")
+                
                 # Extract organic results
                 if isinstance(task_result, dict) and "items" in task_result:
                     items = task_result["items"]
                     if not isinstance(items, list):
                         logger.warning(f"SERP items is not a list: {type(items)}")
                         items = []
+                    else:
+                        logger.debug(f"SERP analysis found {len(items)} items in response")
                     
                     for item in items:
                         if not isinstance(item, dict):
