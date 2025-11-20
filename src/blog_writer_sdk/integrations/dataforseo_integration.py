@@ -218,7 +218,18 @@ class DataForSEOClient:
             end_time = time.perf_counter()
             duration = end_time - start_time
             log_api_request("dataforseo", endpoint, response.status_code, duration, message="Success", tenant_id=tenant_id)
-            return response.json()
+            
+            # Parse JSON response with validation
+            try:
+                json_data = response.json()
+                if not isinstance(json_data, dict):
+                    logger.warning(f"DataForSEO API returned non-dict response for {endpoint}: {type(json_data)}")
+                    return self._fallback_data(endpoint, payload)
+                return json_data
+            except Exception as json_error:
+                logger.error(f"Failed to parse JSON response for {endpoint}: {json_error}")
+                logger.debug(f"Response text preview: {response.text[:200]}")
+                return self._fallback_data(endpoint, payload)
         except httpx.HTTPStatusError as e:
             error_text = e.response.text[:500] if e.response.text else "No error text"
             logger.error(f"DataForSEO API request failed due to HTTP error for {endpoint}: {e.response.status_code} - {error_text}")
