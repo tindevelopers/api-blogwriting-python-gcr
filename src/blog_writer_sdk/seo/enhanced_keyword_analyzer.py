@@ -468,22 +468,52 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
                     overview_entry.get("cpc") if overview_entry.get("cpc") 
                     else m.get("cpc", 0.0)
                 )
-                # Get competition - search_volume_data endpoint is more reliable for competition metrics
-                # Check search_volume_data first (Google Ads endpoint has better competition data)
+                # Get competition - check multiple field locations and formats
+                # Priority: search_volume_data > overview > competition_index > competition_level conversion
                 search_volume_competition = m.get("competition")
+                search_volume_competition_index = m.get("competition_index")
                 overview_competition = overview_entry.get("competition")
+                overview_competition_index = overview_entry.get("competition_index")
+                overview_competition_level = overview_entry.get("competition_level")
                 
-                # Prioritize search_volume_data competition (more reliable), fall back to overview if not available
-                if search_volume_competition is not None and search_volume_competition > 0:
+                # Convert competition_level (LOW/MEDIUM/HIGH) to numeric if present
+                def convert_competition_level(level: str) -> float:
+                    """Convert competition level string to numeric (0.0-1.0)."""
+                    if not level:
+                        return None
+                    level_upper = str(level).upper()
+                    level_map = {
+                        "LOW": 0.25,
+                        "MEDIUM": 0.50,
+                        "HIGH": 0.75,
+                        "VERY_LOW": 0.10,
+                        "VERY_HIGH": 0.90
+                    }
+                    return level_map.get(level_upper)
+                
+                competition = None
+                
+                # Priority 1: search_volume_data competition (most reliable)
+                if search_volume_competition is not None:
                     competition = self._safe_float(search_volume_competition, 0.0)
-                elif overview_competition is not None and overview_competition > 0:
+                elif search_volume_competition_index is not None:
+                    # competition_index is typically 0-1, but sometimes 0-100, normalize to 0-1
+                    comp_idx = self._safe_float(search_volume_competition_index, 0.0)
+                    competition = comp_idx if comp_idx <= 1.0 else comp_idx / 100.0
+                
+                # Priority 2: overview competition
+                if competition is None or competition == 0.0:
+                    if overview_competition is not None:
                     competition = self._safe_float(overview_competition, 0.0)
-                elif search_volume_competition is not None:
-                    # Use search_volume_data even if 0 (it's the authoritative source)
-                    competition = self._safe_float(search_volume_competition, 0.0)
-                else:
-                    # Last resort: use overview or default to 0
-                    competition = self._safe_float(overview_competition, 0.0)
+                    elif overview_competition_index is not None:
+                        comp_idx = self._safe_float(overview_competition_index, 0.0)
+                        competition = comp_idx if comp_idx <= 1.0 else comp_idx / 100.0
+                    elif overview_competition_level:
+                        competition = convert_competition_level(overview_competition_level)
+                
+                # Default to 0.0 if still None
+                if competition is None:
+                    competition = 0.0
                 trend_score = self._safe_float(
                     overview_entry.get("trend_score") if overview_entry.get("trend_score") is not None
                     else m.get("trend", 0.0)
