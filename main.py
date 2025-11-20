@@ -2066,8 +2066,16 @@ def _looks_like_question(keyword: str) -> bool:
     return "?" in keyword or keyword_lower.startswith(question_prefixes)
 
 
-def _summarize_serp_analysis(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _summarize_serp_analysis(raw: Any) -> Dict[str, Any]:
+    """Summarize SERP analysis response, handling both dict and string responses."""
+    if not raw:
+        return {}
+    # Handle string responses (error messages or raw text)
+    if isinstance(raw, str):
+        logger.warning(f"SERP analysis returned string instead of dict: {raw[:100]}")
+        return {}
     if not isinstance(raw, dict):
+        logger.warning(f"SERP analysis returned unexpected type: {type(raw)}")
         return {}
     summary = {
         "keyword": raw.get("keyword"),
@@ -2276,16 +2284,38 @@ async def _analyze_keywords_with_progress_legacy(
                         )
                         # Parse related keywords response
                         related_keywords_list = []
-                        if related_response.get("tasks") and related_response["tasks"][0].get("result"):
-                            for item in related_response["tasks"][0]["result"][:20]:  # Limit to 20
-                                kw_data = item.get("keyword_data", {}).get("keyword_info", {})
-                                related_keywords_list.append({
-                                    "keyword": item.get("keyword") or kw_data.get("keyword", ""),
-                                    "search_volume": kw_data.get("search_volume", 0) or 0,
-                                    "cpc": kw_data.get("cpc", 0.0) or 0.0,
-                                    "competition": kw_data.get("competition", 0.0) or 0.0,
-                                    "difficulty_score": kw_data.get("keyword_difficulty", 50.0) or 50.0,
-                                })
+                        if isinstance(related_response, dict) and related_response.get("tasks"):
+                            tasks_list = related_response.get("tasks", [])
+                            if tasks_list and len(tasks_list) > 0:
+                                first_task = tasks_list[0]
+                                # Check task status_code first (20000 = success)
+                                task_status_code = first_task.get("status_code")
+                                if task_status_code == 20000:
+                                    result = first_task.get("result")
+                                    if result and isinstance(result, list):
+                                        for item in result[:20]:  # Limit to 20
+                                            if not isinstance(item, dict):
+                                                continue
+                                            # Extract keyword from multiple possible locations
+                                            keyword_text = item.get("keyword") or ""
+                                            kw_data = item.get("keyword_data", {})
+                                            keyword_info = kw_data.get("keyword_info", {}) if kw_data else {}
+                                            
+                                            if not keyword_text:
+                                                keyword_text = keyword_info.get("keyword", "")
+                                            
+                                            if not keyword_text:
+                                                continue
+                                            
+                                            related_keywords_list.append({
+                                                "keyword": keyword_text,
+                                                "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                                "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                                "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                                "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                            })
+                                else:
+                                    logger.debug(f"Related keywords task has error status_code: {task_status_code}, message: {first_task.get('status_message')}")
                         related_keywords_data[primary_keyword] = related_keywords_list
                     except Exception as e:
                         logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
@@ -2305,43 +2335,74 @@ async def _analyze_keywords_with_progress_legacy(
                         questions_list = []
                         topics_list = []
                         
-                        # ideas_response is already a list of items
+                        # Parse keyword ideas response - handle both list and dict formats
                         if isinstance(ideas_response, list):
+                            # Direct list format
                             for item in ideas_response[:50]:  # Limit to 50
-                                keyword_text = item.get("keyword", "")
+                                if not isinstance(item, dict):
+                                    continue
+                                keyword_text = item.get("keyword", "") or item.get("text", "")
                                 keyword_info = item.get("keyword_info", {})
+                                keyword_data = item.get("keyword_data", {})
+                                if not keyword_text and keyword_data:
+                                    keyword_info_from_data = keyword_data.get("keyword_info", {})
+                                    keyword_text = keyword_info_from_data.get("keyword", "")
+                                
+                                if not keyword_text:
+                                    continue
+                                
                                 idea_item = {
                                     "keyword": keyword_text,
                                     "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
                                     "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
                                     "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                    "difficulty_score": keyword_info.get("keyword_difficulty", 0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                    "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
                                 }
                                 ideas_list.append(idea_item)
                                 
                                 # Categorize as question or topic
                                 keyword_lower = keyword_text.lower()
-                                if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are", "?"]):
                                     questions_list.append(idea_item)
                                 else:
                                     topics_list.append(idea_item)
                         elif isinstance(ideas_response, dict) and ideas_response.get("tasks"):
                             # Handle task-based response format
                             for task in ideas_response.get("tasks", []):
-                                for item in task.get("result", [])[:50]:
-                                    keyword_text = item.get("keyword", "")
-                                    keyword_info = item.get("keyword_data", {}).get("keyword_info", {})
+                                # Check task status_code first (20000 = success)
+                                task_status_code = task.get("status_code")
+                                if task_status_code != 20000:
+                                    logger.debug(f"Keyword ideas task has error status_code: {task_status_code}, message: {task.get('status_message')}")
+                                    continue
+                                
+                                result = task.get("result", [])
+                                if not result or not isinstance(result, list):
+                                    continue
+                                
+                                for item in result[:50]:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    keyword_text = item.get("keyword", "") or item.get("text", "")
+                                    keyword_data = item.get("keyword_data", {})
+                                    keyword_info = keyword_data.get("keyword_info", {}) if keyword_data else item.get("keyword_info", {})
+                                    
+                                    if not keyword_text:
+                                        keyword_text = keyword_info.get("keyword", "")
+                                    
+                                    if not keyword_text:
+                                        continue
+                                    
                                     idea_item = {
                                         "keyword": keyword_text,
-                                        "search_volume": keyword_info.get("search_volume", 0) or 0,
-                                        "cpc": keyword_info.get("cpc", 0.0) or 0.0,
-                                        "competition": keyword_info.get("competition", 0.0) or 0.0,
-                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or 50.0,
+                                        "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                        "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                        "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
                                     }
                                     ideas_list.append(idea_item)
                                     
                                     keyword_lower = keyword_text.lower()
-                                    if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
+                                    if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are", "?"]):
                                         questions_list.append(idea_item)
                                     else:
                                         topics_list.append(idea_item)

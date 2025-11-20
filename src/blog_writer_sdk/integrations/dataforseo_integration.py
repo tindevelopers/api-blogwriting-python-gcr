@@ -814,7 +814,26 @@ class DataForSEOClient:
                 "depth": min(depth, 10)  # API may have limits
             }]
             
-            data = await self._make_request("serp/ai_summary/live", payload, tenant_id)
+            try:
+                data = await self._make_request("serp/ai_summary/live", payload, tenant_id)
+            except Exception as e:
+                # Handle 404 or other errors gracefully - endpoint may not exist
+                logger.warning(f"SERP AI summary endpoint not available (404 or error): {e}")
+                return {
+                    "keyword": keyword,
+                    "summary": "",
+                    "main_topics": [],
+                    "content_depth": "medium",
+                    "missing_topics": [],
+                    "common_questions": [],
+                    "serp_features": {
+                        "has_featured_snippet": False,
+                        "has_people_also_ask": False,
+                        "has_videos": False,
+                        "has_images": False
+                    },
+                    "recommendations": []
+                }
             
             # Process response
             result = {
