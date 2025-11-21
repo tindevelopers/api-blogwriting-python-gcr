@@ -218,7 +218,18 @@ class DataForSEOClient:
             end_time = time.perf_counter()
             duration = end_time - start_time
             log_api_request("dataforseo", endpoint, response.status_code, duration, message="Success", tenant_id=tenant_id)
-            return response.json()
+            
+            # Parse JSON response with validation
+            try:
+                json_data = response.json()
+                if not isinstance(json_data, dict):
+                    logger.warning(f"DataForSEO API returned non-dict response for {endpoint}: {type(json_data)}")
+                    return self._fallback_data(endpoint, payload)
+                return json_data
+            except Exception as json_error:
+                logger.error(f"Failed to parse JSON response for {endpoint}: {json_error}")
+                logger.debug(f"Response text preview: {response.text[:200]}")
+                return self._fallback_data(endpoint, payload)
         except httpx.HTTPStatusError as e:
             error_text = e.response.text[:500] if e.response.text else "No error text"
             logger.error(f"DataForSEO API request failed due to HTTP error for {endpoint}: {e.response.status_code} - {error_text}")
@@ -600,6 +611,18 @@ class DataForSEOClient:
             
             data = await self._make_request("serp/google/organic/live/advanced", payload, tenant_id)
             
+            # Debug: Log response structure
+            if data and isinstance(data, dict):
+                tasks_count = len(data.get("tasks", []))
+                logger.debug(f"SERP API response: {tasks_count} tasks, data keys: {list(data.keys())[:10]}")
+                if tasks_count > 0 and data["tasks"][0].get("result"):
+                    result_data = data["tasks"][0]["result"]
+                    logger.debug(f"SERP result_data type: {type(result_data)}, is_list: {isinstance(result_data, list)}, is_dict: {isinstance(result_data, dict)}")
+                    if isinstance(result_data, list) and len(result_data) > 0:
+                        logger.debug(f"SERP result_data[0] keys: {list(result_data[0].keys())[:10] if isinstance(result_data[0], dict) else 'N/A'}")
+                    elif isinstance(result_data, dict):
+                        logger.debug(f"SERP result_data keys: {list(result_data.keys())[:10]}")
+            
             # Process enhanced SERP data
             result = {
                 "keyword": keyword,
@@ -620,12 +643,53 @@ class DataForSEOClient:
                 }
             }
             
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+            if data.get("tasks") and len(data["tasks"]) > 0:
+                first_task = data["tasks"][0]
+                
+                # Check task status first (20000 = Ok)
+                task_status = first_task.get("status_code")
+                if task_status != 20000:
+                    logger.warning(f"SERP analysis task failed for keyword '{keyword}': status_code={task_status}, message={first_task.get('status_message')}")
+                    return result
+                
+                result_data = first_task.get("result")
+                
+                # Check if result is None or empty
+                if result_data is None:
+                    logger.warning(f"SERP analysis result is None for keyword: {keyword}")
+                    logger.info(f"Task status: {task_status}, message: {first_task.get('status_message')}")
+                    return result
+                
+                # Check if result is empty array
+                if isinstance(result_data, list) and len(result_data) == 0:
+                    logger.warning(f"SERP analysis returned empty result array for keyword: {keyword}")
+                    return result
+                
+                # Handle case where result might be a list or a single dict
+                if isinstance(result_data, list) and len(result_data) > 0:
+                    task_result = result_data[0] if isinstance(result_data[0], dict) else {}
+                elif isinstance(result_data, dict):
+                    task_result = result_data
+                else:
+                    logger.warning(f"Unexpected result format in SERP analysis: {type(result_data)}, value: {str(result_data)[:200]}")
+                    task_result = {}
+                
+                # Debug logging to understand response structure
+                logger.info(f"SERP analysis - result_data type: {type(result_data)}, task_result keys: {list(task_result.keys()) if isinstance(task_result, dict) else 'N/A'}")
                 
                 # Extract organic results
-                if "items" in task_result:
-                    for item in task_result["items"]:
+                if isinstance(task_result, dict) and "items" in task_result:
+                    items = task_result["items"]
+                    if not isinstance(items, list):
+                        logger.warning(f"SERP items is not a list: {type(items)}")
+                        items = []
+                    else:
+                        logger.debug(f"SERP analysis found {len(items)} items in response")
+                    
+                    for item in items:
+                        if not isinstance(item, dict):
+                            logger.warning(f"SERP item is not a dict: {type(item)}")
+                            continue
                         item_type = item.get("type", "")
                         
                         if item_type == "organic":
@@ -651,48 +715,66 @@ class DataForSEOClient:
                         
                         elif item_type == "people_also_ask" and include_people_also_ask:
                             paa_items = item.get("items", [])
-                            for paa_item in paa_items:
-                                result["people_also_ask"].append({
-                                    "question": paa_item.get("question", ""),
-                                    "title": paa_item.get("title", ""),
-                                    "url": paa_item.get("url", ""),
-                                    "description": paa_item.get("description", "")
-                                })
-                            if paa_items:
-                                result["serp_features"]["has_people_also_ask"] = True
+                            if isinstance(paa_items, list):
+                                for paa_item in paa_items:
+                                    if not isinstance(paa_item, dict):
+                                        logger.warning(f"PAA item is not a dict: {type(paa_item)}")
+                                        continue
+                                    # DataForSEO PAA items may have question in 'title' field
+                                    question_text = paa_item.get("question") or paa_item.get("title", "")
+                                    result["people_also_ask"].append({
+                                        "question": question_text,
+                                        "title": paa_item.get("title", ""),
+                                        "url": paa_item.get("url", ""),
+                                        "description": paa_item.get("description", "")
+                                    })
+                                if paa_items:
+                                    result["serp_features"]["has_people_also_ask"] = True
                         
                         elif item_type == "video":
                             video_items = item.get("items", [])
-                            for video_item in video_items:
-                                result["video_results"].append({
-                                    "title": video_item.get("title", ""),
-                                    "url": video_item.get("url", ""),
-                                    "description": video_item.get("description", ""),
-                                    "channel": video_item.get("channel", ""),
-                                    "duration": video_item.get("duration", "")
-                                })
-                            if video_items:
-                                result["serp_features"]["has_videos"] = True
+                            if isinstance(video_items, list):
+                                for video_item in video_items:
+                                    if not isinstance(video_item, dict):
+                                        logger.warning(f"Video item is not a dict: {type(video_item)}")
+                                        continue
+                                    result["video_results"].append({
+                                        "title": video_item.get("title", ""),
+                                        "url": video_item.get("url", ""),
+                                        "description": video_item.get("description", ""),
+                                        "channel": video_item.get("channel", ""),
+                                        "duration": video_item.get("duration", "")
+                                    })
+                                if video_items:
+                                    result["serp_features"]["has_videos"] = True
                         
                         elif item_type == "images":
                             image_items = item.get("items", [])
-                            for image_item in image_items:
-                                result["image_results"].append({
-                                    "title": image_item.get("title", ""),
-                                    "url": image_item.get("url", ""),
-                                    "image_url": image_item.get("image_url", ""),
-                                    "source": image_item.get("source", "")
-                                })
-                            if image_items:
-                                result["serp_features"]["has_images"] = True
+                            if isinstance(image_items, list):
+                                for image_item in image_items:
+                                    if not isinstance(image_item, dict):
+                                        logger.warning(f"Image item is not a dict: {type(image_item)}")
+                                        continue
+                                    result["image_results"].append({
+                                        "title": image_item.get("title", ""),
+                                        "url": image_item.get("url", ""),
+                                        "image_url": image_item.get("image_url", ""),
+                                        "source": image_item.get("source", "")
+                                    })
+                                if image_items:
+                                    result["serp_features"]["has_images"] = True
                         
                         elif item_type == "related_searches":
                             related_items = item.get("items", [])
-                            for related_item in related_items:
-                                result["related_searches"].append({
-                                    "query": related_item.get("query", ""),
-                                    "type": related_item.get("type", "")
-                                })
+                            if isinstance(related_items, list):
+                                for related_item in related_items:
+                                    if not isinstance(related_item, dict):
+                                        logger.warning(f"Related search item is not a dict: {type(related_item)}")
+                                        continue
+                                    result["related_searches"].append({
+                                        "query": related_item.get("query", ""),
+                                        "type": related_item.get("type", "")
+                                    })
                 
                 # Extract top domains
                 domains = {}
