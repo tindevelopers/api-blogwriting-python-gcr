@@ -398,6 +398,76 @@ const response = await apiClient.post('/api/v1/blog/generate-local-business', {
 
 Comprehensive keyword research with DataForSEO integration.
 
+### 2. Streaming Keyword Analysis ⭐ NEW
+
+**Endpoint:** `POST /api/v1/keywords/enhanced/stream`
+
+Streaming version that provides real-time progress updates through Server-Sent Events (SSE).
+
+**Benefits:**
+- ✅ Real-time progress updates (0-100%)
+- ✅ Stage-by-stage feedback
+- ✅ Better UX with live status
+- ✅ Stage-specific data as it becomes available
+
+**Example:**
+
+```typescript
+const response = await fetch('/api/v1/keywords/enhanced/stream', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    keywords: ['seo', 'keyword research'],
+    location: 'United States',
+    include_serp: true,
+    max_suggestions_per_keyword: 20
+  })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  
+  const chunk = decoder.decode(value);
+  const lines = chunk.split('\n');
+  
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const update = JSON.parse(line.slice(6));
+      console.log(`Stage: ${update.stage}, Progress: ${update.progress}%`);
+      
+      // Update UI with progress
+      updateProgressBar(update.progress);
+      updateStageLabel(update.stage);
+      
+      // Handle completion
+      if (update.stage === 'completed') {
+        displayResults(update.data.result);
+      }
+    }
+  }
+}
+```
+
+**Stages:**
+1. `initializing` (5%) - Starting search
+2. `detecting_location` (10-15%) - Detecting user location
+3. `analyzing_keywords` (20-30%) - Analyzing primary keywords
+4. `getting_suggestions` (40-45%) - Fetching suggestions
+5. `analyzing_suggestions` (50-55%) - Analyzing suggested keywords
+6. `clustering_keywords` (60-65%) - Clustering by topic
+7. `getting_ai_data` (70-75%) - Getting AI metrics
+8. `getting_related_keywords` (80-82%) - Finding related keywords
+9. `getting_keyword_ideas` (85-88%) - Getting ideas (questions/topics)
+10. `analyzing_serp` (92-95%) - Analyzing SERP (if requested)
+11. `building_discovery` (98%) - Building final results
+12. `completed` (100%) - Final results
+
+See `FRONTEND_KEYWORD_STREAMING_GUIDE.md` for complete streaming documentation.
+
 #### Request
 
 ```typescript
