@@ -3281,15 +3281,20 @@ async def analyze_keywords_enhanced_stream(
             }
             
             # Stage 12: Completed - ALWAYS send final result
-            yield await stream_stage_update(
+            # Log the final result to help debug
+            logger.info(f"Sending final result in stream: {len(final_result.get('enhanced_analysis', {}))} keywords analyzed")
+            
+            completed_message = await stream_stage_update(
                 KeywordSearchStage.COMPLETED,
                 100.0,
                 data={"result": final_result},
                 message="Search completed successfully"
             )
+            yield completed_message
             
-            # Send a final newline to ensure the stream is properly closed
-            yield "\n"
+            # Ensure stream is flushed and properly closed
+            # Send an explicit end marker for frontend to detect
+            yield f"data: {json.dumps({'type': 'end', 'stage': 'completed'})}\n\n"
             
         except HTTPException as http_ex:
             # For HTTP exceptions, send error but don't raise (to keep stream open)
@@ -3327,21 +3332,23 @@ async def analyze_keywords_enhanced_stream(
                 }
                 
                 # Send error with partial results if we have any data
-                yield await stream_stage_update(
+                error_message = await stream_stage_update(
                     KeywordSearchStage.ERROR,
                     0.0,
                     data={"error": str(e), "partial_result": partial_result},
                     message=f"Search failed: {str(e)}"
                 )
+                yield error_message
             except:
                 # If even partial result fails, send minimal error
-                yield await stream_stage_update(
+                error_message = await stream_stage_update(
                     KeywordSearchStage.ERROR,
                     0.0,
                     data={"error": str(e)},
                     message=f"Search failed: {str(e)}"
                 )
-            yield "\n"
+                yield error_message
+            yield f"data: {json.dumps({'type': 'end', 'stage': 'error'})}\n\n"
     
     return StreamingResponse(
         generate_stream(),
