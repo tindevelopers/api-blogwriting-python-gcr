@@ -3103,15 +3103,16 @@ async def analyze_keywords_enhanced_stream(
                 except Exception as e:
                     logger.warning(f"Failed to get keyword ideas: {e}")
             
-            # Stage 10: SERP analysis (if requested)
+            # Stage 10: SERP analysis and discovery (ALWAYS build, not conditional on include_serp)
+            # This matches the non-streaming endpoint behavior - always include discovery data
             serp_analysis_summary = {}
             discovery_data = {}
-            if request.include_serp and enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
+            if enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
                 yield await stream_stage_update(
                     KeywordSearchStage.ANALYZING_SERP,
                     92.0,
                     data={"keyword": request.keywords[0]},
-                    message=f"Analyzing SERP for '{request.keywords[0]}'..."
+                    message=f"Analyzing SERP and building discovery data for '{request.keywords[0]}'..."
                 )
                 
                 try:
@@ -3129,14 +3130,38 @@ async def analyze_keywords_enhanced_stream(
                         serp_analysis_summary = enrichment.pop("serp_analysis", {})
                         discovery_data = enrichment
                         
+                        # Log what we found
+                        matching_terms_count = len(discovery_data.get("matching_terms", []))
+                        questions_count = len(discovery_data.get("questions", []))
+                        related_terms_count = len(discovery_data.get("related_terms", []))
+                        paa_count = len(serp_analysis_summary.get("people_also_ask", []))
+                        
+                        logger.info(f"Discovery data: {matching_terms_count} matching terms, {questions_count} questions, {related_terms_count} related terms, {paa_count} PAA questions")
+                        
                         yield await stream_stage_update(
                             KeywordSearchStage.ANALYZING_SERP,
                             95.0,
-                            data={"serp_features_found": len(serp_analysis_summary.get("serp_features", {}))},
-                            message="SERP analysis completed"
+                            data={
+                                "serp_features_found": len(serp_analysis_summary.get("serp_features", {})),
+                                "matching_terms_count": matching_terms_count,
+                                "questions_count": questions_count,
+                                "related_terms_count": related_terms_count,
+                                "people_also_ask_count": paa_count
+                            },
+                            },
+                            message=f"SERP analysis completed: {matching_terms_count} matching terms, {paa_count} PAA questions"
                         )
+                    else:
+                        logger.warning("DataForSEO client not configured, skipping discovery")
                 except Exception as e:
-                    logger.warning(f"SERP analysis failed: {e}")
+                    logger.warning(f"SERP analysis and discovery failed: {e}", exc_info=True)
+            else:
+                if not enhanced_analyzer:
+                    logger.debug("Enhanced analyzer not available for discovery")
+                elif not enhanced_analyzer._df_client:
+                    logger.debug("DataForSEO client not initialized")
+                elif not request.keywords:
+                    logger.debug("No keywords provided for discovery")
             
             # Stage 11: Building final response
             yield await stream_stage_update(
