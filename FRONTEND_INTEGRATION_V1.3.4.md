@@ -2,6 +2,7 @@
 
 **Version:** 1.3.4  
 **Date:** 2025-11-20  
+**Last Updated:** 2025-11-20 (Added async image generation)  
 **Status:** ✅ Production Ready  
 **Base URL:** `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app`
 
@@ -34,7 +35,7 @@ The Blog Writer SDK API v1.3.4 provides comprehensive AI-powered blog generation
 - ✅ **Enhanced Keyword Analysis** - DataForSEO-powered keyword research
 - ✅ **Local Business Blogs** - Google Places integration for business reviews
 - ✅ **Multi-Provider AI** - OpenAI, Anthropic support with dynamic switching
-- ✅ **Image Generation** - Stability AI integration
+- ✅ **Image Generation** - Stability AI integration with async Cloud Tasks support
 - ✅ **Platform Publishing** - Webflow, Shopify, WordPress support
 - ✅ **Batch Processing** - Async job processing for large-scale operations
 
