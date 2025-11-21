@@ -3148,7 +3148,6 @@ async def analyze_keywords_enhanced_stream(
                                 "related_terms_count": related_terms_count,
                                 "people_also_ask_count": paa_count
                             },
-                            },
                             message=f"SERP analysis completed: {matching_terms_count} matching terms, {paa_count} PAA questions"
                         )
                     else:
