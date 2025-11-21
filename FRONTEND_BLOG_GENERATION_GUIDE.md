@@ -106,7 +106,6 @@ interface UnifiedBlogRequest {
   max_reviews_per_business?: number;
   include_business_details?: boolean;
   include_review_sentiment?: boolean;
-  use_yelp?: boolean;
   use_google?: boolean;
   
   // Comparison (future)
@@ -159,7 +158,6 @@ export interface LocalBusinessOptions extends BlogGenerationOptions {
   max_reviews_per_business?: number;
   include_business_details?: boolean;
   include_review_sentiment?: boolean;
-  use_yelp?: boolean;
   use_google?: boolean;
 }
 
@@ -272,7 +270,6 @@ class BlogGenerationService {
           format: options.format || 'markdown',
           include_business_details: options.include_business_details ?? true,
           include_review_sentiment: options.include_review_sentiment ?? true,
-          use_yelp: options.use_yelp ?? true,
           use_google: options.use_google ?? true,
           custom_instructions: options.custom_instructions,
         }),
@@ -577,7 +574,6 @@ export interface BlogGenerationResponse {
 export interface LocalBusinessBlogResponse extends BlogGenerationResponse {
   businesses: Array<{
     name: string;
-    yelp_id?: string;
     google_place_id?: string;
     address?: string;
     phone?: string;

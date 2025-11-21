@@ -61,7 +61,6 @@ POST /api/v1/blog/generate-unified
   max_reviews_per_business?: number;
   include_business_details?: boolean;
   include_review_sentiment?: boolean;
-  use_yelp?: boolean;
   use_google?: boolean;
   
   // Abstraction-specific fields
@@ -129,7 +128,6 @@ Comprehensive blogs about local businesses with aggregated reviews.
   "location": "Miami, FL",
   "max_businesses": 10,
   "max_reviews_per_business": 20,
-  "use_yelp": true,
   "use_google": true,
   "include_business_details": true,
   "include_review_sentiment": true

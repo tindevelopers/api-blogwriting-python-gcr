@@ -1,7 +1,7 @@
 """
-Review aggregation service for combining reviews from multiple sources.
+Review aggregation service for combining reviews from Google Places.
 
-This module aggregates reviews from Yelp, Google Places, and other sources,
+This module aggregates reviews from Google Places API,
 providing a unified interface for review data processing and analysis.
 """
 
@@ -11,7 +11,6 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .yelp_integration import YelpClient
 from .google_reviews_client import GoogleReviewsClient
 from ..monitoring.cloud_logging import get_blog_logger
 
@@ -20,7 +19,6 @@ logger = get_blog_logger()
 
 class ReviewSource(str, Enum):
     """Review source enumeration."""
-    YELP = "yelp"
     GOOGLE = "google"
     UNKNOWN = "unknown"
 
@@ -54,62 +52,24 @@ class BusinessReviewSummary:
 
 class ReviewAggregationService:
     """
-    Service for aggregating reviews from multiple sources.
+    Service for aggregating reviews from Google Places.
     
-    Combines reviews from Yelp, Google Places, and other sources
+    Combines reviews from Google Places API
     into a unified format for content generation.
     """
     
     def __init__(
         self,
-        yelp_client: Optional[YelpClient] = None,
         google_client: Optional[GoogleReviewsClient] = None,
     ):
         """
         Initialize review aggregation service.
         
         Args:
-            yelp_client: Optional Yelp client instance
             google_client: Optional Google Reviews client instance
         """
-        self.yelp_client = yelp_client or YelpClient()
         self.google_client = google_client or GoogleReviewsClient()
         self.logger = logger
-    
-    def _parse_yelp_review(self, yelp_review: Dict[str, Any]) -> Review:
-        """Parse a Yelp review into unified format."""
-        try:
-            # Parse date
-            date_str = yelp_review.get("time_created")
-            review_date = None
-            if date_str:
-                try:
-                    review_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                except:
-                    pass
-            
-            return Review(
-                text=yelp_review.get("text", ""),
-                rating=yelp_review.get("rating", 0),
-                author=yelp_review.get("user", {}).get("name", "Anonymous"),
-                date=review_date,
-                source=ReviewSource.YELP,
-                source_id=yelp_review.get("id"),
-                url=yelp_review.get("url"),
-                helpful_count=yelp_review.get("useful", 0),
-                metadata={
-                    "yelp_review_id": yelp_review.get("id"),
-                    "user_id": yelp_review.get("user", {}).get("id"),
-                }
-            )
-        except Exception as e:
-            self.logger.error(f"Error parsing Yelp review: {e}")
-            return Review(
-                text="",
-                rating=0,
-                author="Unknown",
-                source=ReviewSource.YELP
-            )
     
     def _parse_google_review(self, google_review: Dict[str, Any]) -> Review:
         """Parse a Google review into unified format."""
@@ -149,18 +109,16 @@ class ReviewAggregationService:
     async def aggregate_business_reviews(
         self,
         business_name: str,
-        yelp_business_id: Optional[str] = None,
         google_place_id: Optional[str] = None,
         max_reviews_per_source: int = 20,
     ) -> BusinessReviewSummary:
         """
-        Aggregate reviews from multiple sources for a business.
+        Aggregate reviews from Google Places for a business.
         
         Args:
             business_name: Name of the business
-            yelp_business_id: Optional Yelp business ID
             google_place_id: Optional Google Places place_id
-            max_reviews_per_source: Maximum reviews to fetch per source
+            max_reviews_per_source: Maximum reviews to fetch
             
         Returns:
             BusinessReviewSummary with aggregated reviews
@@ -168,27 +126,6 @@ class ReviewAggregationService:
         summary = BusinessReviewSummary(business_name=business_name)
         all_reviews: List[Review] = []
         sources_used: List[ReviewSource] = []
-        
-        # Fetch Yelp reviews
-        if yelp_business_id and self.yelp_client.is_configured:
-            try:
-                yelp_data = await self.yelp_client.get_business_reviews(
-                    yelp_business_id,
-                    limit=max_reviews_per_source
-                )
-                
-                yelp_reviews = yelp_data.get("reviews", [])
-                for yelp_review in yelp_reviews:
-                    review = self._parse_yelp_review(yelp_review)
-                    if review.text:  # Only add reviews with text
-                        all_reviews.append(review)
-                
-                if yelp_reviews:
-                    sources_used.append(ReviewSource.YELP)
-                    self.logger.info(f"Fetched {len(yelp_reviews)} Yelp reviews for {business_name}")
-            
-            except Exception as e:
-                self.logger.error(f"Error fetching Yelp reviews: {e}")
         
         # Fetch Google reviews
         if google_place_id and self.google_client.is_configured:
@@ -237,7 +174,6 @@ class ReviewAggregationService:
         Args:
             businesses: List of business dictionaries with:
                 - name: Business name
-                - yelp_id: Optional Yelp business ID
                 - google_place_id: Optional Google Places place_id
             max_reviews_per_business: Maximum reviews per business
             
@@ -250,9 +186,8 @@ class ReviewAggregationService:
         for business in businesses:
             task = self.aggregate_business_reviews(
                 business_name=business.get("name", "Unknown"),
-                yelp_business_id=business.get("yelp_id"),
                 google_place_id=business.get("google_place_id"),
-                max_reviews_per_source=max_reviews_per_business // 2,  # Split between sources
+                max_reviews_per_source=max_reviews_per_business,
             )
             tasks.append(task)
         

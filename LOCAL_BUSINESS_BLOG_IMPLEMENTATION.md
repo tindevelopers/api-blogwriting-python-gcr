@@ -15,23 +15,7 @@ This implementation adds comprehensive local business blog generation capabiliti
 
 ### ✅ Phase 1: Review Aggregation (Complete)
 
-#### 1. Yelp API Integration (`yelp_integration.py`)
-- **YelpClient** class for Yelp Fusion API integration
-- Business search functionality
-- Business details retrieval
-- Review fetching (up to 50 reviews per business)
-- Combined business + reviews retrieval
-
-**Features:**
-- Search businesses by term and location
-- Get detailed business information
-- Fetch reviews with ratings and metadata
-- Error handling and logging
-
-**Environment Variables:**
-- `YELP_API_KEY` - Yelp Fusion API key
-
-#### 2. Google Reviews Integration (`google_reviews_client.py`)
+#### 1. Google Reviews Integration (`google_reviews_client.py`)
 - **GoogleReviewsClient** class for Google Places API integration
 - Business search using Text Search API
 - Place details retrieval
@@ -47,8 +31,8 @@ This implementation adds comprehensive local business blog generation capabiliti
 **Environment Variables:**
 - `GOOGLE_PLACES_API_KEY` or `GOOGLE_MAPS_API_KEY` - Google Places API key
 
-#### 3. Review Aggregation Service (`review_aggregation.py`)
-- **ReviewAggregationService** class for combining reviews from multiple sources
+#### 2. Review Aggregation Service (`review_aggregation.py`)
+- **ReviewAggregationService** class for combining reviews from Google Places
 - Unified review data structure (`Review`, `BusinessReviewSummary`)
 - Review parsing and normalization
 - Multi-business review aggregation
@@ -56,7 +40,7 @@ This implementation adds comprehensive local business blog generation capabiliti
 - Basic sentiment summary (Phase 3 enhancement ready)
 
 **Features:**
-- Aggregate reviews from Yelp and Google
+- Aggregate reviews from Google Places
 - Unified review format
 - Review statistics and summaries
 - Top reviews filtering
@@ -94,7 +78,6 @@ This implementation adds comprehensive local business blog generation capabiliti
     "businesses": [                      # List of business info
         {
             "name": "ABC Plumbing",
-            "yelp_id": "...",
             "google_place_id": "...",
             "address": "...",
             "phone": "...",
@@ -107,8 +90,8 @@ This implementation adds comprehensive local business blog generation capabiliti
     "total_reviews_aggregated": 200,
     "generation_time_seconds": 45.2,
     "metadata": {
-        "sources_used": ["serp_yelp", "yelp_search"],
-        "review_sources": ["yelp", "google"],
+        "sources_used": ["serp_google", "google_search"],
+        "review_sources": ["google"],
         "seo_score": 85,
         "word_count": 2500
     }
@@ -117,8 +100,8 @@ This implementation adds comprehensive local business blog generation capabiliti
 
 **Workflow:**
 1. **Business Discovery**: Uses SERP analysis (DataForSEO) to find top businesses
-2. **Fallback Search**: If SERP doesn't find enough, searches Yelp and Google Places directly
-3. **Review Aggregation**: Fetches reviews from Yelp and Google for each business
+2. **Fallback Search**: If SERP doesn't find enough, searches Google Places directly
+3. **Review Aggregation**: Fetches reviews from Google Places for each business
 4. **Content Generation**: Uses existing AI pipeline to generate comprehensive blog content
 5. **Response**: Returns blog content with business information and metadata
 
@@ -164,7 +147,6 @@ This implementation adds comprehensive local business blog generation capabiliti
 
 ```
 src/blog_writer_sdk/integrations/
-├── yelp_integration.py              # Yelp API client
 ├── google_reviews_client.py         # Google Places API client
 └── review_aggregation.py            # Review aggregation service
 
@@ -197,10 +179,7 @@ curl -X POST "https://your-api.com/api/v1/blog/generate-local-business" \
 ## Environment Variables Required
 
 ```bash
-# Yelp API (optional but recommended)
-YELP_API_KEY=your_yelp_api_key
-
-# Google Places API (optional but recommended)
+# Google Places API (required for local business blogs)
 GOOGLE_PLACES_API_KEY=your_google_places_api_key
 # OR
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
@@ -218,7 +197,6 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 
 ## API Costs
 
-- **Yelp Fusion API**: Free tier available, paid plans for higher volume
 - **Google Places API**: Pay-as-you-go pricing (~$0.017 per request)
 - **DataForSEO SERP API**: ~$0.01-0.02 per keyword (already in use)
 - **AI Generation**: Standard costs based on provider and model
@@ -227,8 +205,8 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 
 ## Error Handling
 
-- Graceful fallback if Yelp/Google APIs are unavailable
-- Continues with available data sources
+- Graceful fallback if Google Places API is unavailable
+- Continues with SERP data if Google Places fails
 - Comprehensive error logging
 - User-friendly error messages
 
@@ -274,7 +252,6 @@ ANTHROPIC_API_KEY=your_anthropic_api_key
 ## Notes
 
 - Google Places API provides limited reviews (~5 per business). For full review access, businesses need to use Google Business Profile API (requires business owner authentication).
-- Yelp API provides up to 50 reviews per business.
 - SERP analysis helps discover businesses that may not appear in direct API searches.
 - The endpoint gracefully handles missing API keys and continues with available sources.
 

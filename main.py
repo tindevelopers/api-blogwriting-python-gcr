@@ -77,7 +77,7 @@ from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
     CloudinaryStorage, CloudflareR2Storage, MediaStorageManager,
-    YelpClient, GoogleReviewsClient, ReviewAggregationService
+    GoogleReviewsClient, ReviewAggregationService
 )
 try:
     # Optional: WordPress not installed in this repo currently
@@ -316,7 +316,6 @@ class UnifiedBlogRequest(BaseModel):
     max_reviews_per_business: int = Field(default=20, ge=5, le=50, description="Maximum reviews per business (local_business)")
     include_business_details: bool = Field(default=True, description="Include business details (local_business)")
     include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis (local_business)")
-    use_yelp: bool = Field(default=True, description="Fetch reviews from Yelp (local_business)")
     use_google: bool = Field(default=True, description="Fetch reviews from Google Places (local_business)")
     
     # Abstraction-specific fields
@@ -340,7 +339,6 @@ class LocalBusinessBlogRequest(BaseModel):
     format: ContentFormat = Field(default=ContentFormat.MARKDOWN, description="Output format")
     include_business_details: bool = Field(default=True, description="Include business details (hours, contact, services)")
     include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis")
-    use_yelp: bool = Field(default=True, description="Fetch reviews from Yelp")
     use_google: bool = Field(default=True, description="Fetch reviews from Google Places")
     custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
 
@@ -348,7 +346,6 @@ class LocalBusinessBlogRequest(BaseModel):
 class BusinessInfo(BaseModel):
     """Business information model."""
     name: str
-    yelp_id: Optional[str] = None
     google_place_id: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
@@ -3520,7 +3517,6 @@ async def generate_blog_unified(
                 format=request.format,
                 include_business_details=request.include_business_details,
                 include_review_sentiment=request.include_review_sentiment,
-                use_yelp=request.use_yelp,
                 use_google=request.use_google,
                 custom_instructions=request.custom_instructions,
             )
@@ -3596,13 +3592,13 @@ async def generate_local_business_blog(
     
     This endpoint:
     1. Uses SERP analysis to find top businesses in the specified location
-    2. Fetches reviews from Yelp and Google Places
+    2. Fetches reviews from Google Places
     3. Aggregates review data and business information
     4. Generates comprehensive blog content using AI pipeline
     
     Features:
     - Business discovery from SERP results
-    - Multi-source review aggregation (Yelp + Google)
+    - Google Places review aggregation
     - Business details extraction (hours, contact, services)
     - Review sentiment analysis
     - SEO-optimized content generation
@@ -3612,10 +3608,8 @@ async def generate_local_business_blog(
     
     try:
         # Initialize review aggregation service
-        yelp_client = YelpClient()
         google_client = GoogleReviewsClient()
         review_service = ReviewAggregationService(
-            yelp_client=yelp_client if request.use_yelp else None,
             google_client=google_client if request.use_google else None
         )
         
@@ -3645,20 +3639,8 @@ async def generate_local_business_blog(
                     url = result.get("url", "")
                     domain = result.get("domain", "")
                     
-                    # Check if this looks like a business listing (Yelp, Google Maps, etc.)
-                    if "yelp.com" in domain.lower():
-                        # Extract Yelp business ID from URL
-                        yelp_id = None
-                        if "/biz/" in url:
-                            yelp_id = url.split("/biz/")[1].split("?")[0].split("-")[-1]
-                        
-                        serp_businesses.append({
-                            "name": title,
-                            "yelp_id": yelp_id,
-                            "url": url,
-                            "source": "serp_yelp"
-                        })
-                    elif "google.com/maps" in domain.lower() or "maps.google.com" in domain.lower():
+                    # Check if this looks like a business listing (Google Maps, etc.)
+                    if "google.com/maps" in domain.lower() or "maps.google.com" in domain.lower():
                         # Extract Google Place ID if possible
                         place_id = None
                         if "place_id=" in url:
@@ -3683,35 +3665,8 @@ async def generate_local_business_blog(
             except Exception as e:
                 logger.warning(f"SERP analysis failed: {e}, falling back to direct search")
         
-        # Step 2: Search for businesses using Yelp and Google if SERP didn't find enough
+        # Step 2: Search for businesses using Google Places if SERP didn't find enough
         if len(serp_businesses) < request.max_businesses:
-            # Search Yelp
-            if request.use_yelp and yelp_client.is_configured:
-                try:
-                    yelp_results = await yelp_client.search_businesses(
-                        term=request.topic.split(" in ")[0] if " in " in request.topic else request.topic,
-                        location=request.location,
-                        limit=request.max_businesses,
-                        sort_by="rating"
-                    )
-                    
-                    for business in yelp_results.get("businesses", []):
-                        # Avoid duplicates
-                        if not any(b.get("yelp_id") == business.get("id") for b in serp_businesses):
-                            serp_businesses.append({
-                                "name": business.get("name", ""),
-                                "yelp_id": business.get("id"),
-                                "address": ", ".join(business.get("location", {}).get("display_address", [])),
-                                "rating": business.get("rating"),
-                                "review_count": business.get("review_count", 0),
-                                "phone": business.get("phone"),
-                                "url": business.get("url"),
-                                "categories": [cat.get("title") for cat in business.get("categories", [])],
-                                "source": "yelp_search"
-                            })
-                except Exception as e:
-                    logger.warning(f"Yelp search failed: {e}")
-            
             # Search Google Places
             if request.use_google and google_client.is_configured:
                 try:
@@ -3762,7 +3717,6 @@ async def generate_local_business_blog(
             
             business_info = BusinessInfo(
                 name=business_data.get("name", "Unknown Business"),
-                yelp_id=business_data.get("yelp_id"),
                 google_place_id=business_data.get("google_place_id"),
                 address=business_data.get("address"),
                 phone=business_data.get("phone"),
