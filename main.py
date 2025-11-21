@@ -21,7 +21,7 @@ startup_time = time.time()
 
 # Deployment trigger - updated timestamp
 deployment_version = "2025-11-15-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.3.4")
+APP_VERSION = os.getenv("APP_VERSION", "1.3.5")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
