@@ -51,3 +51,5 @@ echo "  2. Deploy updated service"
 echo "  3. Test async image generation endpoints"
 echo "  4. Monitor queue depth in Cloud Console"
 
+
+

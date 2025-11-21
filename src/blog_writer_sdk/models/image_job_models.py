@@ -118,3 +118,5 @@ class BatchImageGenerationResponse(BaseModel):
     total_images: int = Field(..., description="Total number of images")
     estimated_completion_time: Optional[int] = Field(None, description="Estimated seconds until completion")
 
+
+

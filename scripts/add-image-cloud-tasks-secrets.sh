@@ -81,3 +81,5 @@ echo "  1. Redeploy Cloud Run service to pick up new secret version"
 echo "  2. Test async image generation endpoints"
 echo "  3. Monitor Cloud Tasks queue in Cloud Console"
 
+
+
