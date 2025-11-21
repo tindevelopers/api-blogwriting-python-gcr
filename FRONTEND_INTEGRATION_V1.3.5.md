@@ -1,4 +1,4 @@
-# Frontend Integration Guide v1.3.4
+# Frontend Integration Guide v1.3.5
 
 **Version:** 1.3.5  
 **Date:** 2025-11-20  
