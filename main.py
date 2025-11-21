@@ -3286,26 +3286,52 @@ async def analyze_keywords_enhanced_stream(
             logger.info(f"Sending final result in stream: {len(final_result.get('enhanced_analysis', {}))} keywords analyzed, total_keywords: {final_result.get('total_keywords', 0)}")
             
             # CRITICAL: Send the final result in the data field
-            # Frontend expects: update.data.result
+            # Frontend expects: update.data.result when stage === 'completed'
+            # Format: {"stage": "completed", "progress": 100.0, "data": {"result": {...}}}
+            
+            # Verify final_result structure before sending
+            if not isinstance(final_result, dict):
+                logger.error(f"final_result is not a dict: {type(final_result)}")
+                final_result = {}
+            
+            if "enhanced_analysis" not in final_result:
+                logger.warning("final_result missing enhanced_analysis, adding empty dict")
+                final_result["enhanced_analysis"] = {}
+            
+            # Create the completed message with result nested in data
+            completed_data = {
+                "result": final_result
+            }
+            
             completed_message = await stream_stage_update(
                 KeywordSearchStage.COMPLETED,
                 100.0,
-                data={"result": final_result},  # This creates update.data.result
+                data=completed_data,  # This creates update.data.result for frontend
                 message="Search completed successfully"
             )
             
-            # Log the actual message being sent (first 500 chars) for debugging
-            logger.debug(f"Completed message preview: {completed_message[:500]}")
-            logger.info(f"Final result keys: {list(final_result.keys())}")
+            # Verify the message format before sending
+            try:
+                # Parse to verify it's valid JSON and has result
+                if completed_message.startswith("data: "):
+                    parsed = json.loads(completed_message[6:].strip())
+                    has_result = "result" in parsed.get("data", {})
+                    logger.info(f"Completed message verified - has result: {has_result}, stage: {parsed.get('stage')}, progress: {parsed.get('progress')}")
+                    if not has_result:
+                        logger.error("CRITICAL: Completed message missing result in data field!")
+                else:
+                    logger.error(f"Completed message doesn't start with 'data: ': {completed_message[:100]}")
+            except Exception as e:
+                logger.error(f"Failed to verify completed message format: {e}")
             
+            # Send the completed message
             yield completed_message
             
-            # Ensure stream is flushed and properly closed
-            # Send an explicit end marker for frontend to detect
+            # Send an explicit end marker for frontend to detect stream completion
             yield f"data: {json.dumps({'type': 'end', 'stage': 'completed'})}\n\n"
             
             # Log completion
-            logger.info("Stream completed successfully, final result sent")
+            logger.info(f"Stream completed successfully - sent final result with {len(final_result.get('enhanced_analysis', {}))} keywords")
             
         except HTTPException as http_ex:
             # For HTTP exceptions, send error but don't raise (to keep stream open)
