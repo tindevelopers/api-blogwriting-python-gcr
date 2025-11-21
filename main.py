@@ -3285,20 +3285,18 @@ async def analyze_keywords_enhanced_stream(
             # Log the final result to help debug
             logger.info(f"Sending final result in stream: {len(final_result.get('enhanced_analysis', {}))} keywords analyzed, total_keywords: {final_result.get('total_keywords', 0)}")
             
-            # Ensure final_result is properly structured
-            completed_data = {
-                "result": final_result
-            }
-            
+            # CRITICAL: Send the final result in the data field
+            # Frontend expects: update.data.result
             completed_message = await stream_stage_update(
                 KeywordSearchStage.COMPLETED,
                 100.0,
-                data=completed_data,
+                data={"result": final_result},  # This creates update.data.result
                 message="Search completed successfully"
             )
             
-            # Log the actual message being sent (first 500 chars)
+            # Log the actual message being sent (first 500 chars) for debugging
             logger.debug(f"Completed message preview: {completed_message[:500]}")
+            logger.info(f"Final result keys: {list(final_result.keys())}")
             
             yield completed_message
             
