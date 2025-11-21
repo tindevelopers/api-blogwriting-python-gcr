@@ -591,7 +591,7 @@ const response = await apiClient.get('/api/v1/ai/health');
 
 ## Image Generation
 
-### Generate Image
+### Generate Image (Synchronous)
 
 **Endpoint:** `POST /api/v1/images/generate`
 
@@ -601,9 +601,143 @@ const response = await apiClient.post('/api/v1/images/generate', {
   provider: 'stability_ai',
   style?: 'photographic' | 'digital-art' | 'anime' | '3d-model',
   aspect_ratio?: '16:9' | '1:1' | '9:16',
-  quality?: 'standard' | 'hd',
+  quality?: 'draft' | 'standard' | 'high' | 'ultra',
   num_images?: number, // 1-4
 });
+```
+
+### Generate Image (Asynchronous) ⭐ NEW
+
+**Endpoint:** `POST /api/v1/images/generate-async`
+
+Create an async image generation job via Cloud Tasks. Returns immediately with `job_id` for polling.
+
+```typescript
+// Create async job
+const jobResponse = await apiClient.post('/api/v1/images/generate-async', {
+  prompt: 'A beautiful sunset over mountains',
+  quality: 'draft', // Use 'draft' for fast previews (~3 seconds)
+  provider: 'stability_ai',
+  style: 'photographic',
+  aspect_ratio: '16:9',
+  blog_id: 'optional-blog-id', // Link to blog if generating for a blog
+  blog_job_id: 'optional-blog-job-id'
+});
+
+// Response:
+// {
+//   job_id: "uuid",
+//   status: "queued",
+//   message: "Image generation job queued successfully",
+//   estimated_completion_time: 5, // seconds
+//   is_draft: true
+// }
+
+// Poll for completion
+const pollJobStatus = async (jobId: string) => {
+  const maxAttempts = 60; // 5 minutes max
+  for (let i = 0; i < maxAttempts; i++) {
+    const status = await apiClient.get(`/api/v1/images/jobs/${jobId}`);
+    
+    if (status.data.status === 'completed') {
+      return status.data.result; // Contains images array
+    }
+    
+    if (status.data.status === 'failed') {
+      throw new Error(status.data.error_message);
+    }
+    
+    // Wait before next poll (exponential backoff)
+    await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(1.5, i), 10000)));
+  }
+  
+  throw new Error('Job timeout');
+};
+
+// Get result
+const result = await pollJobStatus(jobResponse.data.job_id);
+const imageUrl = result.images[0].url;
+```
+
+### Batch Image Generation ⭐ NEW
+
+**Endpoint:** `POST /api/v1/images/batch-generate`
+
+Generate multiple images asynchronously. Perfect for generating all images needed for a blog post.
+
+```typescript
+const batchResponse = await apiClient.post('/api/v1/images/batch-generate', {
+  images: [
+    {
+      prompt: 'Hero image for blog post',
+      quality: 'draft',
+      aspect_ratio: '16:9'
+    },
+    {
+      prompt: 'Featured image',
+      quality: 'draft',
+      aspect_ratio: '1:1'
+    },
+    {
+      prompt: 'Inline image 1',
+      quality: 'draft',
+      aspect_ratio: '4:3'
+    }
+  ],
+  blog_id: 'blog-uuid',
+  blog_job_id: 'blog-job-uuid',
+  workflow: 'draft_then_final' // or 'final_only'
+});
+
+// Response:
+// {
+//   batch_id: "uuid",
+//   job_ids: ["job-1", "job-2", "job-3"],
+//   status: "queued",
+//   total_images: 3,
+//   estimated_completion_time: 15
+// }
+
+// Poll all jobs
+const statuses = await Promise.all(
+  batchResponse.data.job_ids.map(id => 
+    apiClient.get(`/api/v1/images/jobs/${id}`)
+  )
+);
+
+// Check if all completed
+const allCompleted = statuses.every(s => s.data.status === 'completed');
+```
+
+### Get Job Status ⭐ NEW
+
+**Endpoint:** `GET /api/v1/images/jobs/{job_id}`
+
+Check the status of an async image generation job.
+
+```typescript
+const status = await apiClient.get(`/api/v1/images/jobs/${jobId}`);
+
+// Response:
+// {
+//   job_id: "uuid",
+//   status: "completed", // "pending" | "queued" | "processing" | "completed" | "failed"
+//   progress_percentage: 100.0,
+//   current_stage: "processing_result",
+//   created_at: "2025-11-20T10:00:00Z",
+//   started_at: "2025-11-20T10:00:01Z",
+//   completed_at: "2025-11-20T10:00:06Z",
+//   result: {
+//     success: true,
+//     images: [{ url: "https://...", width: 1024, height: 1024 }],
+//     generation_time_seconds: 5.2,
+//     provider: "stability_ai",
+//     model: "stable-diffusion-xl-1024-v1-0",
+//     cost: 0.002
+//   },
+//   is_draft: true,
+//   estimated_time_remaining: null
+// }
 ```
 
 ### Image Variations
