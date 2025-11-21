@@ -720,8 +720,10 @@ class DataForSEOClient:
                                     if not isinstance(paa_item, dict):
                                         logger.warning(f"PAA item is not a dict: {type(paa_item)}")
                                         continue
+                                    # DataForSEO PAA items may have question in 'title' field
+                                    question_text = paa_item.get("question") or paa_item.get("title", "")
                                     result["people_also_ask"].append({
-                                        "question": paa_item.get("question", ""),
+                                        "question": question_text,
                                         "title": paa_item.get("title", ""),
                                         "url": paa_item.get("url", ""),
                                         "description": paa_item.get("description", "")
