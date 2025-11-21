@@ -1310,6 +1310,15 @@ const retryRequest = async (fn: () => Promise<any>, retries = 3) => {
 
 ## Migration Guide
 
+### From v1.3.4 to v1.3.5
+
+**Changes:**
+- ✅ Updated response structure documentation with accurate field types
+- ✅ Added warnings about current limitations (related_keywords, long_tail_keywords)
+- ✅ Documented when fields may be empty (related_keywords_enhanced, questions, topics)
+- ✅ Added frontend workaround patterns for handling limitations
+- ✅ Added reference to BACKEND_KEYWORD_ENDPOINT_RECOMMENDATIONS.md
+
 ### From v1.3.2 to v1.3.4
 
 #### 1. Update Endpoint URLs
