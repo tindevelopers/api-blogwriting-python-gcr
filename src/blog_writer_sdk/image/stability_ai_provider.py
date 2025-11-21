@@ -65,11 +65,13 @@ class StabilityAIProvider(BaseImageProvider):
         self._session = None
         
         # Model mapping for quality levels
+        # Note: For draft, we use the same model but with fewer steps and lower cfg_scale
+        # This provides faster generation while maintaining compatibility
         self._model_map = {
-            "draft": "stable-diffusion-xl-turbo",  # Fast draft generation
+            "draft": "stable-diffusion-xl-1024-v1-0",  # Fast draft (fewer steps)
             "standard": "stable-diffusion-xl-1024-v1-0",  # Standard quality
-            "high": "stable-diffusion-xl-1024-v1-0",  # High quality (same model, more steps)
-            "ultra": "stable-diffusion-3.5-large"  # Ultra high quality (if available)
+            "high": "stable-diffusion-xl-1024-v1-0",  # High quality (more steps)
+            "ultra": "stable-diffusion-xl-1024-v1-0"  # Ultra quality (most steps)
         }
     
     @property
