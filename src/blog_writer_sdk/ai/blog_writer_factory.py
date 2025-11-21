@@ -258,16 +258,6 @@ class BlogWriterFactory:
                     "priority": 2,
                     "max_retries": 3,
                     "timeout": 30
-                },
-                "azure_openai": {
-                    "api_key": os.getenv("AZURE_OPENAI_API_KEY"),
-                    "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
-                    "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
-                    "default_model": "gpt-4o-mini",
-                    "enabled": bool(os.getenv("AZURE_OPENAI_API_KEY")),
-                    "priority": 3,
-                    "max_retries": 3,
-                    "timeout": 30
                 }
             },
             "default_strategy": ContentStrategy.SEO_OPTIMIZED,

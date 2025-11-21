@@ -32,7 +32,7 @@ class AIProviderConfig(BaseModel):
     default_model: Optional[str] = Field(None, description="Default model for the provider")
     max_retries: int = Field(3, description="Maximum retry attempts")
     timeout: int = Field(30, description="Request timeout in seconds")
-    custom_endpoint: Optional[str] = Field(None, description="Custom API endpoint (for Azure OpenAI)")
+    custom_endpoint: Optional[str] = Field(None, description="Custom API endpoint (for providers with override support)")
 
 
 class DataForSEOConfig(BaseModel):
@@ -132,19 +132,6 @@ def load_ai_settings_from_env() -> AISettingsConfig:
             max_retries=int(os.getenv("DEEPSEEK_MAX_RETRIES", "3")),
             timeout=int(os.getenv("DEEPSEEK_TIMEOUT", "30")),
             custom_endpoint=os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com")
-        )
-    
-    # Azure OpenAI Configuration
-    if os.getenv("AZURE_OPENAI_API_KEY"):
-        providers["azure_openai"] = AIProviderConfig(
-            provider_type="azure_openai",
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            enabled=bool(os.getenv("AZURE_OPENAI_API_KEY")),
-            priority=4,
-            default_model=os.getenv("AZURE_OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            max_retries=int(os.getenv("AZURE_OPENAI_MAX_RETRIES", "3")),
-            timeout=int(os.getenv("AZURE_OPENAI_TIMEOUT", "30")),
-            custom_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
         )
     
     # DataForSEO Configuration
@@ -343,7 +330,7 @@ async def update_api_key(request: APIKeyUpdateRequest):
     """Update API key for a specific provider."""
     try:
         # Validate provider
-        valid_providers = ["openai", "anthropic", "deepseek", "azure_openai", "dataforseo"]
+        valid_providers = ["openai", "anthropic", "deepseek", "dataforseo"]
         if request.provider not in valid_providers:
             raise HTTPException(
                 status_code=400, 
@@ -549,7 +536,7 @@ async def reset_ai_config():
         # Clear environment variables (in production, this would clear from secure store)
         env_vars_to_clear = [
             "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY",
-            "AZURE_OPENAI_API_KEY", "DATAFORSEO_API_KEY", "DATAFORSEO_API_SECRET"
+            "DATAFORSEO_API_KEY", "DATAFORSEO_API_SECRET"
         ]
         
         for var in env_vars_to_clear:

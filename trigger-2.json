@@ -1,0 +1,16 @@
+{
+  "name": "deploy-staging-on-staging",
+  "description": "Deploy to staging environment on staging branch pushes",
+  "repository": "projects/api-ai-blog-writer/locations/us-central1/connections/github-connection/repositories/api-blogwriting-python-gcr",
+  "github": {
+    "push": {
+      "branch": "^staging$"
+    }
+  },
+  "filename": "cloudbuild.yaml",
+  "substitutions": {
+    "_REGION": "europe-west9",
+    "_ENV": "staging",
+    "_SERVICE_NAME": "blog-writer-api-staging"
+  }
+}

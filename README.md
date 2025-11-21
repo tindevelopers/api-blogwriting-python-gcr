@@ -6,10 +6,15 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+**Version**: 1.3.2  
+**Publish date**: 2025-11-15  
+**Last deployment test**: 2025-11-16 (develop branch - permissions fixed)  
+See the full [CHANGELOG](CHANGELOG.md) for details.
+
 ## 🚀 Features
 
 ### Core Capabilities
-- **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic, Azure OpenAI) with intelligent fallback
+- **🤖 AI-Enhanced Content Generation**: Multi-provider AI support (OpenAI, Anthropic) with intelligent fallback
 - **🚀 Direct AI Provider Integration**: Direct integration with OpenAI, Anthropic, and other AI providers
 - **📊 SEO-First Architecture**: Built-in SEO optimization and analysis
 - **🔍 Enhanced Keyword Analysis**: Optional DataForSEO integration for real search volume, competition, and trends data
@@ -159,9 +164,19 @@ PORT=8000
 SUPABASE_URL=https://your-project-id.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
 
-# DataForSEO Configuration (Optional - for enhanced keyword analysis)
+# DataForSEO Configuration (Optional - for enhanced keyword analysis and intent detection)
 DATAFORSEO_API_KEY=your_dataforseo_api_key
 DATAFORSEO_API_SECRET=your_dataforseo_api_secret
+
+# Google Custom Search (Required for enhanced blog generation)
+GOOGLE_CUSTOM_SEARCH_API_KEY=your_google_search_api_key
+GOOGLE_CUSTOM_SEARCH_ENGINE_ID=your_search_engine_id
+
+# Google Knowledge Graph (Optional - for entity recognition and structured data)
+GOOGLE_KNOWLEDGE_GRAPH_API_KEY=your_knowledge_graph_api_key
+
+# Google Search Console (Optional - for query performance analysis)
+GSC_SITE_URL=https://your-site.com
 
 # MCP Configuration (Optional - for external integrations)
 MCP_API_KEY=your_mcp_api_key
@@ -196,7 +211,6 @@ The SDK supports multiple AI providers with intelligent fallback for robust cont
 #### Supported AI Providers
 - **OpenAI**: GPT-4o, GPT-4o-mini, GPT-4 Turbo, GPT-3.5 Turbo
 - **Anthropic**: Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus
-- **Azure OpenAI**: All OpenAI models via Azure endpoints
 
 #### AI Features
 - **Smart Content Generation**: Context-aware blog posts, titles, meta descriptions
@@ -264,43 +278,166 @@ The SDK supports enhanced keyword analysis through DataForSEO integration, provi
 - **Cost-Per-Click (CPC)**: Average advertising costs
 - **SERP Features**: Featured snippets, local packs, etc.
 - **Trend Analysis**: Historical search volume trends
+- **Search Intent Analysis**: Intent classification (informational/commercial/transactional/navigational)
 
 #### Setup DataForSEO Integration
 
 1. **Get DataForSEO API Credentials**: Sign up at [DataForSEO](https://dataforseo.com/)
-2. **Configure Environment Variables**: Add your credentials to `.env`
+2. **Configure Environment Variables**: Add your credentials to `.env` or Google Secret Manager
 3. **Automatic Fallback**: If credentials aren't provided, the SDK uses built-in analysis
 
 #### Usage with Enhanced Analysis
 
-```python
-from blog_writer_sdk.integrations.dataforseo_integration import DataForSEOIntegration
-from blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
-
-# Initialize DataForSEO integration
-dataforseo = DataForSEOIntegration(
-    api_key="your_api_key",
-    api_secret="your_api_secret"
-)
-
-# Create enhanced analyzer
-enhanced_analyzer = EnhancedKeywordAnalyzer(dataforseo_client=dataforseo)
-
-# Use with BlogWriter
-writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
+```bash
+curl -X POST "$BASE/api/v1/keywords/enhanced" \
+  -H "Content-Type: application/json" \
+  -d '{"keywords":["ai in business","cloud run seo"],"location":"United States","language":"en"}'
 ```
+
+### 🚀 Enhanced Blog Generation (Multi-Stage Pipeline)
+
+**NEW in v1.2.0**: High-quality blog generation using a sophisticated 4-stage pipeline with advanced optimizations.
+
+#### Features
+
+- **4-Stage Generation Pipeline**:
+  1. **Research & Outline** (Claude 3.5 Sonnet) - Comprehensive research and structure
+  2. **Draft Generation** (GPT-4o) - Comprehensive content creation
+  3. **Enhancement** (Claude 3.5 Sonnet) - Refinement and fact-checking
+  4. **SEO Polish** (GPT-4o-mini) - Final optimization
+
+- **Intent-Based Generation**: Automatically detects search intent and optimizes content structure
+- **Few-Shot Learning**: Learns from top-ranking content examples
+- **Content Length Optimization**: Dynamically adjusts word count based on SERP competition
+- **Multi-Model Consensus** (optional): Combines GPT-4o and Claude for higher quality
+- **Google Knowledge Graph**: Entity recognition and structured data generation
+- **Semantic Keyword Integration**: Natural integration of related keywords
+- **Quality Scoring**: 6-dimensional quality assessment (readability, SEO, structure, factual, uniqueness, engagement)
+- **Content Freshness**: Current dates and "last updated" signals
+
+#### Usage
+
+```bash
+curl -X POST "$BASE/api/v1/blog/generate-enhanced" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "topic": "AI Content Generation",
+    "keywords": ["ai content", "blog writing", "content automation"],
+    "tone": "professional",
+    "length": "medium",
+    "use_google_search": true,
+    "use_citations": true,
+    "use_consensus_generation": false,
+    "use_knowledge_graph": true,
+    "use_semantic_keywords": true,
+    "use_quality_scoring": true
+  }'
+```
+
+#### Response Includes
+
+```json
+{
+  "title": "Generated Blog Title",
+  "content": "Full blog content...",
+  "meta_title": "SEO-optimized meta title",
+  "meta_description": "SEO-optimized meta description",
+  "readability_score": 72.5,
+  "seo_score": 85.0,
+  "quality_score": 88.5,
+  "quality_dimensions": {
+    "readability": 75.0,
+    "seo": 90.0,
+    "structure": 85.0,
+    "factual": 95.0,
+    "uniqueness": 90.0,
+    "engagement": 85.0
+  },
+  "structured_data": {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    ...
+  },
+  "semantic_keywords": ["related keyword 1", "related keyword 2"],
+  "stage_results": [
+    {"stage": "research_outline", "provider": "anthropic", "tokens": 500, "cost": 0.002},
+    {"stage": "draft", "provider": "openai", "tokens": 2000, "cost": 0.01},
+    {"stage": "enhancement", "provider": "anthropic", "tokens": 1500, "cost": 0.006},
+    {"stage": "seo_polish", "provider": "openai", "tokens": 800, "cost": 0.001}
+  ],
+  "citations": [
+    {"text": "According to research...", "url": "https://source.com", "title": "Source Title"}
+  ],
+  "total_tokens": 4800,
+  "total_cost": 0.019,
+  "generation_time": 12.5,
+  "seo_metadata": {
+    "search_intent": {
+      "primary_intent": "informational",
+      "confidence": 0.92
+    },
+    "semantic_keywords": [...],
+    "keyword_clusters": 3
+  }
+}
+```
+
+#### Configuration
+
+**Required Environment Variables:**
+- `GOOGLE_CUSTOM_SEARCH_API_KEY` - For research, fact-checking, and few-shot learning
+- `GOOGLE_CUSTOM_SEARCH_ENGINE_ID` - Custom Search Engine ID
+- `DATAFORSEO_API_KEY` - For intent analysis and semantic keywords (optional but recommended)
+- `DATAFORSEO_API_SECRET` - DataForSEO secret
+- `GOOGLE_KNOWLEDGE_GRAPH_API_KEY` - For entity recognition (optional)
+
+**Optional Features:**
+- `use_consensus_generation: true` - Enable multi-model consensus (higher cost, better quality)
+- `use_knowledge_graph: true` - Enable Knowledge Graph integration (default: true)
+- `use_semantic_keywords: true` - Enable semantic keyword integration (default: true)
+- `use_quality_scoring: true` - Enable quality scoring (default: true)
+
+See [Enhanced Blog Generation Guide](PHASE1_PHASE2_IMPLEMENTATION.md) for detailed documentation.
 
 ## 📊 API Endpoints
 
 ### Blog Generation
-- `POST /api/v1/generate` - Generate a complete blog post
+- `POST /api/v1/generate` - Generate a complete blog post (standard generation)
+- `POST /api/v1/blog/generate-enhanced` - **NEW**: High-quality multi-stage blog generation with advanced features
+  - Multi-stage pipeline (Research → Draft → Enhancement → SEO)
+  - Intent-based content optimization
+  - Few-shot learning from top-ranking content
+  - Content length optimization based on competition
+  - Multi-model consensus generation (optional)
+  - Google Knowledge Graph integration
+  - Semantic keyword integration
+  - Comprehensive quality scoring
+  - See [Enhanced Blog Generation](#-enhanced-blog-generation) section below
 - `POST /api/v1/analyze` - Analyze existing content
 - `POST /api/v1/optimize` - Optimize content for SEO
 
 ### Keyword Research
 - `POST /api/v1/keywords/analyze` - Analyze keyword difficulty
-- `POST /api/v1/keywords/extract` - Extract keywords from content
+- `POST /api/v1/keywords/extract` - Extract keywords from content (phrase-mode via `max_ngram`, `dedup_lim`)
 - `POST /api/v1/keywords/suggest` - Get keyword suggestions
+- `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis using DataForSEO (intent, volume, difficulty, CPC; graceful fallback)
+
+### Topic Recommendations
+- `POST /api/v1/topics/recommend` - **NEW**: Recommend high-ranking blog topics based on seed keywords
+  - Uses DataForSEO for keyword metrics (search volume, difficulty, competition)
+  - Uses Google Custom Search for content gap analysis
+  - Uses Claude 3.5 Sonnet for AI-powered topic generation
+  - Returns topics with ranking scores (0-100) and opportunity scores (0-100)
+  - Categorizes topics: high priority, trending, low competition
+  - Includes content gaps, related keywords, and estimated traffic potential
+
+### Integrations (Target-Agnostic)
+- `POST /api/v1/integrations/connect-and-recommend`  
+  Accepts a `provider` label (e.g., `webflow`, `wordpress`, `medium`, `shopify`, `custom`), an opaque `connection` object, and a set of `keywords`.  
+  Returns backlink and interlink recommendations (aggregate and per-keyword) and best-effort persists:
+  - `integrations_{ENV}`: basic integration metadata
+  - `recommendations_{ENV}`: computed recommendations  
+  This endpoint is provider-agnostic (no provider-specific branching).
 
 ### Utility
 - `GET /health` - Health check
@@ -315,17 +452,31 @@ writer = BlogWriter(enhanced_keyword_analyzer=enhanced_analyzer)
 - **Meta Description Generation**: Compelling descriptions (120-160 characters)
 - **Heading Structure**: Proper H1-H6 hierarchy
 - **Internal Linking**: Automatic linking suggestions
-- **Schema Markup**: JSON-LD structured data
+- **Schema Markup**: JSON-LD structured data (automatic via Knowledge Graph)
+
+### Advanced SEO Features (v1.2.0)
+- **Intent-Based Optimization**: Content structure optimized for detected search intent
+- **SERP Feature Targeting**: Optimized for featured snippets, People Also Ask, etc.
+- **Competitive Content Depth**: Content length optimized based on top-ranking pages
+- **Semantic Keyword Integration**: Natural integration of related keywords for topical authority
+- **Content Freshness Signals**: Current dates and "last updated" timestamps
 
 ### Content Quality Metrics
-- **Readability Scoring**: Flesch-Kincaid, Gunning Fog Index
-- **Content Structure**: Paragraph and sentence analysis
+- **6-Dimensional Quality Scoring**:
+  - Readability (Flesch Reading Ease, target: 60-70)
+  - SEO (keyword optimization, meta tags, headings)
+  - Structure (paragraph length, list usage, heading hierarchy)
+  - Factual (citation count, source verification)
+  - Uniqueness (generic phrase detection, repetition analysis)
+  - Engagement (questions, CTAs, examples)
+- **Content Structure Analysis**: Paragraph and sentence analysis
 - **Vocabulary Diversity**: Lexical richness analysis
 - **Engagement Scoring**: Content engagement potential
 
 ## 🗄️ Database Schema
 
-The SDK includes a complete Supabase schema for content management:
+The SDK includes Supabase schemas for content management and generic recommendations.  
+For integration metadata and recommendations (env-suffixed tables), see `supabase_schema.sql`.
 
 ```sql
 -- Blog posts with full SEO metadata
@@ -377,7 +528,7 @@ See [CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md) for detailed instructions
 1. **Setup Google Cloud**: Configure your Google Cloud project and enable Cloud Run
 2. **Environment Variables**: Set up your environment variables in Google Cloud Secret Manager
 3. **Deploy**: Push to branches triggers automatic deployment via GitHub Actions
-   - `develop` branch → Deploys to `europe-west1` (dev environment)
+   - `develop` branch → Deploys to `europe-west9` (dev environment)
    - `main`/`master` branch → Deploys to `us-east1` (prod environment)
 
 ```bash
@@ -497,6 +648,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[GitHub Actions Setup](GITHUB_RAILWAY_SETUP.md)**: CI/CD with Google Cloud
 - **[Frontend Integration](FRONTEND_INTEGRATION.md)**: Next.js integration guide
 - **[Multi-SDK Docker Guide](MULTI_SDK_DOCKER_GUIDE.md)**: Dockerize multiple SDKs
+- **[Changelog](CHANGELOG.md)**: Release notes and version history
+- **[Integrations Endpoint](INTEGRATIONS_ENDPOINT.md)**: Backlink & interlink recommendations API
+- **[Enhanced Blog Generation Guide](ENHANCED_BLOG_GENERATION_GUIDE.md)**: Complete guide for `/api/v1/blog/generate-enhanced`
+- **[Phase 1 & 2 Implementation](PHASE1_PHASE2_IMPLEMENTATION.md)**: Multi-stage pipeline and Google integrations
+- **[Phase 3 Implementation](PHASE3_IMPLEMENTATION.md)**: Advanced features (consensus, Knowledge Graph, quality scoring)
+- **[Blog Quality Improvements](BLOG_QUALITY_IMPROVEMENTS.md)**: Original recommendations document
 
 ## 🆘 Support
 
@@ -537,4 +694,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **Built with ❤️ for content creators and developers**
 
 Ready to revolutionize your content creation process? Get started with the Blog Writer SDK today!
-**Last deployment test**: 2025-11-16 (main branch)
+
+**Last deployment test**: 2025-11-16 (main branch - SERP analysis fixes merged)

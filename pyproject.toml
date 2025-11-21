@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "blog-writer-sdk"
-version = "0.1.0"
+version = "1.1.0"
 description = "A powerful Python SDK for AI-driven blog writing with advanced SEO optimization"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -30,8 +30,9 @@ classifiers = [
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
-    "pydantic>=2.5.0",
+    "pydantic[email]>=2.5.0",
     "pydantic-settings>=2.1.0",
+    "email-validator>=2.0.0",
     "httpx>=0.25.0",
     "python-multipart>=0.0.6",
     "supabase>=2.3.0",
@@ -61,6 +62,10 @@ dependencies = [
     "google-cloud-secret-manager>=2.16.0",
     "cryptography>=41.0.0",
     "supabase>=2.0.0",
+    # Cloud Tasks for async job processing
+    "google-cloud-tasks>=2.16.0",
+    # Date parsing for interlinking analyzer
+    "python-dateutil>=2.8.0",
 ]
 
 [project.optional-dependencies]

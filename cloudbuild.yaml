@@ -32,8 +32,9 @@ steps:
       '--max-instances', '100',
       '--concurrency', '80',
       '--timeout', '900',
-      '--set-env-vars', 'PYTHONUNBUFFERED=1',
-      '--set-secrets', '/secrets/env=blog-writer-env-${_ENV}:latest'
+      '--startup-probe', 'timeoutSeconds=3,periodSeconds=5,failureThreshold=60,httpGet.path=/health,httpGet.port=8000',
+      '--set-env-vars', 'PYTHONUNBUFFERED=1,TESTING_MODE=${_TESTING_MODE}',
+      '--update-secrets', '/secrets/env=blog-writer-env-${_ENV}:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,STABILITY_AI_API_KEY=STABILITY_AI_API_KEY:latest'
     ]
 
 # Store images in Container Registry
@@ -43,9 +44,10 @@ images:
 
 # Substitution variables
 substitutions:
-  _REGION: 'europe-west1'  # Default to dev region, will be overridden by GitHub Actions
+  _REGION: 'europe-west9'  # Default to dev region, will be overridden by trigger substitutions
   _ENV: 'dev'
-  _SERVICE_NAME: 'blog-writer-api-dev'  # Default to dev service, will be overridden by GitHub Actions
+  _SERVICE_NAME: 'blog-writer-api-dev'  # Default to dev service, will be overridden by trigger substitutions
+  _TESTING_MODE: 'false'  # Default to false, set to 'true' for develop branch testing
 
 # Build options
 options:

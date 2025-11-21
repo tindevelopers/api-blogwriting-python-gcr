@@ -60,7 +60,7 @@ class StabilityAIProvider(BaseImageProvider):
         super().__init__(api_key, **kwargs)
         
         self.base_url = kwargs.get("base_url", "https://api.stability.ai")
-        self.default_model = kwargs.get("default_model", "stable-diffusion-xl-1024-v1-0")
+        self._default_model = kwargs.get("default_model", "stable-diffusion-xl-1024-v1-0")
         self.timeout = kwargs.get("timeout", 120)
         self._session = None
     
@@ -111,7 +111,7 @@ class StabilityAIProvider(BaseImageProvider):
     @property
     def default_model(self) -> str:
         """Return the default model for this provider."""
-        return self.default_model
+        return self._default_model
     
     async def initialize(self) -> None:
         """Initialize the Stability AI client."""

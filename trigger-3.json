@@ -1,0 +1,16 @@
+{
+  "name": "deploy-prod-on-main",
+  "description": "Deploy to production environment on main branch pushes",
+  "repository": "projects/api-ai-blog-writer/locations/us-central1/connections/github-connection/repositories/api-blogwriting-python-gcr",
+  "github": {
+    "push": {
+      "branch": "^main$"
+    }
+  },
+  "filename": "cloudbuild.yaml",
+  "substitutions": {
+    "_REGION": "us-east1",
+    "_ENV": "prod",
+    "_SERVICE_NAME": "blog-writer-api-prod"
+  }
+}

@@ -16,6 +16,7 @@ RUN apt-get update \
         build-essential \
         curl \
         git \
+        jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and README first for better caching

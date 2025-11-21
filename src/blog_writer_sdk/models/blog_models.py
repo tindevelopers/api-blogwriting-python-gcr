@@ -7,7 +7,7 @@ type safety, validation, and serialization.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
@@ -233,6 +233,17 @@ class KeywordAnalysis(BaseModel):
     
     keyword: str = Field(..., description="Analyzed keyword")
     search_volume: Optional[int] = Field(None, ge=0, description="Monthly search volume")
+    global_search_volume: Optional[int] = Field(
+        None, ge=0, description="Global monthly search volume"
+    )
+    search_volume_by_country: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Search volume split by country code",
+    )
+    monthly_searches: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Historical monthly search volume breakdown",
+    )
     difficulty: SEODifficulty = Field(..., description="SEO difficulty level")
     competition: float = Field(default=0.0, ge=0, le=1, description="Competition score")
     
@@ -242,7 +253,45 @@ class KeywordAnalysis(BaseModel):
     
     # Metrics
     cpc: Optional[float] = Field(None, ge=0, description="Cost per click")
+    cpc_currency: Optional[str] = Field(None, description="Currency for CPC values")
+    cps: Optional[float] = Field(None, ge=0, description="Cost per sale / CPS metric")
+    clicks: Optional[float] = Field(None, ge=0, description="Estimated clicks per month")
     trend_score: float = Field(default=0.0, ge=-1, le=1, description="Trend score (-1 to 1)")
+    traffic_potential: Optional[int] = Field(
+        None, ge=0, description="Estimated traffic potential if ranking in top positions"
+    )
+    parent_topic: Optional[str] = Field(
+        None, description="Parent topic cluster for this keyword"
+    )
+    serp_features: List[str] = Field(
+        default_factory=list, description="SERP features observed for this keyword"
+    )
+    serp_feature_counts: Dict[str, Any] = Field(
+        default_factory=dict, description="SERP feature counts/summary data"
+    )
+    primary_intent: Optional[str] = Field(
+        None, description="Primary search intent inferred from SERP"
+    )
+    intent_probabilities: Dict[str, float] = Field(
+        default_factory=dict, description="Intent probability distribution"
+    )
+    also_rank_for: List[str] = Field(
+        default_factory=list,
+        description="Other keywords domains ranking for this keyword also rank for",
+    )
+    also_talk_about: List[str] = Field(
+        default_factory=list,
+        description="Semantically related entities/topics mentioned on SERP",
+    )
+    top_competitors: List[str] = Field(
+        default_factory=list, description="Top competitor domains on the SERP"
+    )
+    first_seen: Optional[str] = Field(
+        None, description="Date the keyword was first observed by DataForSEO"
+    )
+    last_updated: Optional[str] = Field(
+        None, description="Date the keyword metrics were last updated"
+    )
     
     # Recommendations
     recommended: bool = Field(default=True, description="Whether keyword is recommended")

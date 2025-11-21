@@ -273,16 +273,6 @@ class AnthropicCredentialService(TenantCredentialService):
         pass
 ```
 
-#### **3.3 Azure OpenAI Integration**
-```python
-# src/blog_writer_sdk/services/azure_credential_service.py
-class AzureOpenAICredentialService(TenantCredentialService):
-    async def validate_credentials(self, endpoint: str, api_key: str, api_version: str) -> bool:
-        """Test Azure OpenAI credentials."""
-        # Implementation for Azure validation
-        pass
-```
-
 ---
 
 ### **Phase 4: Advanced Features**

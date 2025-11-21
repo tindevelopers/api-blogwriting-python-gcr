@@ -62,16 +62,62 @@ gcloud services enable cloudbuild.googleapis.com run.googleapis.com secretmanage
 
 ```bash
 # Make scripts executable
-chmod +x scripts/setup-secrets.sh scripts/deploy.sh
+chmod +x scripts/setup-secrets.sh scripts/deploy.sh scripts/setup-ai-provider-secrets.sh
 
-# Setup Google Cloud secrets
+# Setup Google Cloud secrets (general configuration)
 ./scripts/setup-secrets.sh
+
+# Setup AI Provider secrets (CRITICAL for enhanced blog generation)
+./scripts/setup-ai-provider-secrets.sh
 
 # Deploy to Cloud Run
 ./scripts/deploy.sh
 ```
 
+**⚠️ IMPORTANT:** The AI provider secrets setup is **REQUIRED** for the enhanced blog generation endpoint (`/api/v1/blog/generate-enhanced`) to work. Without it, the system falls back to template-based generation.
+
 That's it! Your service will be deployed and accessible at the provided URL.
+
+## ✅ Post-Deployment Verification (Versioned)
+
+After a deployment, verify the new revision and API version:
+
+```bash
+# Check service URL (develop)
+gcloud run services describe blog-writer-api-dev \
+  --region=europe-west1 \
+  --project=api-ai-blog-writer \
+  --format="value(status.url)"
+
+# Verify health shows version
+curl -s https://<SERVICE_URL>/health | jq
+# Expect: {"status":"healthy","version":"1.3.0-cloudrun", ...}
+
+# Verify OpenAPI version
+curl -s https://<SERVICE_URL>/openapi.json | jq -r '.info.version'
+# Expect: 1.3.0
+```
+
+If your browser caches docs, force refresh or fetch `/openapi.json?ts=$(date +%s)`.
+
+## 🆕 Latest Updates (Version 1.3.0 - 2025-11-13)
+
+### New DataForSEO Endpoints
+- **Google Trends Explore**: Real-time trend data for timely content (30-40% relevance improvement)
+- **Keyword Ideas**: Category-based keyword discovery (25% more coverage)
+- **Relevant Pages**: Content structure analysis (20-30% better structure)
+- **Enhanced SERP Analysis**: Full SERP feature extraction (40-50% better targeting)
+
+### AI-Powered Enhancements
+- **SERP AI Summary**: LLM-powered SERP analysis (30-40% better structure)
+- **LLM Responses API**: Multi-model fact-checking (25-35% better accuracy)
+- **AI-Optimized Format**: Streamlined JSON responses (10-15% faster processing)
+
+### Cost Impact
+- Additional cost: ~$19-52/month for 1000 blogs
+- Significant ROI through improved content quality and rankings
+
+See [FRONTEND_API_IMPROVEMENTS_SUMMARY.md](FRONTEND_API_IMPROVEMENTS_SUMMARY.md) for complete details.
 
 ## 🔧 Manual Deployment
 

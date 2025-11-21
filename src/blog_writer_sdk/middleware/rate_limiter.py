@@ -9,6 +9,7 @@ import asyncio
 from typing import Dict, Optional, Tuple
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+from enum import Enum
 import logging
 
 from fastapi import HTTPException, Request
@@ -16,6 +17,13 @@ from fastapi.responses import JSONResponse
 
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimitTier(str, Enum):
+    """Rate limit tiers."""
+    FREE = "free"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
 
 
 class RateLimiter:
@@ -26,16 +34,43 @@ class RateLimiter:
     - Per-IP rate limiting
     - Per-user rate limiting (if authenticated)
     - Different limits for different endpoints
+    - Tiered rate limiting (Free/Pro/Enterprise)
     - Configurable time windows
     - Automatic cleanup of old entries
     """
+    
+    # Tier-based rate limits
+    TIER_LIMITS = {
+        RateLimitTier.FREE: {
+            'minute': 10,
+            'hour': 100,
+            'day': 1000,
+            'keywords_per_batch': 20,
+            'max_suggestions': 50
+        },
+        RateLimitTier.PRO: {
+            'minute': 100,
+            'hour': 1000,
+            'day': 10000,
+            'keywords_per_batch': 30,
+            'max_suggestions': 150
+        },
+        RateLimitTier.ENTERPRISE: {
+            'minute': -1,  # Unlimited
+            'hour': -1,
+            'day': -1,
+            'keywords_per_batch': 50,
+            'max_suggestions': 200
+        }
+    }
     
     def __init__(
         self,
         default_requests_per_minute: int = 60,
         default_requests_per_hour: int = 1000,
         default_requests_per_day: int = 10000,
-        cleanup_interval: int = 300  # 5 minutes
+        cleanup_interval: int = 300,  # 5 minutes
+        default_tier: RateLimitTier = RateLimitTier.FREE
     ):
         """
         Initialize rate limiter.
@@ -52,6 +87,8 @@ class RateLimiter:
             'day': default_requests_per_day
         }
         
+        self.default_tier = default_tier
+        
         # Storage for request counts
         self.requests: Dict[str, Dict[str, deque]] = defaultdict(
             lambda: {
@@ -60,6 +97,9 @@ class RateLimiter:
                 'day': deque()
             }
         )
+        
+        # Tier mapping (client_id -> tier)
+        self.client_tiers: Dict[str, RateLimitTier] = defaultdict(lambda: default_tier)
         
         # Custom limits for specific endpoints
         self.endpoint_limits = {
@@ -78,6 +118,18 @@ class RateLimiter:
         self.cleanup_interval = cleanup_interval
         self.last_cleanup = time.time()
     
+    def set_client_tier(self, client_id: str, tier: RateLimitTier):
+        """Set rate limit tier for a client."""
+        self.client_tiers[client_id] = tier
+    
+    def get_client_tier(self, client_id: str) -> RateLimitTier:
+        """Get rate limit tier for a client."""
+        return self.client_tiers.get(client_id, self.default_tier)
+    
+    def _get_tier_limits(self, tier: RateLimitTier) -> Dict[str, int]:
+        """Get rate limits for a tier."""
+        return self.TIER_LIMITS.get(tier, self.TIER_LIMITS[RateLimitTier.FREE])
+    
     def _get_client_id(self, request: Request) -> str:
         """Get client identifier (IP or user ID)."""
         # Try to get user ID from headers (if authenticated)
@@ -93,9 +145,44 @@ class RateLimiter:
         
         return f"ip:{client_ip}"
     
-    def _get_limits_for_endpoint(self, endpoint: str) -> Dict[str, int]:
-        """Get rate limits for specific endpoint."""
-        return self.endpoint_limits.get(endpoint, self.default_limits)
+    def _get_limits_for_endpoint(self, endpoint: str, client_id: str = None) -> Dict[str, int]:
+        """
+        Get rate limits for specific endpoint, considering client tier.
+        
+        Args:
+            endpoint: API endpoint path
+            client_id: Client identifier (for tier-based limits)
+        
+        Returns:
+            Rate limits dictionary
+        """
+        # Check if endpoint has custom limits
+        if endpoint in self.endpoint_limits:
+            base_limits = self.endpoint_limits[endpoint]
+        else:
+            base_limits = self.default_limits
+        
+        # Apply tier-based limits if client_id provided
+        if client_id:
+            tier = self.get_client_tier(client_id)
+            tier_limits = self._get_tier_limits(tier)
+            
+            # Use tier limits if they're more restrictive (or unlimited)
+            limits = {}
+            for window in ['minute', 'hour', 'day']:
+                tier_limit = tier_limits.get(window, base_limits[window])
+                base_limit = base_limits.get(window, self.default_limits[window])
+                
+                if tier_limit == -1:  # Unlimited
+                    limits[window] = -1
+                elif base_limit == -1:
+                    limits[window] = tier_limit
+                else:
+                    limits[window] = min(tier_limit, base_limit) if tier_limit > 0 else base_limit
+            
+            return limits
+        
+        return base_limits
     
     def _cleanup_old_requests(self):
         """Clean up old request records."""
@@ -133,12 +220,17 @@ class RateLimiter:
         self._cleanup_old_requests()
         
         now = time.time()
-        limits = self._get_limits_for_endpoint(endpoint)
+        limits = self._get_limits_for_endpoint(endpoint, client_id)
         client_requests = self.requests[client_id]
         
         remaining = {}
         
         for window, limit in limits.items():
+            # Skip unlimited limits
+            if limit == -1:
+                remaining[window] = -1
+                continue
+            
             # Count requests in current window
             if window == 'minute':
                 cutoff = now - 60
@@ -152,9 +244,9 @@ class RateLimiter:
                 client_requests[window].popleft()
             
             current_count = len(client_requests[window])
-            remaining[window] = max(0, limit - current_count)
+            remaining[window] = max(0, limit - current_count) if limit > 0 else -1
             
-            if current_count >= limit:
+            if limit > 0 and current_count >= limit:
                 return True, remaining
         
         return False, remaining

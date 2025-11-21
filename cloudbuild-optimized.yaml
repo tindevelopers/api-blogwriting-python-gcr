@@ -1,0 +1,76 @@
+# Google Cloud Build configuration for Blog Writer SDK - Optimized for High Load
+# Supports: 20,000 queries/day, 4 min per query, 1000 customers
+
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID',
+      '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest',
+      '.'
+    ]
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest']
+
+  # Deploy to Cloud Run with optimized autoscaling
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8000'
+      # Optimized for 4-minute blog generation
+      - '--memory'
+      - '4Gi'              # Increased from 2Gi for better performance
+      - '--cpu'
+      - '2'
+      - '--min-instances'
+      - '5'                # Keep 5 warm instances for low latency
+      - '--max-instances'
+      - '500'              # Increased from 100 to handle peak load (400 concurrent × 4 min)
+      - '--concurrency'
+      - '1'                # One blog per instance (4 min = CPU/memory intensive)
+      - '--timeout'
+      - '900'              # 15 minutes (4 min + buffer)
+      - '--cpu-throttling'
+      - 'false'            # Full CPU for generation
+      - '--set-env-vars'
+      - 'PYTHONUNBUFFERED=1'
+      - '--update-secrets'
+      - '/secrets/env=blog-writer-env-${_ENV}:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest'
+
+# Store images in Container Registry
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:$BUILD_ID'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/blog-writer-sdk/blog-writer-sdk:latest'
+
+# Substitution variables
+substitutions:
+  _REGION: 'europe-west9'
+  _ENV: 'dev'
+  _SERVICE_NAME: 'blog-writer-api-dev'
+
+# Build options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: '100'
+
+# Build timeout
+timeout: '1200s'
+

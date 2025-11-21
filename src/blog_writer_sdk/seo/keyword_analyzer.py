@@ -79,7 +79,11 @@ class KeywordAnalyzer:
         )
     
     async def extract_keywords_from_content(
-        self, content: str, max_keywords: int = 20
+        self,
+        content: str,
+        max_keywords: int = 20,
+        max_ngram: int = 3,
+        dedup_lim: float = 0.7
     ) -> List[str]:
         """
         Extract potential keywords from content.
@@ -92,7 +96,7 @@ class KeywordAnalyzer:
             List of extracted keywords
         """
         if yake:
-            return self._extract_with_yake(content, max_keywords)
+            return self._extract_with_yake(content, max_keywords, max_ngram, dedup_lim)
         else:
             return self._extract_with_frequency(content, max_keywords)
     
@@ -139,15 +143,16 @@ class KeywordAnalyzer:
         
         return density_map
     
-    async def suggest_keyword_variations(self, keyword: str) -> List[str]:
+    async def suggest_keyword_variations(self, keyword: str, limit: int = 150) -> List[str]:
         """
         Suggest keyword variations and synonyms.
         
         Args:
             keyword: Base keyword
+            limit: Maximum number of variations to return (default: 150)
             
         Returns:
-            List of keyword variations
+            List of keyword variations (up to limit)
         """
         variations = []
         
@@ -157,24 +162,54 @@ class KeywordAnalyzer:
         else:
             variations.append(keyword + 's')  # Add 's'
         
-        # Add common prefixes and suffixes
-        prefixes = ['best', 'top', 'how to', 'what is', 'guide to']
-        suffixes = ['guide', 'tips', 'tutorial', 'examples', 'benefits']
+        # Extended prefixes for comprehensive coverage
+        prefixes = [
+            'best', 'top', 'how to', 'what is', 'guide to', 'ultimate', 'complete',
+            'professional', 'affordable', 'cheap', 'expensive', 'free', 'paid',
+            'online', 'local', 'near me', 'nearby', 'in', 'for', 'with', 'without',
+            'beginner', 'advanced', 'expert', 'essential', 'latest', 'new', 'popular',
+            'trending', '2024', '2025', 'review', 'reviews', 'comparison', 'vs',
+            'alternatives', 'buy', 'find', 'get', 'learn', 'discover', 'explore'
+        ]
         
+        # Extended suffixes
+        suffixes = [
+            'guide', 'tips', 'tutorial', 'examples', 'benefits', 'services',
+            'company', 'provider', 'business', 'center', 'clinic', 'hospital',
+            'near me', 'local', 'nearby', 'online', 'reviews', 'prices', 'cost',
+            'costs', 'pricing', 'plans', 'options', 'solutions', 'software', 'tools'
+        ]
+        
+        # Add prefix variations
         for prefix in prefixes:
+            if len(variations) >= limit:
+                break
             variations.append(f"{prefix} {keyword}")
         
+        # Add suffix variations
         for suffix in suffixes:
+            if len(variations) >= limit:
+                break
             variations.append(f"{keyword} {suffix}")
         
         # Add question variations
-        question_starters = ['how to', 'what is', 'why', 'when', 'where']
+        question_starters = ['how to', 'what is', 'why', 'when', 'where', 'who', 'which', 'can', 'should', 'will']
         for starter in question_starters:
+            if len(variations) >= limit:
+                break
             if starter not in keyword.lower():
                 variations.append(f"{starter} {keyword}")
         
-        # Remove duplicates and return
-        return list(set(variations))
+        # Add location-based variations
+        locations = ['near me', 'local', 'nearby', 'in', 'for']
+        for location in locations:
+            if len(variations) >= limit:
+                break
+            variations.append(f"{keyword} {location}")
+        
+        # Remove duplicates and return up to limit
+        unique_variations = list(dict.fromkeys(variations))  # Preserves order while removing duplicates
+        return unique_variations[:limit]
     
     async def analyze_competitor_keywords(self, competitor_content: str) -> List[str]:
         """
@@ -320,14 +355,14 @@ class KeywordAnalyzer:
         
         return content.strip()
     
-    def _extract_with_yake(self, content: str, max_keywords: int) -> List[str]:
+    def _extract_with_yake(self, content: str, max_keywords: int, max_ngram: int, dedup_lim: float) -> List[str]:
         """Extract keywords using YAKE library."""
         try:
             # Configure YAKE
             kw_extractor = yake.KeywordExtractor(
                 lan="en",
-                n=3,  # Maximum number of words in keyphrase
-                dedupLim=0.7,  # Deduplication threshold
+                n=max_ngram,  # Maximum number of words in keyphrase
+                dedupLim=dedup_lim,  # Deduplication threshold
                 top=max_keywords,  # Number of keywords to extract
             )
             
