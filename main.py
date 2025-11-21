@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Q
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from enum import Enum
 
 from src.blog_writer_sdk import BlogWriter
 from src.blog_writer_sdk.models.blog_models import (
@@ -75,7 +76,8 @@ dataforseo_client_global = None
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
-    CloudinaryStorage, CloudflareR2Storage, MediaStorageManager
+    CloudinaryStorage, CloudflareR2Storage, MediaStorageManager,
+    YelpClient, GoogleReviewsClient, ReviewAggregationService
 )
 try:
     # Optional: WordPress not installed in this repo currently
@@ -259,6 +261,112 @@ class ErrorResponse(BaseModel):
     error: str
     message: str
     timestamp: float
+
+
+class BlogType(str, Enum):
+    """Blog generation type enumeration."""
+    STANDARD = "standard"
+    ENHANCED = "enhanced"
+    LOCAL_BUSINESS = "local_business"
+    ABSTRACTION = "abstraction"
+
+
+class UnifiedBlogRequest(BaseModel):
+    """
+    Unified blog generation request model.
+    
+    This model supports all blog types through a single endpoint.
+    Type-specific fields are optional and only used when relevant.
+    """
+    # Required
+    blog_type: BlogType = Field(..., description="Type of blog to generate")
+    topic: str = Field(..., min_length=3, max_length=200, description="Main topic for the blog post")
+    
+    # Common fields (used by all blog types)
+    keywords: List[str] = Field(default_factory=list, max_items=20, description="Target SEO keywords")
+    tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
+    length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
+    format: ContentFormat = Field(default=ContentFormat.MARKDOWN, description="Output format")
+    target_audience: Optional[str] = Field(None, max_length=200, description="Target audience description")
+    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    
+    # Standard & Enhanced fields
+    include_introduction: bool = Field(default=True, description="Include introduction section (standard/enhanced)")
+    include_conclusion: bool = Field(default=True, description="Include conclusion section (standard/enhanced)")
+    include_faq: bool = Field(default=False, description="Include FAQ section (standard/enhanced)")
+    include_toc: bool = Field(default=True, description="Include table of contents (standard/enhanced)")
+    focus_keyword: Optional[str] = Field(None, max_length=100, description="Primary focus keyword (standard/enhanced)")
+    word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target (standard/enhanced)")
+    
+    # Enhanced-specific fields
+    use_google_search: bool = Field(default=True, description="Use Google Custom Search for research (enhanced)")
+    use_fact_checking: bool = Field(default=True, description="Enable fact-checking (enhanced)")
+    use_citations: bool = Field(default=True, description="Include citations and sources (enhanced)")
+    use_serp_optimization: bool = Field(default=True, description="Optimize for SERP features (enhanced)")
+    use_consensus_generation: bool = Field(default=False, description="Use multi-model consensus generation (enhanced)")
+    use_knowledge_graph: bool = Field(default=True, description="Use Google Knowledge Graph for entities (enhanced)")
+    use_semantic_keywords: bool = Field(default=True, description="Use semantic keyword integration (enhanced)")
+    use_quality_scoring: bool = Field(default=True, description="Enable comprehensive quality scoring (enhanced)")
+    template_type: Optional[str] = Field(None, description="Prompt template type (enhanced)")
+    async_mode: bool = Field(default=False, description="Create async job via Cloud Tasks (enhanced)")
+    
+    # Local Business-specific fields
+    location: Optional[str] = Field(None, min_length=2, description="Location for local business blogs (required for local_business)")
+    max_businesses: int = Field(default=10, ge=1, le=20, description="Maximum number of businesses to include (local_business)")
+    max_reviews_per_business: int = Field(default=20, ge=5, le=50, description="Maximum reviews per business (local_business)")
+    include_business_details: bool = Field(default=True, description="Include business details (local_business)")
+    include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis (local_business)")
+    use_yelp: bool = Field(default=True, description="Fetch reviews from Yelp (local_business)")
+    use_google: bool = Field(default=True, description="Fetch reviews from Google Places (local_business)")
+    
+    # Abstraction-specific fields
+    content_strategy: Optional[str] = Field(None, description="Content strategy (abstraction)")
+    quality_target: Optional[str] = Field(None, description="Quality target (abstraction)")
+    preferred_provider: Optional[str] = Field(None, description="Preferred AI provider (abstraction)")
+    seo_requirements: Optional[Dict[str, Any]] = Field(None, description="SEO requirements (abstraction)")
+    
+    class Config:
+        use_enum_values = True
+
+
+class LocalBusinessBlogRequest(BaseModel):
+    """Request model for local business blog generation."""
+    topic: str = Field(..., min_length=3, max_length=200, description="Main topic (e.g., 'best plumbers in Miami')")
+    location: str = Field(..., min_length=2, description="Location (e.g., 'Miami, FL', '33139')")
+    max_businesses: int = Field(default=10, ge=1, le=20, description="Maximum number of businesses to include")
+    max_reviews_per_business: int = Field(default=20, ge=5, le=50, description="Maximum reviews per business")
+    tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
+    length: ContentLength = Field(default=ContentLength.LONG, description="Target content length")
+    format: ContentFormat = Field(default=ContentFormat.MARKDOWN, description="Output format")
+    include_business_details: bool = Field(default=True, description="Include business details (hours, contact, services)")
+    include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis")
+    use_yelp: bool = Field(default=True, description="Fetch reviews from Yelp")
+    use_google: bool = Field(default=True, description="Fetch reviews from Google Places")
+    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+
+
+class BusinessInfo(BaseModel):
+    """Business information model."""
+    name: str
+    yelp_id: Optional[str] = None
+    google_place_id: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    website: Optional[str] = None
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
+    categories: List[str] = Field(default_factory=list)
+    hours: Optional[Dict[str, Any]] = None
+
+
+class LocalBusinessBlogResponse(BaseModel):
+    """Response model for local business blog generation."""
+    title: str
+    content: str
+    businesses: List[BusinessInfo]
+    total_reviews_aggregated: int
+    generation_time_seconds: float
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 # Application lifespan management
@@ -3308,6 +3416,458 @@ async def get_content_strategies():
             for strategy in ContentStrategy
         ]
     }
+
+
+# Unified Blog Generation Endpoint (Routes to specific handlers)
+@app.post("/api/v1/blog/generate-unified")
+async def generate_blog_unified(
+    request: UnifiedBlogRequest,
+    background_tasks: BackgroundTasks,
+    writer: BlogWriter = Depends(get_blog_writer)
+):
+    """
+    Unified blog generation endpoint that routes to specific handlers based on blog_type.
+    
+    This endpoint provides a single interface for all blog generation types:
+    - standard: Basic blog posts with SEO optimization
+    - enhanced: High-quality multi-stage blog generation with research and citations
+    - local_business: Comprehensive blogs about local businesses with reviews
+    - abstraction: Strategy-based blog generation (SEO, Engagement, Conversion)
+    
+    The endpoint routes internally to the appropriate handler while maintaining
+    backward compatibility with existing endpoints.
+    
+    **Benefits:**
+    - Single endpoint for all blog types
+    - Consistent API design
+    - Type-safe with conditional fields
+    - Easier frontend integration
+    
+    **Example Request:**
+    ```json
+    {
+      "blog_type": "local_business",
+      "topic": "best plumbers in Miami",
+      "location": "Miami, FL",
+      "max_businesses": 10,
+      "tone": "professional",
+      "length": "long"
+    }
+    ```
+    """
+    try:
+        # Route to appropriate handler based on blog_type
+        if request.blog_type == BlogType.STANDARD:
+            # Convert to BlogGenerationRequest
+            standard_request = BlogGenerationRequest(
+                topic=request.topic,
+                keywords=request.keywords,
+                tone=request.tone,
+                length=request.length,
+                format=request.format,
+                target_audience=request.target_audience,
+                focus_keyword=request.focus_keyword,
+                include_introduction=request.include_introduction,
+                include_conclusion=request.include_conclusion,
+                include_faq=request.include_faq,
+                include_toc=request.include_toc,
+                word_count_target=request.word_count_target,
+                custom_instructions=request.custom_instructions,
+            )
+            return await generate_blog(standard_request, background_tasks, writer)
+        
+        elif request.blog_type == BlogType.ENHANCED:
+            # Convert to EnhancedBlogGenerationRequest
+            enhanced_request = EnhancedBlogGenerationRequest(
+                topic=request.topic,
+                keywords=request.keywords if request.keywords else [request.topic],
+                tone=request.tone,
+                length=request.length,
+                use_google_search=request.use_google_search,
+                use_fact_checking=request.use_fact_checking,
+                use_citations=request.use_citations,
+                use_serp_optimization=request.use_serp_optimization,
+                use_consensus_generation=request.use_consensus_generation,
+                use_knowledge_graph=request.use_knowledge_graph,
+                use_semantic_keywords=request.use_semantic_keywords,
+                use_quality_scoring=request.use_quality_scoring,
+                target_audience=request.target_audience,
+                custom_instructions=request.custom_instructions,
+                template_type=request.template_type,
+            )
+            return await generate_blog_enhanced(
+                enhanced_request,
+                background_tasks,
+                async_mode=request.async_mode
+            )
+        
+        elif request.blog_type == BlogType.LOCAL_BUSINESS:
+            # Validate required fields
+            if not request.location:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'location' is required for local_business blog type"
+                )
+            
+            # Convert to LocalBusinessBlogRequest
+            local_business_request = LocalBusinessBlogRequest(
+                topic=request.topic,
+                location=request.location,
+                max_businesses=request.max_businesses,
+                max_reviews_per_business=request.max_reviews_per_business,
+                tone=request.tone,
+                length=request.length,
+                format=request.format,
+                include_business_details=request.include_business_details,
+                include_review_sentiment=request.include_review_sentiment,
+                use_yelp=request.use_yelp,
+                use_google=request.use_google,
+                custom_instructions=request.custom_instructions,
+            )
+            return await generate_local_business_blog(
+                local_business_request,
+                background_tasks,
+                writer
+            )
+        
+        elif request.blog_type == BlogType.ABSTRACTION:
+            # Convert to AbstractionBlogGenerationRequest
+            # Parse content_strategy string to enum if provided
+            content_strategy_enum = ContentStrategy.SEO_OPTIMIZED
+            if request.content_strategy:
+                try:
+                    content_strategy_enum = ContentStrategy(request.content_strategy)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid content_strategy: {request.content_strategy}, using default")
+            
+            # Parse quality_target string to enum if provided
+            quality_target_enum = ContentQuality.GOOD
+            if request.quality_target:
+                try:
+                    quality_target_enum = ContentQuality(request.quality_target)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid quality_target: {request.quality_target}, using default")
+            
+            abstraction_request = AbstractionBlogGenerationRequest(
+                topic=request.topic,
+                keywords=request.keywords if request.keywords else [request.topic],
+                target_audience=request.target_audience,
+                content_strategy=content_strategy_enum,
+                tone=request.tone,
+                length=request.length,
+                format=request.format,
+                quality_target=quality_target_enum,
+                preferred_provider=request.preferred_provider,
+                additional_context={"custom_instructions": request.custom_instructions} if request.custom_instructions else None,
+                seo_requirements=request.seo_requirements,
+            )
+            abstraction_writer = get_abstraction_writer()
+            return await generate_blog_with_abstraction(
+                abstraction_request,
+                background_tasks,
+                abstraction_writer
+            )
+        
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported blog_type: {request.blog_type}. Supported types: standard, enhanced, local_business, abstraction"
+            )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unified blog generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Blog generation failed: {str(e)}"
+        )
+
+
+# Local Business Blog Generation Endpoint
+@app.post("/api/v1/blog/generate-local-business", response_model=LocalBusinessBlogResponse)
+async def generate_local_business_blog(
+    request: LocalBusinessBlogRequest,
+    background_tasks: BackgroundTasks,
+    writer: BlogWriter = Depends(get_blog_writer)
+):
+    """
+    Generate a comprehensive blog post about local businesses.
+    
+    This endpoint:
+    1. Uses SERP analysis to find top businesses in the specified location
+    2. Fetches reviews from Yelp and Google Places
+    3. Aggregates review data and business information
+    4. Generates comprehensive blog content using AI pipeline
+    
+    Features:
+    - Business discovery from SERP results
+    - Multi-source review aggregation (Yelp + Google)
+    - Business details extraction (hours, contact, services)
+    - Review sentiment analysis
+    - SEO-optimized content generation
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        # Initialize review aggregation service
+        yelp_client = YelpClient()
+        google_client = GoogleReviewsClient()
+        review_service = ReviewAggregationService(
+            yelp_client=yelp_client if request.use_yelp else None,
+            google_client=google_client if request.use_google else None
+        )
+        
+        # Step 1: Use SERP analysis to find businesses
+        logger.info(f"Finding businesses for topic: {request.topic} in {request.location}")
+        
+        # Get SERP analysis using DataForSEO
+        businesses_found = []
+        serp_businesses = []
+        
+        if dataforseo_client_global and dataforseo_client_global.is_configured:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                serp_data = await dataforseo_client_global.get_serp_analysis(
+                    keyword=request.topic,
+                    location_name=request.location,
+                    language_code="en",
+                    tenant_id=tenant_id,
+                    depth=20
+                )
+                
+                # Extract businesses from organic results
+                organic_results = serp_data.get("organic_results", [])
+                for result in organic_results[:request.max_businesses]:
+                    # Try to extract business name and URL
+                    title = result.get("title", "")
+                    url = result.get("url", "")
+                    domain = result.get("domain", "")
+                    
+                    # Check if this looks like a business listing (Yelp, Google Maps, etc.)
+                    if "yelp.com" in domain.lower():
+                        # Extract Yelp business ID from URL
+                        yelp_id = None
+                        if "/biz/" in url:
+                            yelp_id = url.split("/biz/")[1].split("?")[0].split("-")[-1]
+                        
+                        serp_businesses.append({
+                            "name": title,
+                            "yelp_id": yelp_id,
+                            "url": url,
+                            "source": "serp_yelp"
+                        })
+                    elif "google.com/maps" in domain.lower() or "maps.google.com" in domain.lower():
+                        # Extract Google Place ID if possible
+                        place_id = None
+                        if "place_id=" in url:
+                            place_id = url.split("place_id=")[1].split("&")[0]
+                        
+                        serp_businesses.append({
+                            "name": title,
+                            "google_place_id": place_id,
+                            "url": url,
+                            "source": "serp_google"
+                        })
+                    else:
+                        # Generic business from SERP
+                        serp_businesses.append({
+                            "name": title,
+                            "url": url,
+                            "source": "serp_organic"
+                        })
+                
+                logger.info(f"Found {len(serp_businesses)} businesses from SERP analysis")
+            
+            except Exception as e:
+                logger.warning(f"SERP analysis failed: {e}, falling back to direct search")
+        
+        # Step 2: Search for businesses using Yelp and Google if SERP didn't find enough
+        if len(serp_businesses) < request.max_businesses:
+            # Search Yelp
+            if request.use_yelp and yelp_client.is_configured:
+                try:
+                    yelp_results = await yelp_client.search_businesses(
+                        term=request.topic.split(" in ")[0] if " in " in request.topic else request.topic,
+                        location=request.location,
+                        limit=request.max_businesses,
+                        sort_by="rating"
+                    )
+                    
+                    for business in yelp_results.get("businesses", []):
+                        # Avoid duplicates
+                        if not any(b.get("yelp_id") == business.get("id") for b in serp_businesses):
+                            serp_businesses.append({
+                                "name": business.get("name", ""),
+                                "yelp_id": business.get("id"),
+                                "address": ", ".join(business.get("location", {}).get("display_address", [])),
+                                "rating": business.get("rating"),
+                                "review_count": business.get("review_count", 0),
+                                "phone": business.get("phone"),
+                                "url": business.get("url"),
+                                "categories": [cat.get("title") for cat in business.get("categories", [])],
+                                "source": "yelp_search"
+                            })
+                except Exception as e:
+                    logger.warning(f"Yelp search failed: {e}")
+            
+            # Search Google Places
+            if request.use_google and google_client.is_configured:
+                try:
+                    google_results = await google_client.search_businesses(
+                        query=request.topic,
+                        location=request.location,
+                        limit=request.max_businesses
+                    )
+                    
+                    for place in google_results.get("places", []):
+                        place_id = place.get("place_id")
+                        # Avoid duplicates
+                        if not any(b.get("google_place_id") == place_id for b in serp_businesses):
+                            serp_businesses.append({
+                                "name": place.get("name", ""),
+                                "google_place_id": place_id,
+                                "address": place.get("formatted_address"),
+                                "rating": place.get("rating"),
+                                "review_count": place.get("user_ratings_total", 0),
+                                "source": "google_search"
+                            })
+                except Exception as e:
+                    logger.warning(f"Google Places search failed: {e}")
+        
+        # Limit to max_businesses
+        serp_businesses = serp_businesses[:request.max_businesses]
+        
+        if not serp_businesses:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No businesses found for '{request.topic}' in {request.location}"
+            )
+        
+        # Step 3: Aggregate reviews for each business
+        logger.info(f"Aggregating reviews for {len(serp_businesses)} businesses")
+        
+        review_summaries = await review_service.aggregate_multiple_businesses(
+            businesses=serp_businesses,
+            max_reviews_per_business=request.max_reviews_per_business
+        )
+        
+        # Step 4: Build business info list
+        businesses_info = []
+        total_reviews = 0
+        
+        for i, business_data in enumerate(serp_businesses):
+            review_summary = review_summaries[i] if i < len(review_summaries) else None
+            
+            business_info = BusinessInfo(
+                name=business_data.get("name", "Unknown Business"),
+                yelp_id=business_data.get("yelp_id"),
+                google_place_id=business_data.get("google_place_id"),
+                address=business_data.get("address"),
+                phone=business_data.get("phone"),
+                website=business_data.get("url"),
+                rating=business_data.get("rating") or (review_summary.average_rating if review_summary else None),
+                review_count=business_data.get("review_count") or (review_summary.total_reviews if review_summary else 0),
+                categories=business_data.get("categories", [])
+            )
+            
+            businesses_info.append(business_info)
+            if review_summary:
+                total_reviews += review_summary.total_reviews
+        
+        # Step 5: Generate blog content using AI pipeline
+        logger.info("Generating blog content with AI")
+        
+        # Build context from reviews and business data
+        review_context = []
+        for i, review_summary in enumerate(review_summaries):
+            if review_summary and review_summary.reviews:
+                top_reviews = review_service.get_top_reviews(review_summary, limit=5, min_rating=3.0)
+                business_name = businesses_info[i].name
+                
+                review_texts = "\n".join([
+                    f"- {r.text[:200]}... (Rating: {r.rating}/5)" 
+                    for r in top_reviews[:3]
+                ])
+                
+                review_context.append(f"""
+Business: {business_name}
+Rating: {review_summary.average_rating:.1f}/5 ({review_summary.total_reviews} reviews)
+Top Reviews:
+{review_texts}
+""")
+        
+        # Create blog request
+        blog_request = BlogRequest(
+            topic=f"{request.topic}: Comprehensive Guide to Top Businesses",
+            keywords=[request.topic, f"{request.topic.split(' in ')[0]} in {request.location}"],
+            tone=request.tone,
+            length=request.length,
+            format=request.format,
+            custom_instructions=f"""
+Generate a comprehensive blog post about {request.topic} in {request.location}.
+
+Include detailed information about each business:
+{chr(10).join(review_context)}
+
+Focus on:
+- Business quality and reputation based on reviews
+- Services offered and specialties
+- Customer experiences and testimonials
+- Location and contact information
+- What makes each business stand out
+
+Make the content engaging, informative, and SEO-optimized.
+{request.custom_instructions if request.custom_instructions else ''}
+"""
+        )
+        
+        # Generate blog
+        blog_result = await writer.generate(blog_request)
+        
+        if not blog_result.success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Blog generation failed: {blog_result.error_message}"
+            )
+        
+        generation_time = time.time() - start_time
+        
+        # Build response
+        response = LocalBusinessBlogResponse(
+            title=blog_result.blog_post.title,
+            content=blog_result.blog_post.content,
+            businesses=businesses_info,
+            total_reviews_aggregated=total_reviews,
+            generation_time_seconds=generation_time,
+            metadata={
+                "sources_used": list(set([b.get("source", "unknown") for b in serp_businesses])),
+                "review_sources": [s.value for s in review_summaries[0].sources] if review_summaries and review_summaries[0].sources else [],
+                "seo_score": blog_result.seo_score,
+                "word_count": blog_result.word_count,
+            }
+        )
+        
+        # Log generation
+        background_tasks.add_task(
+            log_generation,
+            topic=request.topic,
+            success=True,
+            word_count=blog_result.word_count,
+            generation_time=generation_time
+        )
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Local business blog generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Local business blog generation failed: {str(e)}"
+        )
 
 
 @app.get("/api/v1/abstraction/quality-levels")
