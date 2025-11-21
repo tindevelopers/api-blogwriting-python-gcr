@@ -27,7 +27,7 @@
 
 ## Overview
 
-The Blog Writer SDK API v1.3.4 provides comprehensive AI-powered blog generation with advanced SEO optimization, keyword research, and multi-platform publishing capabilities.
+The Blog Writer SDK API v1.3.5 provides comprehensive AI-powered blog generation with advanced SEO optimization, keyword research, and multi-platform publishing capabilities.
 
 ### Key Features
 
