@@ -3280,7 +3280,7 @@ async def analyze_keywords_enhanced_stream(
                 "serp_analysis": serp_analysis_summary
             }
             
-            # Stage 12: Completed
+            # Stage 12: Completed - ALWAYS send final result
             yield await stream_stage_update(
                 KeywordSearchStage.COMPLETED,
                 100.0,
@@ -3288,20 +3288,60 @@ async def analyze_keywords_enhanced_stream(
                 message="Search completed successfully"
             )
             
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Streaming keyword analysis failed: {e}", exc_info=True)
+            # Send a final newline to ensure the stream is properly closed
+            yield "\n"
+            
+        except HTTPException as http_ex:
+            # For HTTP exceptions, send error but don't raise (to keep stream open)
+            logger.error(f"Streaming keyword analysis HTTP error: {http_ex.detail}")
             yield await stream_stage_update(
                 KeywordSearchStage.ERROR,
                 0.0,
-                data={"error": str(e)},
-                message=f"Search failed: {str(e)}"
+                data={"error": http_ex.detail, "status_code": http_ex.status_code},
+                message=f"Search failed: {http_ex.detail}"
             )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Streaming keyword analysis failed: {str(e)}"
-            )
+            yield "\n"
+        except Exception as e:
+            logger.error(f"Streaming keyword analysis failed: {e}", exc_info=True)
+            # Try to send partial results if available
+            try:
+                partial_result = {
+                    "enhanced_analysis": {},
+                    "total_keywords": 0,
+                    "original_keywords": request.keywords,
+                    "suggested_keywords": [],
+                    "clusters": [],
+                    "cluster_summary": {
+                        "total_keywords": 0,
+                        "cluster_count": 0,
+                        "unclustered_count": 0
+                    },
+                    "location": {
+                        "used": effective_location if 'effective_location' in locals() else request.location or "United States",
+                        "detected_from_ip": detected_location is not None if 'detected_location' in locals() else False,
+                        "specified": request.location is not None and request.location != "United States"
+                    },
+                    "discovery": {},
+                    "serp_analysis": {},
+                    "error": str(e)
+                }
+                
+                # Send error with partial results if we have any data
+                yield await stream_stage_update(
+                    KeywordSearchStage.ERROR,
+                    0.0,
+                    data={"error": str(e), "partial_result": partial_result},
+                    message=f"Search failed: {str(e)}"
+                )
+            except:
+                # If even partial result fails, send minimal error
+                yield await stream_stage_update(
+                    KeywordSearchStage.ERROR,
+                    0.0,
+                    data={"error": str(e)},
+                    message=f"Search failed: {str(e)}"
+                )
+            yield "\n"
     
     return StreamingResponse(
         generate_stream(),
