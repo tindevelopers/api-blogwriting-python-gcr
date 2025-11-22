@@ -4659,11 +4659,12 @@ async def get_ai_topic_suggestions(
                     
                     # Update topic suggestions with AI search volume
                     # Try to match by exact keyword first, then by partial match
-                    for suggestion in topic_suggestions:
-                        keyword = suggestion["source_keyword"]
-                        
-                        # Try exact match first
-                        if keyword in ai_search_volume_data:
+                    if ai_search_volume_data:  # Ensure ai_search_volume_data is not None
+                        for suggestion in topic_suggestions:
+                            keyword = suggestion["source_keyword"]
+                            
+                            # Try exact match first
+                            if keyword in ai_search_volume_data:
                             suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
                         else:
                             # Try partial match - check if any seed keyword is contained in the topic keyword
