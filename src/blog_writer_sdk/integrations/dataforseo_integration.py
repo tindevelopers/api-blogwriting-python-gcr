@@ -268,7 +268,9 @@ class DataForSEOClient:
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
                 if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    logger.info(f"✅ Cache HIT for search volume: {keywords[:3]} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for search volume: {keywords[:3]} (making API call)")
             
             # Prepare API request
             payload = [{
@@ -330,7 +332,9 @@ class DataForSEOClient:
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
                 if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    logger.info(f"✅ Cache HIT for keyword difficulty: {keywords[:3]} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for keyword difficulty: {keywords[:3]} (making API call)")
             
             # Prepare API request
             payload = [{
@@ -455,7 +459,9 @@ class DataForSEOClient:
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
                 if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    logger.info(f"✅ Cache HIT for AI search volume: {keywords[:3]} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for AI search volume: {keywords[:3]} (making API call)")
             
             # Prepare API request for AI optimization endpoint
             payload = [{
@@ -620,8 +626,9 @@ class DataForSEOClient:
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
                 if datetime.now().timestamp() - timestamp < self._serp_cache_ttl:
-                    logger.debug(f"SERP cache hit for keyword: {keyword}")
+                    logger.info(f"✅ Cache HIT for SERP analysis: {keyword} depth={depth} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for SERP analysis: {keyword} depth={depth} (making API call)")
             
             depth = min(depth, 700)  # API limit
             
