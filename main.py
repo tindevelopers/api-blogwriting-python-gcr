@@ -4762,11 +4762,6 @@ async def get_ai_topic_suggestions(
             status_code=500,
             detail=f"AI topic suggestions failed: {str(e)}"
         )
-                try:
-                    mentions = await df_client.get_llm_mentions_search(
-                        target=keyword,
-                        target_type="keyword",
-                        location_name=effective_location,
                         language_code=request.language,
                         tenant_id=tenant_id,
                         platform="chat_gpt",
