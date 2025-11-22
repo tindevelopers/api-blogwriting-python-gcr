@@ -186,6 +186,47 @@ class EnhancedKeywordAnalysisRequest(BaseModel):
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
     max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
 
+
+class ContentGoal(str, Enum):
+    """Content goal enumeration for goal-based keyword analysis."""
+    SEO_RANKINGS = "SEO & Rankings"
+    ENGAGEMENT = "Engagement"
+    CONVERSIONS = "Conversions"
+    BRAND_AWARENESS = "Brand Awareness"
+
+
+class GoalBasedAnalysisRequest(BaseModel):
+    """Request model for goal-based keyword analysis."""
+    keywords: List[str] = Field(..., min_items=1, max_length=50, description="Keywords to analyze")
+    content_goal: ContentGoal = Field(..., description="Content goal category")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    include_content_analysis: bool = Field(default=True, description="Include content analysis (for Engagement & Brand Awareness)")
+    include_serp: bool = Field(default=True, description="Include SERP analysis")
+    include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data (for AI-optimized topics)")
+    include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data (for AI-optimized topics)")
+
+
+class LLMMentionsRequest(BaseModel):
+    """Request model for LLM mentions search."""
+    target: str = Field(..., description="Keyword or domain to search for")
+    target_type: str = Field(default="keyword", description="Type: 'keyword' or 'domain'")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    platform: str = Field(default="chat_gpt", description="Platform: 'chat_gpt' or 'google'")
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
+
+
+class AITopicSuggestionsRequest(BaseModel):
+    """Request model for AI topic suggestions."""
+    keywords: List[str] = Field(..., min_items=1, max_length=10, description="Seed keywords for topic discovery")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    include_ai_search_volume: bool = Field(default=True, description="Include AI search volume data")
+    include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data")
+    include_llm_responses: bool = Field(default=False, description="Include LLM responses for topic research")
+    limit: int = Field(default=50, ge=10, le=200, description="Maximum number of topic suggestions")
+
 class TopicRecommendationRequest(BaseModel):
     """Request model for topic recommendations."""
     seed_keywords: List[str] = Field(..., min_items=1, max_length=10, description="Seed keywords to base recommendations on")
@@ -3846,6 +3887,831 @@ async def extract_keywords(
 
 
 # Keyword suggestions endpoint
+@app.post("/api/v1/keywords/goal-based-analysis")
+async def analyze_keywords_goal_based(
+    request: GoalBasedAnalysisRequest,
+    http_request: Request
+):
+    """
+    Goal-based keyword analysis using optimized DataForSEO endpoints for each content goal.
+    
+    Routes to different endpoint combinations based on content goal:
+    - SEO & Rankings: Focus on search volume, difficulty, SERP analysis
+    - Engagement: Focus on search intent (informational), PAA questions, content analysis
+    - Conversions: Focus on CPC, commercial intent, shopping results
+    - Brand Awareness: Focus on content analysis, brand mentions, competitor analysis
+    """
+    try:
+        # Detect location from IP if not explicitly specified
+        detected_location = None
+        if not request.location or request.location == "United States":
+            if http_request:
+                detected_location = await detect_location_from_ip(http_request)
+                if detected_location:
+                    logger.info(f"Detected location from IP: {detected_location}")
+        
+        effective_location = detected_location or request.location or "United States"
+        tenant_id = os.getenv("TENANT_ID", "default")
+        
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+        
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        if not enhanced_analyzer._df_client.is_configured:
+            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+        
+        df_client = enhanced_analyzer._df_client
+        results = {
+            "content_goal": request.content_goal.value,
+            "keywords": request.keywords,
+            "location": effective_location,
+            "language": request.language,
+            "analysis": {}
+        }
+        
+        # Route to goal-specific endpoints
+        if request.content_goal == ContentGoal.SEO_RANKINGS:
+            # SEO & Rankings: search_volume, keyword_difficulty, serp_analysis, keyword_overview, LLM mentions
+            logger.info(f"Analyzing keywords for SEO & Rankings goal")
+            
+            # Get search volume and difficulty
+            search_volume_data = await df_client.get_search_volume_data(
+                keywords=request.keywords,
+                location_name=effective_location,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            difficulty_data = await df_client.get_keyword_difficulty(
+                keywords=request.keywords,
+                location_name=effective_location,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get keyword overview
+            keyword_overview = {}
+            if request.keywords:
+                keyword_overview = await df_client.get_keyword_overview(
+                    keywords=request.keywords[:5],  # Limit for overview
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+            
+            # Get SERP analysis
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10
+                )
+            
+            # Get LLM Mentions (for AI-optimized SEO)
+            llm_mentions = {}
+            if request.include_llm_mentions and request.keywords:
+                try:
+                    llm_mentions = await df_client.get_llm_mentions_search(
+                        target=request.keywords[0],
+                        target_type="keyword",
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        platform="chat_gpt",
+                        limit=30
+                    )
+                except Exception as e:
+                    logger.warning(f"LLM mentions failed for SEO & Rankings: {e}")
+            
+            results["analysis"] = {
+                "search_volume": search_volume_data,
+                "difficulty": difficulty_data,
+                "keyword_overview": keyword_overview,
+                "serp_analysis": serp_analysis,
+                "llm_mentions": llm_mentions,
+                "recommendations": _generate_seo_recommendations(search_volume_data, difficulty_data, llm_mentions)
+            }
+        
+        elif request.content_goal == ContentGoal.ENGAGEMENT:
+            # Engagement: search_intent (informational), serp_analysis (PAA), content_analysis, LLM mentions
+            logger.info(f"Analyzing keywords for Engagement goal")
+            
+            # Get search intent (filter for informational)
+            intent_data = await df_client.get_search_intent(
+                keywords=request.keywords,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get SERP analysis (focus on PAA)
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10,
+                    include_people_also_ask=True
+                )
+            
+            # Get content analysis
+            content_analysis = {}
+            if request.include_content_analysis and request.keywords:
+                content_analysis = await df_client.analyze_content_search(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    limit=50
+                )
+            
+            # Get LLM Mentions (for AI engagement topics)
+            llm_mentions = {}
+            if request.include_llm_mentions and request.keywords:
+                try:
+                    llm_mentions = await df_client.get_llm_mentions_search(
+                        target=request.keywords[0],
+                        target_type="keyword",
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        platform="chat_gpt",
+                        limit=50
+                    )
+                except Exception as e:
+                    logger.warning(f"LLM mentions failed for Engagement: {e}")
+            
+            # Get related keywords
+            related_keywords = {}
+            if request.keywords:
+                related_keywords = await df_client.get_related_keywords(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=2,
+                    limit=50
+                )
+            
+            results["analysis"] = {
+                "search_intent": intent_data,
+                "serp_analysis": serp_analysis,
+                "content_analysis": content_analysis,
+                "llm_mentions": llm_mentions,
+                "related_keywords": related_keywords,
+                "recommendations": _generate_engagement_recommendations(intent_data, serp_analysis, content_analysis, llm_mentions)
+            }
+        
+        elif request.content_goal == ContentGoal.CONVERSIONS:
+            # Conversions: search_volume (CPC focus), search_intent (commercial), serp_analysis (shopping)
+            logger.info(f"Analyzing keywords for Conversions goal")
+            
+            # Get search volume (focus on CPC)
+            search_volume_data = await df_client.get_search_volume_data(
+                keywords=request.keywords,
+                location_name=effective_location,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get search intent (filter for commercial/transactional)
+            intent_data = await df_client.get_search_intent(
+                keywords=request.keywords,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get SERP analysis (focus on shopping results)
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10
+                )
+            
+            # Get keyword overview (for intent classification)
+            keyword_overview = {}
+            if request.keywords:
+                keyword_overview = await df_client.get_keyword_overview(
+                    keywords=request.keywords[:5],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+            
+            # Get LLM Mentions (for commercial topics cited by AI)
+            llm_mentions = {}
+            if request.include_llm_mentions and request.keywords:
+                try:
+                    llm_mentions = await df_client.get_llm_mentions_search(
+                        target=request.keywords[0],
+                        target_type="keyword",
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        platform="chat_gpt",
+                        limit=30
+                    )
+                except Exception as e:
+                    logger.warning(f"LLM mentions failed for Conversions: {e}")
+            
+            results["analysis"] = {
+                "search_volume": search_volume_data,
+                "search_intent": intent_data,
+                "serp_analysis": serp_analysis,
+                "keyword_overview": keyword_overview,
+                "llm_mentions": llm_mentions,
+                "recommendations": _generate_conversion_recommendations(search_volume_data, intent_data, serp_analysis, llm_mentions)
+            }
+        
+        elif request.content_goal == ContentGoal.BRAND_AWARENESS:
+            # Brand Awareness: content_analysis, keyword_overview, serp_analysis, competitor analysis
+            logger.info(f"Analyzing keywords for Brand Awareness goal")
+            
+            # Get content analysis (brand mentions, sentiment)
+            content_analysis = {}
+            if request.include_content_analysis and request.keywords:
+                content_analysis = await df_client.analyze_content_search(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    limit=100
+                )
+                
+                # Get content summary
+                content_summary = await df_client.analyze_content_summary(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                content_analysis["summary"] = content_summary
+            
+            # Get keyword overview
+            keyword_overview = {}
+            if request.keywords:
+                keyword_overview = await df_client.get_keyword_overview(
+                    keywords=request.keywords[:5],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+            
+            # Get SERP analysis
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10
+                )
+            
+            # Get keyword ideas (brand + industry combinations)
+            keyword_ideas = {}
+            if request.keywords:
+                keyword_ideas = await df_client.get_keyword_ideas(
+                    keywords=request.keywords[:3],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    limit=50
+                )
+            
+            results["analysis"] = {
+                "content_analysis": content_analysis,
+                "keyword_overview": keyword_overview,
+                "serp_analysis": serp_analysis,
+                "keyword_ideas": keyword_ideas,
+                "recommendations": _generate_brand_awareness_recommendations(content_analysis, keyword_overview)
+            }
+        
+        return results
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Goal-based keyword analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Goal-based keyword analysis failed: {str(e)}"
+        )
+
+
+def _generate_seo_recommendations(
+    search_volume_data: Dict,
+    difficulty_data: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate SEO recommendations based on search volume, difficulty, and LLM mentions."""
+    recommendations = []
+    
+    for keyword, data in search_volume_data.items():
+        volume = data.get("search_volume", 0)
+        difficulty = difficulty_data.get(keyword, 50.0)
+        
+        if volume >= 1000 and difficulty < 60:
+            recommendations.append(f"✅ '{keyword}': High volume ({volume}) with low difficulty ({difficulty:.1f}) - Great ranking opportunity")
+        elif volume >= 500 and difficulty < 50:
+            recommendations.append(f"✅ '{keyword}': Good volume ({volume}) with easy difficulty ({difficulty:.1f}) - Good opportunity")
+        elif volume < 100:
+            recommendations.append(f"⚠️ '{keyword}': Low search volume ({volume}) - Consider long-tail variations")
+        elif difficulty > 70:
+            recommendations.append(f"⚠️ '{keyword}': High difficulty ({difficulty:.1f}) - Competitive keyword")
+    
+    # LLM Mentions insights for SEO
+    if llm_mentions:
+        ai_search_volume = llm_mentions.get("ai_search_volume", 0)
+        mentions_count = llm_mentions.get("mentions_count", 0)
+        
+        if ai_search_volume > 0:
+            recommendations.append(f"✅ AI search volume: {ai_search_volume:,} - Optimize for both traditional and AI search")
+        
+        if mentions_count > 0:
+            recommendations.append(f"✅ {mentions_count} AI agent citations - High AI discovery potential")
+        
+        if llm_mentions.get("top_pages"):
+            recommendations.append(f"✅ Analyze {len(llm_mentions['top_pages'])} top-cited pages for SEO patterns")
+    
+    return recommendations
+
+
+def _generate_engagement_recommendations(
+    intent_data: Dict,
+    serp_analysis: Dict,
+    content_analysis: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate engagement recommendations based on intent, SERP, content analysis, and LLM mentions."""
+    recommendations = []
+    
+    # Check for informational intent
+    if intent_data.get("tasks") and intent_data["tasks"][0].get("result"):
+        for item in intent_data["tasks"][0]["result"]:
+            keyword = item.get("keyword", "")
+            intent = item.get("intent", "")
+            if intent.lower() == "informational":
+                recommendations.append(f"✅ '{keyword}': Informational intent - Great for engagement content")
+    
+    # Check for PAA questions
+    if serp_analysis.get("people_also_ask"):
+        paa_count = len(serp_analysis["people_also_ask"])
+        if paa_count > 0:
+            recommendations.append(f"✅ Found {paa_count} People Also Ask questions - Create Q&A content")
+    
+    # Check content sentiment
+    if content_analysis.get("sentiment"):
+        sentiment = content_analysis["sentiment"]
+        positive = sentiment.get("positive", 0)
+        if positive > 0:
+            recommendations.append(f"✅ Positive sentiment detected - Opportunity for engaging content")
+    
+    # LLM Mentions insights for engagement
+    if llm_mentions:
+        if llm_mentions.get("topics"):
+            topics_count = len(llm_mentions["topics"])
+            if topics_count > 0:
+                recommendations.append(f"✅ Found {topics_count} topics cited by AI agents - Create engaging content on these topics")
+        
+        if llm_mentions.get("top_pages"):
+            top_pages_count = len(llm_mentions["top_pages"])
+            if top_pages_count > 0:
+                recommendations.append(f"✅ {top_pages_count} pages cited by AI agents - Analyze what makes them engaging")
+    
+    return recommendations
+
+
+def _generate_conversion_recommendations(
+    search_volume_data: Dict,
+    intent_data: Dict,
+    serp_analysis: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate conversion recommendations based on CPC, intent, SERP, and LLM mentions."""
+    recommendations = []
+    
+    # Check CPC
+    for keyword, data in search_volume_data.items():
+        cpc = data.get("cpc", 0.0)
+        volume = data.get("search_volume", 0)
+        
+        if cpc >= 5.0:
+            recommendations.append(f"✅ '{keyword}': High CPC (${cpc:.2f}) - Strong commercial value")
+        elif cpc >= 2.0 and volume >= 500:
+            recommendations.append(f"✅ '{keyword}': Good CPC (${cpc:.2f}) with decent volume ({volume})")
+    
+    # Check commercial intent
+    if intent_data.get("tasks") and intent_data["tasks"][0].get("result"):
+        for item in intent_data["tasks"][0]["result"]:
+            keyword = item.get("keyword", "")
+            intent = item.get("intent", "")
+            if intent.lower() in ["transactional", "commercial"]:
+                recommendations.append(f"✅ '{keyword}': {intent.capitalize()} intent - Conversion-focused")
+    
+    # Check for shopping results
+    if serp_analysis.get("shopping_results"):
+        recommendations.append("✅ Shopping results present - E-commerce opportunity")
+    
+    # LLM Mentions insights for conversions
+    if llm_mentions:
+        ai_search_volume = llm_mentions.get("ai_search_volume", 0)
+        if ai_search_volume > 0:
+            recommendations.append(f"✅ AI search volume: {ai_search_volume:,} - Optimize product content for AI citations")
+        
+        if llm_mentions.get("top_pages"):
+            recommendations.append(f"✅ Analyze {len(llm_mentions['top_pages'])} commercial pages cited by AI agents")
+    
+    return recommendations
+
+
+def _generate_brand_awareness_recommendations(
+    content_analysis: Dict,
+    keyword_overview: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate brand awareness recommendations based on content analysis and LLM mentions."""
+    recommendations = []
+    
+    # Check brand mentions
+    if content_analysis.get("brand_mentions"):
+        mentions = content_analysis["brand_mentions"]
+        if mentions:
+            recommendations.append(f"✅ Found {len(mentions)} brand mentions - Track brand visibility")
+    
+    # Check sentiment
+    if content_analysis.get("sentiment"):
+        sentiment = content_analysis["sentiment"]
+        positive = sentiment.get("positive", 0)
+        negative = sentiment.get("negative", 0)
+        
+        if positive > negative:
+            recommendations.append("✅ Positive sentiment outweighs negative - Good brand perception")
+        elif negative > positive:
+            recommendations.append("⚠️ Negative sentiment detected - Address brand concerns")
+    
+    # Check engagement score
+    if content_analysis.get("summary", {}).get("engagement_score", 0) > 0.7:
+        recommendations.append("✅ High engagement score - Strong brand awareness potential")
+    
+    # LLM Mentions insights (CRITICAL for Brand Awareness)
+    if llm_mentions:
+        mentions_count = llm_mentions.get("mentions_count", 0)
+        ai_search_volume = llm_mentions.get("ai_search_volume", 0)
+        
+        if mentions_count > 0:
+            recommendations.append(f"✅ Found {mentions_count} AI agent citations - Brand visible in AI search")
+        
+        if ai_search_volume > 0:
+            recommendations.append(f"✅ AI search volume: {ai_search_volume:,} - High AI discovery potential")
+        
+        if llm_mentions.get("top_pages"):
+            top_pages_count = len(llm_mentions["top_pages"])
+            recommendations.append(f"✅ {top_pages_count} pages cited by AI agents - Analyze citation patterns")
+        
+        if llm_mentions.get("top_domains_analysis", {}).get("top_domains"):
+            top_domains_count = len(llm_mentions["top_domains_analysis"]["top_domains"])
+            recommendations.append(f"✅ {top_domains_count} authoritative domains identified - Competitive analysis")
+        
+        # Content gap detection
+        if ai_search_volume > 1000 and mentions_count < 10:
+            recommendations.append("⚠️ High AI search volume but low citations - Content gap opportunity")
+    
+    return recommendations
+
+
+@app.post("/api/v1/keywords/ai-mentions")
+async def get_llm_mentions(
+    request: LLMMentionsRequest,
+    http_request: Request
+):
+    """
+    Get LLM mentions data for a keyword or domain.
+    
+    This endpoint finds what topics, keywords, and URLs are being cited by AI agents
+    (ChatGPT, Claude, Gemini, Perplexity) in their responses.
+    
+    Critical for: Discovering AI-optimized topics and content gaps.
+    
+    Returns:
+    - Top pages cited by AI agents
+    - Top domains cited by AI agents
+    - Topics frequently mentioned
+    - AI search volume and mention counts
+    """
+    try:
+        tenant_id = os.getenv("TENANT_ID", "default")
+        
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+        
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        if not enhanced_analyzer._df_client.is_configured:
+            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+        
+        df_client = enhanced_analyzer._df_client
+        
+        # Get LLM mentions search
+        mentions_data = await df_client.get_llm_mentions_search(
+            target=request.target,
+            target_type=request.target_type,
+            location_name=request.location,
+            language_code=request.language,
+            tenant_id=tenant_id,
+            platform=request.platform,
+            limit=request.limit
+        )
+        
+        # Get top pages if available
+        top_pages_data = {}
+        if request.target_type == "keyword":
+            try:
+                top_pages_data = await df_client.get_llm_mentions_top_pages(
+                    target=request.target,
+                    target_type=request.target_type,
+                    location_name=request.location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    platform=request.platform,
+                    limit=10
+                )
+            except Exception as e:
+                logger.warning(f"Failed to get top pages: {e}")
+        
+        # Get top domains
+        top_domains_data = {}
+        try:
+            top_domains_data = await df_client.get_llm_mentions_top_domains(
+                target=request.target,
+                target_type=request.target_type,
+                location_name=request.location,
+                language_code=request.language,
+                tenant_id=tenant_id,
+                platform=request.platform,
+                limit=10
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get top domains: {e}")
+        
+        return {
+            "target": request.target,
+            "target_type": request.target_type,
+            "platform": request.platform,
+            "llm_mentions": mentions_data,
+            "top_pages": top_pages_data,
+            "top_domains": top_domains_data,
+            "insights": _generate_llm_mentions_insights(mentions_data, top_pages_data, top_domains_data)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"LLM mentions search failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"LLM mentions search failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/ai-topic-suggestions")
+async def get_ai_topic_suggestions(
+    request: AITopicSuggestionsRequest,
+    http_request: Request
+):
+    """
+    Get AI-optimized topic suggestions combining multiple DataForSEO AI endpoints.
+    
+    This endpoint combines:
+    - AI Search Volume: Keywords with high AI search volume
+    - LLM Mentions: Topics cited by AI agents
+    - LLM Responses: AI-generated topic research (optional)
+    
+    Critical for: Creating content optimized for AI agent discovery and citation.
+    
+    Returns:
+    - AI-optimized topic suggestions
+    - Content gaps (topics AI agents discuss but have limited citations)
+    - Citation opportunities
+    - AI search volume and mention metrics
+    """
+    try:
+        # Detect location from IP if not explicitly specified
+        detected_location = None
+        if not request.location or request.location == "United States":
+            if http_request:
+                detected_location = await detect_location_from_ip(http_request)
+                if detected_location:
+                    logger.info(f"Detected location from IP: {detected_location}")
+        
+        effective_location = detected_location or request.location or "United States"
+        tenant_id = os.getenv("TENANT_ID", "default")
+        
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+        
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        if not enhanced_analyzer._df_client.is_configured:
+            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+        
+        df_client = enhanced_analyzer._df_client
+        results = {
+            "seed_keywords": request.keywords,
+            "location": effective_location,
+            "language": request.language,
+            "topic_suggestions": [],
+            "content_gaps": [],
+            "citation_opportunities": [],
+            "ai_metrics": {}
+        }
+        
+        # 1. Get AI Search Volume for seed keywords
+        ai_search_volume_data = {}
+        if request.include_ai_search_volume:
+            try:
+                ai_search_volume_data = await df_client.get_ai_search_volume(
+                    keywords=request.keywords,
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                results["ai_metrics"]["search_volume"] = ai_search_volume_data
+            except Exception as e:
+                logger.warning(f"Failed to get AI search volume: {e}")
+        
+        # 2. Get LLM Mentions for each seed keyword
+        llm_mentions_data = {}
+        if request.include_llm_mentions:
+            for keyword in request.keywords:
+                try:
+                    mentions = await df_client.get_llm_mentions_search(
+                        target=keyword,
+                        target_type="keyword",
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        platform="chat_gpt",
+                        limit=request.limit
+                    )
+                    llm_mentions_data[keyword] = mentions
+                    
+                    # Extract topics from mentions
+                    if mentions.get("topics"):
+                        for topic in mentions["topics"][:10]:  # Top 10 topics per keyword
+                            topic_suggestion = {
+                                "topic": topic.get("topic", ""),
+                                "source_keyword": keyword,
+                                "ai_search_volume": topic.get("ai_search_volume", 0),
+                                "mentions": topic.get("mentions", 0),
+                                "source": "llm_mentions"
+                            }
+                            results["topic_suggestions"].append(topic_suggestion)
+                    
+                    # Extract top pages as topic opportunities
+                    if mentions.get("top_pages"):
+                        for page in mentions["top_pages"][:5]:
+                            if page.get("title"):
+                                topic_suggestion = {
+                                    "topic": page["title"],
+                                    "source_keyword": keyword,
+                                    "ai_search_volume": page.get("ai_search_volume", 0),
+                                    "mentions": page.get("mentions", 0),
+                                    "url": page.get("url", ""),
+                                    "source": "top_cited_pages"
+                                }
+                                results["topic_suggestions"].append(topic_suggestion)
+                
+                except Exception as e:
+                    logger.warning(f"Failed to get LLM mentions for {keyword}: {e}")
+            
+            results["ai_metrics"]["llm_mentions"] = llm_mentions_data
+        
+        # 3. Get LLM Responses for topic research (optional)
+        if request.include_llm_responses:
+            for keyword in request.keywords[:3]:  # Limit to 3 keywords for cost control
+                try:
+                    prompt = f"What are the main topics and subtopics related to {keyword} that people frequently ask about?"
+                    llm_responses = await df_client.get_llm_responses(
+                        prompt=prompt,
+                        llms=["chatgpt", "claude"],
+                        max_tokens=300,
+                        tenant_id=tenant_id
+                    )
+                    
+                    # Extract topics from LLM responses
+                    if llm_responses.get("consensus"):
+                        for consensus_point in llm_responses["consensus"][:5]:
+                            topic_suggestion = {
+                                "topic": consensus_point,
+                                "source_keyword": keyword,
+                                "ai_search_volume": 0,  # Not available from LLM responses
+                                "mentions": 0,
+                                "source": "llm_responses",
+                                "confidence": "high"
+                            }
+                            results["topic_suggestions"].append(topic_suggestion)
+                
+                except Exception as e:
+                    logger.warning(f"Failed to get LLM responses for {keyword}: {e}")
+        
+        # 4. Identify content gaps
+        # Topics with high AI search volume but low citations = content gaps
+        for keyword, mentions in llm_mentions_data.items():
+            if mentions.get("ai_search_volume", 0) > 1000 and mentions.get("mentions_count", 0) < 10:
+                results["content_gaps"].append({
+                    "keyword": keyword,
+                    "ai_search_volume": mentions.get("ai_search_volume", 0),
+                    "mentions_count": mentions.get("mentions_count", 0),
+                    "opportunity_score": mentions.get("ai_search_volume", 0) / max(mentions.get("mentions_count", 1), 1)
+                })
+        
+        # 5. Identify citation opportunities
+        # Topics with high mentions but low competition = citation opportunities
+        for keyword, mentions in llm_mentions_data.items():
+            if mentions.get("top_pages"):
+                avg_mentions = sum(p.get("mentions", 0) for p in mentions["top_pages"]) / len(mentions["top_pages"])
+                if avg_mentions > 20 and len(mentions["top_pages"]) < 5:
+                    results["citation_opportunities"].append({
+                        "keyword": keyword,
+                        "avg_mentions": avg_mentions,
+                        "competitor_count": len(mentions["top_pages"]),
+                        "opportunity": "Low competition, high citation potential"
+                    })
+        
+        # Sort and limit topic suggestions
+        results["topic_suggestions"] = sorted(
+            results["topic_suggestions"],
+            key=lambda x: (x.get("ai_search_volume", 0) + x.get("mentions", 0) * 10),
+            reverse=True
+        )[:request.limit]
+        
+        # Add summary
+        results["summary"] = {
+            "total_suggestions": len(results["topic_suggestions"]),
+            "content_gaps_count": len(results["content_gaps"]),
+            "citation_opportunities_count": len(results["citation_opportunities"]),
+            "top_sources": _get_top_sources(results["topic_suggestions"])
+        }
+        
+        return results
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI topic suggestions failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI topic suggestions failed: {str(e)}"
+        )
+
+
+def _generate_llm_mentions_insights(
+    mentions_data: Dict[str, Any],
+    top_pages_data: Dict[str, Any],
+    top_domains_data: Dict[str, Any]
+) -> List[str]:
+    """Generate insights from LLM mentions data."""
+    insights = []
+    
+    if mentions_data.get("mentions_count", 0) > 0:
+        insights.append(f"✅ Found {mentions_data['mentions_count']} total mentions by AI agents")
+    
+    if mentions_data.get("ai_search_volume", 0) > 0:
+        insights.append(f"✅ AI search volume: {mentions_data['ai_search_volume']:,}")
+    
+    if mentions_data.get("top_pages"):
+        insights.append(f"✅ {len(mentions_data['top_pages'])} pages cited by AI agents")
+    
+    if top_domains_data.get("top_domains"):
+        insights.append(f"✅ {len(top_domains_data['top_domains'])} authoritative domains identified")
+    
+    if mentions_data.get("mentions_count", 0) > 0 and mentions_data.get("ai_search_volume", 0) > 0:
+        ratio = mentions_data["ai_search_volume"] / mentions_data["mentions_count"]
+        if ratio > 100:
+            insights.append("⚠️ High AI search volume but low citations - Content gap opportunity")
+    
+    return insights
+
+
+def _get_top_sources(topic_suggestions: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Get top sources for topic suggestions."""
+    sources = {}
+    for suggestion in topic_suggestions:
+        source = suggestion.get("source", "unknown")
+        sources[source] = sources.get(source, 0) + 1
+    return sources
+
+
 @app.post("/api/v1/keywords/suggest")
 async def suggest_keywords(
     request: KeywordSuggestionRequest,

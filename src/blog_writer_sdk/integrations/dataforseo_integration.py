@@ -1690,6 +1690,676 @@ class DataForSEOClient:
         # or return a specific error structure.
         logger.warning(f"Returning fallback data for {endpoint} with payload {payload}")
         return {"status": "error", "message": "API not configured or request failed. Returning fallback data.", "data": []}
+    
+    @monitor_performance("dataforseo_generate_text")
+    async def generate_text(
+        self,
+        prompt: str,
+        max_tokens: int = 2000,
+        temperature: float = 0.7,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Generate text content using DataForSEO Content Generation API.
+        
+        Args:
+            prompt: Text prompt for generation
+            max_tokens: Maximum tokens to generate
+            temperature: Creativity level (0.0-1.0)
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with generated text and metadata
+        """
+        try:
+            payload = [{
+                "text": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }]
+            
+            data = await self._make_request("content_generation/generate_text/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                generated_text = result_item.get("text", "")
+                tokens_used = result_item.get("tokens_used", 0)
+                
+                return {
+                    "text": generated_text,
+                    "tokens_used": tokens_used,
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"text": "", "tokens_used": 0, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO text generation failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_paraphrase_text")
+    async def paraphrase_text(
+        self,
+        text: str,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Paraphrase text using DataForSEO Content Generation API.
+        
+        Args:
+            text: Text to paraphrase
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with paraphrased text
+        """
+        try:
+            payload = [{
+                "text": text
+            }]
+            
+            data = await self._make_request("content_generation/paraphrase/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                return {
+                    "paraphrased_text": result_item.get("text", ""),
+                    "original_text": text,
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"paraphrased_text": text, "original_text": text, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO paraphrase failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_check_grammar")
+    async def check_grammar(
+        self,
+        text: str,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Check grammar using DataForSEO Content Generation API.
+        
+        Args:
+            text: Text to check
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with grammar check results
+        """
+        try:
+            payload = [{
+                "text": text
+            }]
+            
+            data = await self._make_request("content_generation/check_grammar/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                return {
+                    "corrected_text": result_item.get("text", text),
+                    "errors": result_item.get("errors", []),
+                    "score": result_item.get("score", 0.0),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"corrected_text": text, "errors": [], "score": 1.0, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO grammar check failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_generate_meta_tags")
+    async def generate_meta_tags(
+        self,
+        title: str,
+        content: str,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Generate meta tags and summary using DataForSEO Content Generation API.
+        
+        Args:
+            title: Page title
+            content: Page content
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with meta tags and summary
+        """
+        try:
+            payload = [{
+                "title": title,
+                "text": content
+            }]
+            
+            data = await self._make_request("content_generation/generate_meta_tags/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                return {
+                    "meta_title": result_item.get("title", title),
+                    "meta_description": result_item.get("description", ""),
+                    "summary": result_item.get("summary", ""),
+                    "keywords": result_item.get("keywords", []),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {
+                "meta_title": title,
+                "meta_description": "",
+                "summary": "",
+                "keywords": [],
+                "metadata": {}
+            }
+            
+        except Exception as e:
+            logger.error(f"DataForSEO meta tag generation failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_content_analysis_search")
+    async def analyze_content_search(
+        self,
+        keyword: str,
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Analyze content citations and sentiment for a keyword using DataForSEO Content Analysis API.
+        
+        Args:
+            keyword: Keyword to analyze
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            limit: Maximum number of results
+            
+        Returns:
+            Dictionary with content analysis results including:
+            - citations: Content citations
+            - sentiment: Sentiment analysis
+            - engagement_signals: Engagement indicators
+        """
+        try:
+            payload = [{
+                "keyword": keyword,
+                "location_name": location_name,
+                "language_code": language_code,
+                "limit": limit
+            }]
+            
+            data = await self._make_request("content_analysis/search/live", payload, tenant_id)
+            
+            # Process response
+            results = {
+                "keyword": keyword,
+                "citations": [],
+                "sentiment": {
+                    "positive": 0,
+                    "negative": 0,
+                    "neutral": 0
+                },
+                "engagement_signals": [],
+                "top_domains": [],
+                "metadata": {}
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                for item in data["tasks"][0]["result"]:
+                    # Extract citation data
+                    citation = {
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "domain": item.get("domain", ""),
+                        "snippet": item.get("snippet", ""),
+                        "sentiment": item.get("sentiment", "neutral")
+                    }
+                    results["citations"].append(citation)
+                    
+                    # Aggregate sentiment
+                    sentiment = item.get("sentiment", "neutral").lower()
+                    if sentiment == "positive":
+                        results["sentiment"]["positive"] += 1
+                    elif sentiment == "negative":
+                        results["sentiment"]["negative"] += 1
+                    else:
+                        results["sentiment"]["neutral"] += 1
+                    
+                    # Extract engagement signals
+                    if item.get("engagement_score"):
+                        results["engagement_signals"].append({
+                            "url": item.get("url", ""),
+                            "score": item.get("engagement_score", 0)
+                        })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"DataForSEO content analysis search failed: {e}")
+            return {
+                "keyword": keyword,
+                "citations": [],
+                "sentiment": {"positive": 0, "negative": 0, "neutral": 0},
+                "engagement_signals": [],
+                "top_domains": [],
+                "metadata": {}
+            }
+    
+    @monitor_performance("dataforseo_content_analysis_summary")
+    async def analyze_content_summary(
+        self,
+        keyword: str,
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Get content analysis summary for a keyword using DataForSEO Content Analysis API.
+        
+        Args:
+            keyword: Keyword to analyze
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with content analysis summary including:
+            - total_citations: Total number of citations
+            - sentiment_breakdown: Sentiment distribution
+            - top_topics: Top topics mentioned
+            - brand_mentions: Brand mentions if applicable
+        """
+        try:
+            payload = [{
+                "keyword": keyword,
+                "location_name": location_name,
+                "language_code": language_code
+            }]
+            
+            data = await self._make_request("content_analysis/summary/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                return {
+                    "keyword": keyword,
+                    "total_citations": result_item.get("total_citations", 0),
+                    "sentiment_breakdown": result_item.get("sentiment", {}),
+                    "top_topics": result_item.get("top_topics", []),
+                    "brand_mentions": result_item.get("brand_mentions", []),
+                    "engagement_score": result_item.get("engagement_score", 0.0),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {
+                "keyword": keyword,
+                "total_citations": 0,
+                "sentiment_breakdown": {},
+                "top_topics": [],
+                "brand_mentions": [],
+                "engagement_score": 0.0,
+                "metadata": {}
+            }
+            
+        except Exception as e:
+            logger.error(f"DataForSEO content analysis summary failed: {e}")
+            return {
+                "keyword": keyword,
+                "total_citations": 0,
+                "sentiment_breakdown": {},
+                "top_topics": [],
+                "brand_mentions": [],
+                "engagement_score": 0.0,
+                "metadata": {}
+            }
+    
+    @monitor_performance("dataforseo_llm_mentions_search")
+    async def get_llm_mentions_search(
+        self,
+        target: str,
+        target_type: str = "keyword",  # "keyword" or "domain"
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        platform: str = "chat_gpt",  # "chat_gpt" or "google"
+        limit: int = 100,
+        filters: Optional[List[Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Search for LLM mentions using DataForSEO AI Optimization API.
+        
+        This endpoint finds what topics, keywords, and URLs are being cited by AI agents
+        (ChatGPT, Claude, Gemini, Perplexity) in their responses.
+        
+        Critical for: Discovering AI-optimized topics and content gaps.
+        
+        Args:
+            target: Keyword or domain to search for
+            target_type: "keyword" or "domain"
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            platform: "chat_gpt" or "google"
+            limit: Maximum number of results
+            filters: Optional filters array
+            
+        Returns:
+            Dictionary with LLM mentions data including:
+            - target: Search target
+            - ai_search_volume: AI search volume for target
+            - mentions_count: Total mentions count
+            - top_pages: Top pages mentioned by LLMs
+            - top_domains: Top domains mentioned by LLMs
+            - topics: Topics frequently mentioned
+            - aggregated_metrics: Summary metrics
+        """
+        try:
+            # Build target object based on type
+            if target_type == "keyword":
+                target_obj = {"keyword": target}
+            elif target_type == "domain":
+                target_obj = {"domain": target}
+            else:
+                target_obj = {"keyword": target}  # Default to keyword
+            
+            payload = [{
+                "target": [target_obj],
+                "location_name": location_name,
+                "language_code": language_code,
+                "platform": platform,
+                "limit": limit
+            }]
+            
+            # Add filters if provided
+            if filters:
+                payload[0]["filters"] = filters
+            
+            data = await self._make_request("ai_optimization/llm_mentions/search/live", payload, tenant_id)
+            
+            # Process response
+            result = {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "ai_search_volume": 0,
+                "mentions_count": 0,
+                "top_pages": [],
+                "top_domains": [],
+                "topics": [],
+                "aggregated_metrics": {},
+                "metadata": {}
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                # Extract aggregated metrics
+                if "aggregated_metrics" in task_result:
+                    metrics = task_result["aggregated_metrics"]
+                    result["ai_search_volume"] = metrics.get("ai_search_volume", 0)
+                    result["mentions_count"] = metrics.get("mentions_count", 0)
+                    result["aggregated_metrics"] = metrics
+                
+                # Extract top pages
+                if "items" in task_result:
+                    for item in task_result["items"][:limit]:
+                        page_data = {
+                            "url": item.get("url", ""),
+                            "title": item.get("title", ""),
+                            "domain": item.get("domain", ""),
+                            "mentions": item.get("mentions_count", 0),
+                            "ai_search_volume": item.get("ai_search_volume", 0),
+                            "platforms": item.get("platforms", []),
+                            "rank_group": item.get("rank_group", 0)
+                        }
+                        result["top_pages"].append(page_data)
+                
+                # Extract topics if available
+                if "topics" in task_result:
+                    result["topics"] = task_result["topics"]
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO LLM mentions search failed: {e}")
+            return {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "ai_search_volume": 0,
+                "mentions_count": 0,
+                "top_pages": [],
+                "top_domains": [],
+                "topics": [],
+                "aggregated_metrics": {},
+                "metadata": {}
+            }
+    
+    @monitor_performance("dataforseo_llm_mentions_top_pages")
+    async def get_llm_mentions_top_pages(
+        self,
+        target: str,
+        target_type: str = "keyword",
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        platform: str = "chat_gpt",
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get top pages mentioned by LLMs for a target.
+        
+        This endpoint shows what content AI agents cite most frequently.
+        Critical for: Understanding content structure that works for AI citations.
+        
+        Args:
+            target: Keyword or domain to analyze
+            target_type: "keyword" or "domain"
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            platform: "chat_gpt" or "google"
+            limit: Maximum number of pages to return
+            
+        Returns:
+            Dictionary with top pages data including:
+            - target: Search target
+            - top_pages: List of top-cited pages with metrics
+            - citation_patterns: Patterns identified in top pages
+        """
+        try:
+            # Build target object
+            if target_type == "keyword":
+                target_obj = {"keyword": target}
+            else:
+                target_obj = {"domain": target}
+            
+            payload = [{
+                "target": [target_obj],
+                "location_name": location_name,
+                "language_code": language_code,
+                "platform": platform,
+                "items_list_limit": limit
+            }]
+            
+            data = await self._make_request("ai_optimization/llm_mentions/top_pages/live", payload, tenant_id)
+            
+            result = {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_pages": [],
+                "citation_patterns": {}
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                if "items" in task_result:
+                    for item in task_result["items"][:limit]:
+                        page_data = {
+                            "url": item.get("url", ""),
+                            "title": item.get("title", ""),
+                            "domain": item.get("domain", ""),
+                            "mentions": item.get("mentions_count", 0),
+                            "ai_search_volume": item.get("ai_search_volume", 0),
+                            "rank_group": item.get("rank_group", 0),
+                            "platforms": item.get("platforms", []),
+                            "serp_item": item.get("serp_item", {})
+                        }
+                        result["top_pages"].append(page_data)
+                
+                # Analyze citation patterns
+                if result["top_pages"]:
+                    result["citation_patterns"] = self._analyze_citation_patterns(result["top_pages"])
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO LLM mentions top pages failed: {e}")
+            return {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_pages": [],
+                "citation_patterns": {}
+            }
+    
+    @monitor_performance("dataforseo_llm_mentions_top_domains")
+    async def get_llm_mentions_top_domains(
+        self,
+        target: str,
+        target_type: str = "keyword",
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        platform: str = "chat_gpt",
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get top domains mentioned by LLMs for a target.
+        
+        This endpoint identifies authoritative domains that AI agents cite most.
+        Critical for: Competitive analysis in AI search space.
+        
+        Args:
+            target: Keyword or domain to analyze
+            target_type: "keyword" or "domain"
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            platform: "chat_gpt" or "google"
+            limit: Maximum number of domains to return
+            
+        Returns:
+            Dictionary with top domains data including:
+            - target: Search target
+            - top_domains: List of top-cited domains with metrics
+            - domain_authority: Authority metrics
+        """
+        try:
+            # Build target object
+            if target_type == "keyword":
+                target_obj = {"keyword": target}
+            else:
+                target_obj = {"domain": target}
+            
+            payload = [{
+                "target": [target_obj],
+                "location_name": location_name,
+                "language_code": language_code,
+                "platform": platform,
+                "items_list_limit": limit
+            }]
+            
+            data = await self._make_request("ai_optimization/llm_mentions/top_domains/live", payload, tenant_id)
+            
+            result = {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_domains": [],
+                "domain_authority": {}
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                if "items" in task_result:
+                    for item in task_result["items"][:limit]:
+                        domain_data = {
+                            "domain": item.get("domain", ""),
+                            "mentions": item.get("mentions_count", 0),
+                            "ai_search_volume": item.get("ai_search_volume", 0),
+                            "backlinks": item.get("backlinks", 0),
+                            "referring_domains": item.get("referring_domains", 0),
+                            "rank": item.get("rank", 0)
+                        }
+                        result["top_domains"].append(domain_data)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO LLM mentions top domains failed: {e}")
+            return {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_domains": [],
+                "domain_authority": {}
+            }
+    
+    def _analyze_citation_patterns(self, top_pages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analyze citation patterns from top-cited pages.
+        
+        Args:
+            top_pages: List of top-cited pages
+            
+        Returns:
+            Dictionary with citation pattern insights
+        """
+        if not top_pages:
+            return {}
+        
+        patterns = {
+            "avg_mentions": 0,
+            "common_domains": [],
+            "content_types": [],
+            "avg_rank": 0,
+            "platform_distribution": {}
+        }
+        
+        total_mentions = sum(page.get("mentions", 0) for page in top_pages)
+        patterns["avg_mentions"] = total_mentions / len(top_pages) if top_pages else 0
+        
+        # Extract common domains
+        domains = {}
+        for page in top_pages:
+            domain = page.get("domain", "")
+            if domain:
+                domains[domain] = domains.get(domain, 0) + 1
+        
+        patterns["common_domains"] = sorted(domains.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        # Platform distribution
+        for page in top_pages:
+            platforms = page.get("platforms", [])
+            for platform in platforms:
+                patterns["platform_distribution"][platform] = patterns["platform_distribution"].get(platform, 0) + 1
+        
+        return patterns
 
 
 class EnhancedKeywordAnalyzer:
