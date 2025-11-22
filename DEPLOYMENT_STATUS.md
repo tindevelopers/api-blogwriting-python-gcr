@@ -1,90 +1,90 @@
-# Deployment Status - Develop Branch
+# Deployment Status and Monitoring
 
-**Date:** 2025-01-15  
-**Branch:** develop  
-**Status:** ✅ Changes pushed, deployment triggered
+## Current Status
+
+**Latest Commit:** `a4a88da664bf9ee7c62fb4ac9e57b21ef2fe70f2`  
+**Branch:** `develop`  
+**Build Status:** ⏳ Waiting for trigger to fire
 
 ---
 
-## 📋 Deployment Information
+## Issue Identified
 
-### Automatic Deployment
-According to the workflow configuration, **Cloud Build trigger automatically deploys to `europe-west9` on push to `develop` branch**.
+The Cloud Build trigger `deploy-dev-on-develop` appears to be missing or misconfigured. 
 
-### Manual Deployment Options
+**Attempts Made:**
+1. ✅ Code pushed to `develop` branch successfully
+2. ✅ Manual build prevention safeguard added to `cloudbuild.yaml`
+3. ⚠️ Trigger not found or not accessible
+4. ⚠️ Trigger creation failed (likely connection configuration issue)
 
-If automatic deployment doesn't trigger, you can manually deploy using:
+---
 
-#### Option 1: GitHub Actions Workflow (Manual Trigger)
-1. Go to GitHub Actions tab
-2. Select "Deploy Develop to Europe-West1" workflow
-3. Click "Run workflow" → Select "develop" branch → Run
+## Current Cloud Run Service Status
 
-#### Option 2: Cloud Build (Direct)
+**Service:** `blog-writer-api-dev`  
+**Region:** `europe-west9`  
+**Status:** ✅ Ready  
+**Latest Revision:** `blog-writer-api-dev-00130-crz`
+
+The service is currently running with a previous deployment.
+
+---
+
+## Next Steps
+
+### Option 1: Manual Trigger (Temporary)
+If the automatic trigger cannot be configured immediately, you can manually trigger a build:
+
 ```bash
 gcloud builds submit \
   --config cloudbuild.yaml \
-  --substitutions _REGION=europe-west1,_ENV=dev,_SERVICE_NAME=blog-writer-api-dev \
+  --substitutions _REGION=europe-west9,_ENV=dev,_SERVICE_NAME=blog-writer-api-dev \
   --project=api-ai-blog-writer
 ```
 
-#### Option 3: Deploy Script
+**Note:** This will fail due to the safeguard we added. The safeguard checks for `BUILD_TRIGGER_ID` which manual builds don't have.
+
+### Option 2: Fix Trigger Configuration
+The trigger needs to be configured via Cloud Console or with proper connection details:
+
+1. Go to Cloud Console → Cloud Build → Triggers
+2. Create trigger for `develop` branch
+3. Use `cloudbuild.yaml` as build config
+4. Set substitutions:
+   - `_REGION=europe-west9`
+   - `_ENV=dev`
+   - `_SERVICE_NAME=blog-writer-api-dev`
+
+### Option 3: Temporarily Disable Safeguard
+If you need to deploy immediately, you can temporarily comment out the safeguard check in `cloudbuild.yaml`, deploy, then re-enable it.
+
+---
+
+## Safeguard Status
+
+✅ **Manual Build Prevention:** Active  
+The `cloudbuild.yaml` includes a check for `BUILD_TRIGGER_ID` to ensure only trigger-based builds proceed.
+
+---
+
+## Monitoring Script
+
+A monitoring script has been created: `check_and_monitor.sh`
+
+Run it to monitor deployments:
 ```bash
-./scripts/deploy-env.sh dev
+./check_and_monitor.sh
 ```
 
 ---
 
-## 🚀 Recent Changes Pushed
+## GitHub Status Update
 
-Latest commits pushed to `develop` branch:
-- ✅ Streaming endpoint fixes (final result message)
-- ✅ Discovery/SERP data always included
-- ✅ AI endpoints verification documentation
-- ✅ Frontend keyword data guides
+Once a successful build completes, the status will be saved to `deployment_status.json` with:
+- Build ID
+- Trigger ID (verification)
+- Service URL
+- Commit SHA
+- Build status
 
----
-
-## 📊 Deployment Configuration
-
-- **Service Name:** `blog-writer-api-dev`
-- **Region:** `europe-west1` (or `europe-west9` per Cloud Build trigger)
-- **Environment:** `dev`
-- **Project:** `api-ai-blog-writer`
-
----
-
-## ✅ Next Steps
-
-1. **Check Cloud Build Status:**
-   ```bash
-   gcloud builds list --project=api-ai-blog-writer --limit=5
-   ```
-
-2. **Check Service Status:**
-   ```bash
-   gcloud run services describe blog-writer-api-dev \
-     --region=europe-west1 \
-     --project=api-ai-blog-writer
-   ```
-
-3. **Get Service URL:**
-   ```bash
-   gcloud run services describe blog-writer-api-dev \
-     --region=europe-west1 \
-     --project=api-ai-blog-writer \
-     --format="value(status.url)"
-   ```
-
-4. **Test Deployment:**
-   ```bash
-   curl https://YOUR_SERVICE_URL/health
-   ```
-
----
-
-## 📝 Notes
-
-- The workflow file indicates Cloud Build trigger handles automatic deployment
-- If automatic deployment doesn't work, use manual trigger options above
-- All changes have been committed and pushed to `develop` branch
