@@ -63,7 +63,7 @@ class StabilityAIProvider(BaseImageProvider):
         self._default_model = kwargs.get("default_model", "stable-diffusion-xl-1024-v1-0")
         self.timeout = kwargs.get("timeout", 120)
         self._session = None
-        
+    
         # Model mapping for quality levels
         # Note: For draft, we use the same model but with fewer steps and lower cfg_scale
         # This provides faster generation while maintaining compatibility
