@@ -1,5 +1,22 @@
 # Google Cloud Build configuration for Blog Writer SDK
+# IMPORTANT: This build should only be triggered via Cloud Build triggers, not manually.
+# Manual builds are prevented by requiring trigger-specific substitution variables.
+
 steps:
+  # Verify this is a trigger-based build (not manual)
+  # Triggers set specific substitution variables that manual builds don't have
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        if [ -z "$${_SERVICE_NAME}" ] || [ "$${_SERVICE_NAME}" = "blog-writer-api-dev" ] && [ -z "$${_ENV}" ]; then
+          echo "ERROR: This build must be triggered via Cloud Build trigger, not manually."
+          echo "Manual builds are not allowed. Please use the configured Cloud Build trigger."
+          exit 1
+        fi
+        echo "✅ Build triggered via Cloud Build trigger ($${_SERVICE_NAME} in $${_ENV})"
+  
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
     args: [
