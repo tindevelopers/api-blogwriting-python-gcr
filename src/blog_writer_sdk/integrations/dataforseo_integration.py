@@ -767,7 +767,7 @@ class DataForSEOClient:
                         elif item_type == "related_searches":
                             related_items = item.get("items", [])
                             if isinstance(related_items, list):
-                            for related_item in related_items:
+                                for related_item in related_items:
                                     if not isinstance(related_item, dict):
                                         logger.warning(f"Related search item is not a dict: {type(related_item)}")
                                         continue
