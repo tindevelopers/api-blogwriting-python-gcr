@@ -32,7 +32,8 @@ COPY . .
 
 # Create non-root user for security
 RUN adduser --disabled-password --gecos '' --uid 1000 appuser \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app \
+    && chmod -R a+rX /usr/local/lib/python3.11/site-packages || true
 USER appuser
 
 # Expose port
