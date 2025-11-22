@@ -178,16 +178,17 @@ interface AITopicSuggestionsResponse {
     topic: string;                    // Full blog post idea (e.g., "Complete Guide to Concrete Remediation")
     source_keyword: string;            // Primary keyword for the topic
     ai_search_volume: number;          // AI search volume (0 if not available)
+    ai_optimization_score: number;     // NEW: AI optimization score (0-100)
     mentions: number;                  // LLM mentions count
-    search_volume: number;             // NEW: Traditional search volume
-    difficulty: number;                // NEW: Keyword difficulty (0-100)
-    competition: number;               // NEW: Competition level (0-1)
-    cpc: number;                       // NEW: Cost per click
-    ranking_score: number;             // NEW: Ranking score (0-100)
-    opportunity_score: number;         // NEW: Opportunity score (0-100)
-    estimated_traffic: number;         // NEW: Estimated monthly traffic potential
-    reason: string;                    // NEW: Why this topic would rank well
-    related_keywords: string[];        // NEW: Related keywords (up to 5)
+    search_volume: number;             // Traditional search volume
+    difficulty: number;                // Keyword difficulty (0-100)
+    competition: number;               // Competition level (0-1)
+    cpc: number;                       // Cost per click
+    ranking_score: number;             // Ranking score (0-100)
+    opportunity_score: number;         // Opportunity score (0-100)
+    estimated_traffic: number;         // Estimated monthly traffic potential
+    reason: string;                    // Why this topic would rank well
+    related_keywords: string[];        // Related keywords (up to 5)
     url?: string;                      // If from top_cited_pages
     source: "ai_generated" | "llm_mentions" | "top_cited_pages" | "llm_responses";
     confidence?: "high" | "medium" | "low";
