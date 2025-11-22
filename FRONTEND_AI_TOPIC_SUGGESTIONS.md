@@ -151,15 +151,21 @@ POST /api/v1/keywords/ai-topic-suggestions
 
 ```typescript
 interface AITopicSuggestionsRequest {
-  keywords: string[];                // 1-10 seed keywords
-  location?: string;                 // Default: "United States"
-  language?: string;                  // Default: "en"
+  keywords?: string[];                // OPTIONAL: 1-10 seed keywords (required if content_objective not provided)
+  content_objective?: string;         // NEW: Content objective text to extract keywords from (e.g., "I want to write articles about concrete remediation")
+  target_audience?: string;           // NEW: Target audience description (e.g., "general consumers")
+  industry?: string;                  // NEW: Industry/niche (e.g., "Construction")
+  content_goals?: string[];           // NEW: Content goals (e.g., ["SEO & Rankings", "Engagement"])
+  location?: string;                  // Default: "United States"
+  language?: string;                   // Default: "en"
   include_ai_search_volume?: boolean; // Default: true
   include_llm_mentions?: boolean;     // Default: true
   include_llm_responses?: boolean;    // Default: false (costs more)
   limit?: number;                     // Default: 50, Max: 200
 }
 ```
+
+**Note**: Either `keywords` OR `content_objective` must be provided. If `content_objective` is provided, keywords will be automatically extracted from it.
 
 ### Response Structure
 
@@ -169,12 +175,21 @@ interface AITopicSuggestionsResponse {
   location: string;
   language: string;
   topic_suggestions: Array<{
-    topic: string;
-    source_keyword: string;
-    ai_search_volume: number;
-    mentions: number;
-    url?: string;  // If from top_cited_pages
-    source: "llm_mentions" | "top_cited_pages" | "llm_responses";
+    topic: string;                    // Full blog post idea (e.g., "Complete Guide to Concrete Remediation")
+    source_keyword: string;            // Primary keyword for the topic
+    ai_search_volume: number;          // AI search volume (0 if not available)
+    mentions: number;                  // LLM mentions count
+    search_volume: number;             // NEW: Traditional search volume
+    difficulty: number;                // NEW: Keyword difficulty (0-100)
+    competition: number;               // NEW: Competition level (0-1)
+    cpc: number;                       // NEW: Cost per click
+    ranking_score: number;             // NEW: Ranking score (0-100)
+    opportunity_score: number;         // NEW: Opportunity score (0-100)
+    estimated_traffic: number;         // NEW: Estimated monthly traffic potential
+    reason: string;                    // NEW: Why this topic would rank well
+    related_keywords: string[];        // NEW: Related keywords (up to 5)
+    url?: string;                      // If from top_cited_pages
+    source: "ai_generated" | "llm_mentions" | "top_cited_pages" | "llm_responses";
     confidence?: "high" | "medium" | "low";
   }>;
   content_gaps: Array<{
@@ -195,15 +210,19 @@ interface AITopicSuggestionsResponse {
   };
   summary: {
     total_suggestions: number;
+    high_priority_topics: number;      // NEW: High priority topics count
+    trending_topics: number;           // NEW: Trending topics count
+    low_competition_topics: number;    // NEW: Low competition topics count
     content_gaps_count: number;
     citation_opportunities_count: number;
-    top_sources: Record<string, number>;
+    top_sources?: Record<string, number>;
   };
 }
 ```
 
-### Example Request
+### Example Requests
 
+**Option 1: Using Keywords (Existing Method)**
 ```typescript
 const response = await fetch('/api/v1/keywords/ai-topic-suggestions', {
   method: 'POST',
@@ -220,6 +239,28 @@ const response = await fetch('/api/v1/keywords/ai-topic-suggestions', {
 });
 
 const data = await response.json();
+```
+
+**Option 2: Using Content Objective (NEW - Recommended)**
+```typescript
+const response = await fetch('/api/v1/keywords/ai-topic-suggestions', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    content_objective: 'I want to write articles about concrete remediation or construction remediation',
+    target_audience: 'general consumers',
+    industry: 'Construction',
+    content_goals: ['SEO & Rankings', 'Engagement'],
+    location: 'United States',
+    language: 'en',
+    include_ai_search_volume: true,
+    include_llm_mentions: true,
+    limit: 50
+  })
+});
+
+const data = await response.json();
+// Keywords will be automatically extracted: ['concrete remediation', 'construction remediation']
 ```
 
 ---
