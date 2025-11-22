@@ -4744,9 +4744,9 @@ async def get_ai_topic_suggestions(
             "ai_metrics": ai_metrics,
             "summary": {
                 "total_suggestions": len(topic_suggestions),
-                "high_priority_topics": len(topic_result.high_priority_topics),
-                "trending_topics": len(topic_result.trending_topics),
-                "low_competition_topics": len(topic_result.low_competition_topics),
+                "high_priority_topics": len(getattr(topic_result, 'high_priority_topics', [])) if topic_result else 0,
+                "trending_topics": len(getattr(topic_result, 'trending_topics', [])) if topic_result else 0,
+                "low_competition_topics": len(getattr(topic_result, 'low_competition_topics', [])) if topic_result else 0,
                 "content_gaps_count": 0,
                 "citation_opportunities_count": 0
             }
