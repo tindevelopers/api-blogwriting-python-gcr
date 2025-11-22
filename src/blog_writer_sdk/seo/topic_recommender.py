@@ -170,7 +170,8 @@ class TopicRecommendationEngine:
         if self.google_search:
             try:
                 gap_topics = await self._find_content_gaps(seed_keywords)
-                all_topics.extend(gap_topics)
+                if gap_topics:
+                    all_topics.extend(gap_topics)
             except Exception as e:
                 logger.warning(f"Content gap analysis failed: {e}")
         
@@ -180,7 +181,8 @@ class TopicRecommendationEngine:
                 ai_topics = await self._generate_ai_topics(
                     seed_keywords, location, language
                 )
-                all_topics.extend(ai_topics)
+                if ai_topics:
+                    all_topics.extend(ai_topics)
             except Exception as e:
                 logger.warning(f"AI topic generation failed: {e}")
         
