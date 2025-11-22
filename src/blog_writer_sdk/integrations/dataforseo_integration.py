@@ -751,11 +751,11 @@ class DataForSEOClient:
                         elif item_type == "images":
                             image_items = item.get("items", [])
                             if isinstance(image_items, list):
-                            for image_item in image_items:
+                                for image_item in image_items:
                                     if not isinstance(image_item, dict):
                                         logger.warning(f"Image item is not a dict: {type(image_item)}")
                                         continue
-                                result["image_results"].append({
+                                    result["image_results"].append({
                                     "title": image_item.get("title", ""),
                                     "url": image_item.get("url", ""),
                                     "image_url": image_item.get("image_url", ""),
