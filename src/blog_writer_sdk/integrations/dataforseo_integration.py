@@ -462,10 +462,15 @@ class DataForSEOClient:
             
             data = await self._make_request("keywords_data/ai_optimization/search_volume/live", payload, tenant_id)
             
-            # Debug: Log response structure for troubleshooting
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                sample_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
-                logger.debug(f"DataForSEO AI optimization response structure: {list(sample_result.keys())}")
+            # Debug: Log full response structure for troubleshooting
+            logger.info(f"DataForSEO AI optimization API response: status_code={data.get('status_code')}, tasks_count={len(data.get('tasks', []))}")
+            if data.get("tasks") and len(data["tasks"]) > 0:
+                task = data["tasks"][0]
+                logger.info(f"Task status_code: {task.get('status_code')}, result_count: {len(task.get('result', []))}")
+                if task.get("result") and len(task["result"]) > 0:
+                    sample_result = task["result"][0]
+                    logger.info(f"Sample result keys: {list(sample_result.keys())}")
+                    logger.info(f"Sample result (first 500 chars): {str(sample_result)[:500]}")
             
             # Process response
             results = {}
@@ -477,22 +482,36 @@ class DataForSEOClient:
                     ai_search_volume = 0
                     ai_monthly_searches = []
                     
-                    # Try different response formats
-                    if "ai_search_volume" in item:
-                        ai_data = item.get("ai_search_volume", {})
-                        if isinstance(ai_data, dict):
-                            ai_search_volume = ai_data.get("search_volume", 0) or 0
-                        elif isinstance(ai_data, (int, float)):
-                            ai_search_volume = int(ai_data)
+                    # DataForSEO AI optimization endpoint returns data in keyword_data structure
+                    keyword_data = item.get("keyword_data", {})
+                    if keyword_data:
+                        keyword_info = keyword_data.get("keyword_info", {})
+                        if keyword_info:
+                            # Check for ai_search_volume in keyword_info
+                            ai_search_volume = keyword_info.get("ai_search_volume", 0) or 0
+                            # Check for monthly_searches array
+                            ai_monthly_searches = keyword_info.get("monthly_searches", [])
+                    
+                    # Fallback: Try different response formats
+                    if ai_search_volume == 0:
+                        if "ai_search_volume" in item:
+                            ai_data = item.get("ai_search_volume", {})
+                            if isinstance(ai_data, dict):
+                                ai_search_volume = ai_data.get("search_volume", 0) or 0
+                            elif isinstance(ai_data, (int, float)):
+                                ai_search_volume = int(ai_data)
                     
                     # Also check for direct search_volume field (some APIs return it directly)
                     if ai_search_volume == 0 and "search_volume" in item:
                         ai_search_volume = item.get("search_volume", 0) or 0
                     
-                    # Get monthly searches
-                    ai_monthly_searches = item.get("ai_monthly_searches", [])
-                    if not ai_monthly_searches and "monthly_searches" in item:
-                        ai_monthly_searches = item.get("monthly_searches", [])
+                    # Get monthly searches (fallback)
+                    if not ai_monthly_searches:
+                        ai_monthly_searches = item.get("ai_monthly_searches", [])
+                        if not ai_monthly_searches and "monthly_searches" in item:
+                            ai_monthly_searches = item.get("monthly_searches", [])
+                    
+                    logger.debug(f"Keyword '{keyword}': ai_search_volume={ai_search_volume}, monthly_searches_count={len(ai_monthly_searches)}")
                     
                     # Ensure numeric types
                     try:
