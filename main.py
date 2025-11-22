@@ -219,7 +219,11 @@ class LLMMentionsRequest(BaseModel):
 
 class AITopicSuggestionsRequest(BaseModel):
     """Request model for AI topic suggestions."""
-    keywords: List[str] = Field(..., min_items=1, max_length=10, description="Seed keywords for topic discovery")
+    keywords: Optional[List[str]] = Field(None, max_length=10, description="Seed keywords for topic discovery (optional if content_objective provided)")
+    content_objective: Optional[str] = Field(None, max_length=500, description="Content objective text to extract keywords from")
+    target_audience: Optional[str] = Field(None, max_length=200, description="Target audience description")
+    industry: Optional[str] = Field(None, max_length=100, description="Industry/niche")
+    content_goals: Optional[List[str]] = Field(None, description="Content goals (e.g., ['SEO & Rankings', 'Engagement'])")
     location: Optional[str] = Field("United States", description="Location for analysis")
     language: Optional[str] = Field("en", description="Language code")
     include_ai_search_volume: bool = Field(default=True, description="Include AI search volume data")
