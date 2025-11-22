@@ -4509,6 +4509,43 @@ async def get_ai_topic_suggestions(
     - AI search volume and mention metrics
     """
     try:
+        # Extract keywords from content objective if not provided
+        seed_keywords = request.keywords or []
+        if not seed_keywords and request.content_objective:
+            # Extract meaningful keywords from content objective
+            import re
+            # Remove common stop words and extract meaningful phrases
+            objective_text = request.content_objective.lower()
+            # Extract 2-4 word phrases that are likely keywords
+            words = re.findall(r'\b\w+\b', objective_text)
+            # Filter out common stop words
+            stop_words = {'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can'}
+            meaningful_words = [w for w in words if w not in stop_words and len(w) > 3]
+            
+            # Create keyword phrases (2-3 words)
+            if len(meaningful_words) >= 2:
+                # Take first 2-3 meaningful phrases
+                seed_keywords = []
+                for i in range(len(meaningful_words) - 1):
+                    phrase = f"{meaningful_words[i]} {meaningful_words[i+1]}"
+                    if len(phrase.split()) == 2:
+                        seed_keywords.append(phrase)
+                    if len(seed_keywords) >= 3:
+                        break
+                # Also add individual important words
+                if len(seed_keywords) < 3:
+                    seed_keywords.extend(meaningful_words[:3-len(seed_keywords)])
+            else:
+                seed_keywords = meaningful_words[:3]
+            
+            logger.info(f"Extracted keywords from content objective: {seed_keywords}")
+        
+        if not seed_keywords:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'keywords' or 'content_objective' must be provided"
+            )
+        
         # Detect location from IP if not explicitly specified
         detected_location = None
         if not request.location or request.location == "United States":
@@ -4520,43 +4557,122 @@ async def get_ai_topic_suggestions(
         effective_location = detected_location or request.location or "United States"
         tenant_id = os.getenv("TENANT_ID", "default")
         
-        if not enhanced_analyzer or not enhanced_analyzer._df_client:
-            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+        # Use TopicRecommendationEngine for AI-powered topic generation
+        global topic_recommender, ai_generator
+        if not topic_recommender:
+            raise HTTPException(status_code=503, detail="Topic recommendation engine not available")
         
-        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        # Get AI-powered topic recommendations
+        topic_result = await topic_recommender.recommend_topics(
+            seed_keywords=seed_keywords[:5],  # Limit to 5 seed keywords
+            location=effective_location,
+            language=request.language or "en",
+            max_topics=request.limit,
+            min_search_volume=100,
+            max_difficulty=70.0,
+            include_ai_suggestions=True  # Use AI for topic generation
+        )
         
-        if not enhanced_analyzer._df_client.is_configured:
-            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+        # Convert RecommendedTopic objects to response format
+        topic_suggestions = []
+        for topic in topic_result.recommended_topics:
+            topic_suggestion = {
+                "topic": topic.topic,  # Full blog post idea from AI
+                "source_keyword": topic.primary_keyword,
+                "ai_search_volume": 0,  # Will be populated below if available
+                "mentions": 0,
+                "search_volume": topic.search_volume,
+                "difficulty": topic.difficulty,
+                "competition": topic.competition,
+                "cpc": topic.cpc,
+                "ranking_score": topic.ranking_score,
+                "opportunity_score": topic.opportunity_score,
+                "estimated_traffic": topic.estimated_traffic,
+                "reason": topic.reason,
+                "related_keywords": topic.related_keywords[:5],
+                "source": "ai_generated"
+            }
+            topic_suggestions.append(topic_suggestion)
         
-        df_client = enhanced_analyzer._df_client
-        results = {
-            "seed_keywords": request.keywords,
-            "location": effective_location,
-            "language": request.language,
-            "topic_suggestions": [],
-            "content_gaps": [],
-            "citation_opportunities": [],
-            "ai_metrics": {}
-        }
+        # Get AI search volume and LLM mentions for seed keywords (for metrics)
+        df_client = enhanced_analyzer._df_client if enhanced_analyzer else None
+        ai_metrics = {}
         
-        # 1. Get AI Search Volume for seed keywords
-        ai_search_volume_data = {}
-        if request.include_ai_search_volume:
+        if df_client and request.include_ai_search_volume:
             try:
-                ai_search_volume_data = await df_client.get_ai_search_volume(
-                    keywords=request.keywords,
-                    location_name=effective_location,
-                    language_code=request.language,
-                    tenant_id=tenant_id
-                )
-                results["ai_metrics"]["search_volume"] = ai_search_volume_data
+                await df_client.initialize_credentials(tenant_id)
+                if df_client.is_configured:
+                    ai_search_volume_data = await df_client.get_ai_search_volume(
+                        keywords=seed_keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language or "en",
+                        tenant_id=tenant_id
+                    )
+                    ai_metrics["search_volume"] = ai_search_volume_data
+                    
+                    # Update topic suggestions with AI search volume
+                    for suggestion in topic_suggestions:
+                        keyword = suggestion["source_keyword"]
+                        if keyword in ai_search_volume_data:
+                            suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
             except Exception as e:
                 logger.warning(f"Failed to get AI search volume: {e}")
         
-        # 2. Get LLM Mentions for each seed keyword
-        llm_mentions_data = {}
-        if request.include_llm_mentions:
-            for keyword in request.keywords:
+        if df_client and request.include_llm_mentions:
+            try:
+                await df_client.initialize_credentials(tenant_id)
+                if df_client.is_configured:
+                    llm_mentions_data = {}
+                    for keyword in seed_keywords[:3]:
+                        try:
+                            mentions = await df_client.get_llm_mentions_search(
+                                target=keyword,
+                                target_type="keyword",
+                                location_name=effective_location,
+                                language_code=request.language or "en",
+                                tenant_id=tenant_id,
+                                platform="chat_gpt",
+                                limit=20
+                            )
+                            llm_mentions_data[keyword] = mentions
+                        except Exception as e:
+                            logger.warning(f"Failed to get LLM mentions for {keyword}: {e}")
+                    ai_metrics["llm_mentions"] = llm_mentions_data
+            except Exception as e:
+                logger.warning(f"Failed to get LLM mentions: {e}")
+        
+        results = {
+            "seed_keywords": seed_keywords,
+            "content_objective": request.content_objective,
+            "target_audience": request.target_audience,
+            "industry": request.industry,
+            "content_goals": request.content_goals or [],
+            "location": effective_location,
+            "language": request.language or "en",
+            "topic_suggestions": topic_suggestions,
+            "content_gaps": [],  # Can be populated from LLM mentions analysis
+            "citation_opportunities": [],  # Can be populated from LLM mentions analysis
+            "ai_metrics": ai_metrics,
+            "summary": {
+                "total_suggestions": len(topic_suggestions),
+                "high_priority_topics": len(topic_result.high_priority_topics),
+                "trending_topics": len(topic_result.trending_topics),
+                "low_competition_topics": len(topic_result.low_competition_topics),
+                "content_gaps_count": 0,
+                "citation_opportunities_count": 0
+            }
+        }
+        
+        return results
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI topic suggestions failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI topic suggestions failed: {str(e)}"
+        )
                 try:
                     mentions = await df_client.get_llm_mentions_search(
                         target=keyword,
