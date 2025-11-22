@@ -4635,8 +4635,8 @@ async def get_ai_topic_suggestions(
                 "ranking_score": topic.ranking_score,
                 "opportunity_score": topic.opportunity_score,
                 "estimated_traffic": topic.estimated_traffic,
-                "reason": topic.reason,
-                "related_keywords": topic.related_keywords[:5],
+                "reason": getattr(topic, 'reason', ''),
+                "related_keywords": (getattr(topic, 'related_keywords', []) or [])[:5],
                 "source": "ai_generated"
             }
             topic_suggestions.append(topic_suggestion)
