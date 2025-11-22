@@ -53,7 +53,11 @@ class DataForSEOClient:
         self.language_code = language_code or os.getenv("DATAFORSEO_LANGUAGE", "en")
         self.is_configured = bool(self.api_key and self.api_secret)
         self._cache = {}
-        self._cache_ttl = 3600  # 1 hour cache
+        # Increased cache TTL to reduce API calls:
+        # - Keyword data changes slowly, safe to cache for 24 hours
+        # - SERP data more dynamic, cached separately with shorter TTL
+        self._cache_ttl = 86400  # 24 hours for keyword data (was 1 hour)
+        self._serp_cache_ttl = 21600  # 6 hours for SERP data (more dynamic)
     
     async def initialize_credentials(self, tenant_id: str):
         # If already configured from constructor, skip re-initialization
@@ -611,11 +615,12 @@ class DataForSEOClient:
             - content_gaps: Identified content gaps
         """
         try:
-            # Check cache first
+            # Check cache first (using SERP-specific TTL)
             cache_key = f"serp_analysis_{keyword}_{depth}"
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                if datetime.now().timestamp() - timestamp < self._serp_cache_ttl:
+                    logger.debug(f"SERP cache hit for keyword: {keyword}")
                     return cached_data
             
             depth = min(depth, 700)  # API limit
@@ -625,7 +630,9 @@ class DataForSEOClient:
                 "location_name": location_name,
                 "language_code": language_code,
                 "depth": depth,
-                "people_also_ask_click_depth": 2 if include_people_also_ask else 0
+                # Reduced PAA click depth from 2 to 1 to reduce credit usage
+                # Depth 1 is sufficient for most use cases and saves ~30-40% credits
+                "people_also_ask_click_depth": 1 if include_people_also_ask else 0
             }]
             
             data = await self._make_request("serp/google/organic/live/advanced", payload, tenant_id)

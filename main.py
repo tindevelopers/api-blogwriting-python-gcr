@@ -4343,12 +4343,14 @@ async def generate_local_business_blog(
         if dataforseo_client_global and dataforseo_client_global.is_configured:
             try:
                 tenant_id = os.getenv("TENANT_ID", "default")
+                # Reduced SERP depth from 20 to 10 to reduce credit usage
+                # Depth 10 provides sufficient results while saving ~50% credits
                 serp_data = await dataforseo_client_global.get_serp_analysis(
                     keyword=request.topic,
                     location_name=request.location,
                     language_code="en",
                     tenant_id=tenant_id,
-                    depth=20
+                    depth=10  # Reduced from 20 to save credits
                 )
                 
                 # Extract businesses from organic results
