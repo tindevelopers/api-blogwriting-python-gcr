@@ -24,7 +24,8 @@ COPY pyproject.toml README.md ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e .
+    && pip install --no-cache-dir -e . \
+    && python -c "import pydantic; print('✅ Pydantic installed:', pydantic.__version__)" || (echo "❌ Pydantic installation failed" && exit 1)
 
 # Copy application code
 COPY . .
