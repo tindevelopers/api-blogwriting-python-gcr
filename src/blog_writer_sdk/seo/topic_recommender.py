@@ -145,10 +145,11 @@ class TopicRecommendationEngine:
                             suggestions_list = [s.get("keyword", "") for s in suggestions.get("items", [])[:30] if s.get("keyword")]
                         
                         # Combine and analyze
-                        candidate_keywords = suggestions_list + related_keywords_list
+                        candidate_keywords = (suggestions_list or []) + (related_keywords_list or [])
                         
                         # Analyze each candidate
-                        for keyword in set(candidate_keywords):
+                        if candidate_keywords:
+                            for keyword in set(candidate_keywords):
                             if not keyword or len(keyword) < 3:
                                 continue
                             
