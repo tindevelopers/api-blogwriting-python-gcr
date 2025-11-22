@@ -4665,8 +4665,8 @@ async def get_ai_topic_suggestions(
                             
                             # Try exact match first
                             if keyword in ai_search_volume_data:
-                            suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
-                        else:
+                                suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
+                            else:
                             # Try partial match - check if any seed keyword is contained in the topic keyword
                             matched = False
                             for seed_kw in seed_keywords:
