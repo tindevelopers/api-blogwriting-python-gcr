@@ -727,24 +727,24 @@ class DataForSEOClient:
                                         "title": paa_item.get("title", ""),
                                         "url": paa_item.get("url", ""),
                                         "description": paa_item.get("description", "")
-                                })
+                                    })
                             if paa_items:
                                 result["serp_features"]["has_people_also_ask"] = True
                         
                         elif item_type == "video":
                             video_items = item.get("items", [])
                             if isinstance(video_items, list):
-                            for video_item in video_items:
+                                for video_item in video_items:
                                     if not isinstance(video_item, dict):
                                         logger.warning(f"Video item is not a dict: {type(video_item)}")
                                         continue
-                                result["video_results"].append({
-                                    "title": video_item.get("title", ""),
-                                    "url": video_item.get("url", ""),
-                                    "description": video_item.get("description", ""),
-                                    "channel": video_item.get("channel", ""),
-                                    "duration": video_item.get("duration", "")
-                                })
+                                    result["video_results"].append({
+                                        "title": video_item.get("title", ""),
+                                        "url": video_item.get("url", ""),
+                                        "description": video_item.get("description", ""),
+                                        "channel": video_item.get("channel", ""),
+                                        "duration": video_item.get("duration", "")
+                                    })
                             if video_items:
                                 result["serp_features"]["has_videos"] = True
                         
