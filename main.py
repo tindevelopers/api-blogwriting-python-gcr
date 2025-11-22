@@ -4611,10 +4611,51 @@ async def get_ai_topic_suggestions(
                     ai_metrics["search_volume"] = ai_search_volume_data
                     
                     # Update topic suggestions with AI search volume
+                    # Try to match by exact keyword first, then by partial match
                     for suggestion in topic_suggestions:
                         keyword = suggestion["source_keyword"]
+                        
+                        # Try exact match first
                         if keyword in ai_search_volume_data:
                             suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
+                        else:
+                            # Try partial match - check if any seed keyword is contained in the topic keyword
+                            matched = False
+                            for seed_kw in seed_keywords:
+                                if seed_kw.lower() in keyword.lower() or keyword.lower() in seed_kw.lower():
+                                    if seed_kw in ai_search_volume_data:
+                                        suggestion["ai_search_volume"] = ai_search_volume_data[seed_kw].get("ai_search_volume", 0)
+                                        matched = True
+                                        break
+                            
+                            # If still no match, try getting AI search volume for the topic keyword itself
+                            if not matched and df_client:
+                                try:
+                                    topic_ai_data = await df_client.get_ai_search_volume(
+                                        keywords=[keyword],
+                                        location_name=effective_location,
+                                        language_code=request.language or "en",
+                                        tenant_id=tenant_id
+                                    )
+                                    if keyword in topic_ai_data:
+                                        suggestion["ai_search_volume"] = topic_ai_data[keyword].get("ai_search_volume", 0)
+                                except Exception as e:
+                                    logger.debug(f"Failed to get AI search volume for topic keyword '{keyword}': {e}")
+                        
+                        # Calculate AI optimization score for this topic
+                        ai_vol = suggestion.get("ai_search_volume", 0)
+                        if ai_vol > 0:
+                            # Calculate score similar to ai-optimization endpoint
+                            ai_score = min(50, math.log10(ai_vol + 1) * 10)
+                            # Add bonus for good traditional search volume
+                            if suggestion.get("search_volume", 0) > 1000:
+                                ai_score += 10
+                            # Add bonus for low difficulty
+                            if suggestion.get("difficulty", 100) < 50:
+                                ai_score += 10
+                            suggestion["ai_optimization_score"] = min(100, max(0, int(ai_score)))
+                        else:
+                            suggestion["ai_optimization_score"] = 0
             except Exception as e:
                 logger.warning(f"Failed to get AI search volume: {e}")
         
