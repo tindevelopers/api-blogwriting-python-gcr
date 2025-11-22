@@ -2051,7 +2051,7 @@ async def _build_keyword_discovery(
                 location_name=location,
                 language_code=language,
                 tenant_id=tenant_id,
-                depth=20
+                depth=10  # Reduced from 20 to save credits
             ),
             return_exceptions=True
         )
