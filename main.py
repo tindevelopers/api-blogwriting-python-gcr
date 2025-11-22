@@ -4623,23 +4623,27 @@ async def get_ai_topic_suggestions(
         # Convert RecommendedTopic objects to response format
         topic_suggestions = []
         for topic in recommended_topics:
-            topic_suggestion = {
-                "topic": topic.topic,  # Full blog post idea from AI
-                "source_keyword": topic.primary_keyword,
-                "ai_search_volume": 0,  # Will be populated below if available
-                "mentions": 0,
-                "search_volume": topic.search_volume,
-                "difficulty": topic.difficulty,
-                "competition": topic.competition,
-                "cpc": topic.cpc,
-                "ranking_score": topic.ranking_score,
-                "opportunity_score": topic.opportunity_score,
-                "estimated_traffic": topic.estimated_traffic,
-                "reason": getattr(topic, 'reason', ''),
-                "related_keywords": (getattr(topic, 'related_keywords', []) or [])[:5],
-                "source": "ai_generated"
-            }
-            topic_suggestions.append(topic_suggestion)
+            try:
+                topic_suggestion = {
+                    "topic": getattr(topic, 'topic', ''),
+                    "source_keyword": getattr(topic, 'primary_keyword', ''),
+                    "ai_search_volume": 0,  # Will be populated below if available
+                    "mentions": 0,
+                    "search_volume": getattr(topic, 'search_volume', 0),
+                    "difficulty": getattr(topic, 'difficulty', 0.0),
+                    "competition": getattr(topic, 'competition', 0.0),
+                    "cpc": getattr(topic, 'cpc', 0.0),
+                    "ranking_score": getattr(topic, 'ranking_score', 0.0),
+                    "opportunity_score": getattr(topic, 'opportunity_score', 0.0),
+                    "estimated_traffic": getattr(topic, 'estimated_traffic', 0),
+                    "reason": getattr(topic, 'reason', ''),
+                    "related_keywords": (getattr(topic, 'related_keywords', []) or [])[:5],
+                    "source": "ai_generated"
+                }
+                topic_suggestions.append(topic_suggestion)
+            except Exception as e:
+                logger.error(f"Error converting topic to suggestion: {e}", exc_info=True)
+                continue
         
         # Get AI search volume and LLM mentions for seed keywords (for metrics)
         df_client = enhanced_analyzer._df_client if enhanced_analyzer else None
