@@ -4519,24 +4519,45 @@ async def get_ai_topic_suggestions(
             # Extract 2-4 word phrases that are likely keywords
             words = re.findall(r'\b\w+\b', objective_text)
             # Filter out common stop words
-            stop_words = {'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can'}
-            meaningful_words = [w for w in words if w not in stop_words and len(w) > 3]
+            stop_words = {'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'create', 'review', 'each', 'could', 'my', 'competitor'}
+            meaningful_words = [w for w in words if w not in stop_words and len(w) > 2]  # Lowered from 3 to 2 to catch "miami"
             
-            # Create keyword phrases (2-3 words)
+            # Create keyword phrases (2-3 words) - prioritize location + service combinations
+            seed_keywords = []
+            
+            # First, extract location + service patterns (e.g., "plumbers in miami" -> "miami plumbers")
+            location_keywords = ['miami', 'florida', 'fl', 'city', 'area', 'near', 'local']
+            service_keywords = []
+            for word in meaningful_words:
+                if word not in location_keywords:
+                    service_keywords.append(word)
+            
+            # Create location + service combinations
+            for service in service_keywords[:3]:
+                for location in location_keywords[:2]:
+                    if location in objective_text.lower():
+                        seed_keywords.append(f"{location} {service}")
+                        seed_keywords.append(f"{service} {location}")
+            
+            # Also create 2-word phrases from meaningful words
             if len(meaningful_words) >= 2:
-                # Take first 2-3 meaningful phrases
-                seed_keywords = []
                 for i in range(len(meaningful_words) - 1):
                     phrase = f"{meaningful_words[i]} {meaningful_words[i+1]}"
-                    if len(phrase.split()) == 2:
+                    if len(phrase.split()) == 2 and phrase not in seed_keywords:
                         seed_keywords.append(phrase)
-                    if len(seed_keywords) >= 3:
+                    if len(seed_keywords) >= 5:
                         break
-                # Also add individual important words
-                if len(seed_keywords) < 3:
-                    seed_keywords.extend(meaningful_words[:3-len(seed_keywords)])
-            else:
-                seed_keywords = meaningful_words[:3]
+            
+            # Add individual important words if we don't have enough
+            if len(seed_keywords) < 3:
+                seed_keywords.extend([w for w in meaningful_words[:5] if w not in seed_keywords])
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            seed_keywords = [kw for kw in seed_keywords if kw not in seen and not seen.add(kw)]
+            
+            # Limit to 5 keywords
+            seed_keywords = seed_keywords[:5]
             
             logger.info(f"Extracted keywords from content objective: {seed_keywords}")
         
@@ -4569,8 +4590,8 @@ async def get_ai_topic_suggestions(
                 location=effective_location,
                 language=request.language or "en",
                 max_topics=request.limit,
-                min_search_volume=100,
-                max_difficulty=70.0,
+                min_search_volume=10,  # Lowered from 100 to 10 to get more results
+                max_difficulty=80.0,  # Increased from 70.0 to 80.0 to include more topics
                 include_ai_suggestions=True  # Use AI for topic generation
             )
         except Exception as e:
