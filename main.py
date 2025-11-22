@@ -4563,19 +4563,45 @@ async def get_ai_topic_suggestions(
             raise HTTPException(status_code=503, detail="Topic recommendation engine not available")
         
         # Get AI-powered topic recommendations
-        topic_result = await topic_recommender.recommend_topics(
-            seed_keywords=seed_keywords[:5],  # Limit to 5 seed keywords
-            location=effective_location,
-            language=request.language or "en",
-            max_topics=request.limit,
-            min_search_volume=100,
-            max_difficulty=70.0,
-            include_ai_suggestions=True  # Use AI for topic generation
-        )
+        try:
+            topic_result = await topic_recommender.recommend_topics(
+                seed_keywords=seed_keywords[:5],  # Limit to 5 seed keywords
+                location=effective_location,
+                language=request.language or "en",
+                max_topics=request.limit,
+                min_search_volume=100,
+                max_difficulty=70.0,
+                include_ai_suggestions=True  # Use AI for topic generation
+            )
+        except Exception as e:
+            logger.error(f"Topic recommendation engine failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Topic recommendation failed: {str(e)}"
+            )
+        
+        # Validate topic_result
+        if not topic_result:
+            logger.warning("Topic recommendation engine returned None")
+            topic_result = type('TopicRecommendationResult', (), {
+                'recommended_topics': [],
+                'total_opportunities': 0,
+                'high_priority_topics': [],
+                'trending_topics': [],
+                'low_competition_topics': [],
+                'analysis_date': datetime.now().isoformat()
+            })()
+        
+        # Ensure recommended_topics is a list
+        if not hasattr(topic_result, 'recommended_topics') or topic_result.recommended_topics is None:
+            logger.warning("topic_result.recommended_topics is None or missing")
+            recommended_topics = []
+        else:
+            recommended_topics = topic_result.recommended_topics
         
         # Convert RecommendedTopic objects to response format
         topic_suggestions = []
-        for topic in topic_result.recommended_topics:
+        for topic in recommended_topics:
             topic_suggestion = {
                 "topic": topic.topic,  # Full blog post idea from AI
                 "source_keyword": topic.primary_keyword,
