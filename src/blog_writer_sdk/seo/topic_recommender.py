@@ -804,12 +804,17 @@ Return only valid JSON, no markdown formatting."""
         topics: List[RecommendedTopic]
     ) -> List[RecommendedTopic]:
         """Remove duplicate topics based on primary keyword."""
+        if not topics:
+            return []
+        
         seen = set()
         unique = []
         
         for topic in topics:
-            key = topic.primary_keyword.lower().strip()
-            if key not in seen:
+            if not topic:
+                continue
+            key = getattr(topic, 'primary_keyword', '').lower().strip()
+            if key and key not in seen:
                 seen.add(key)
                 unique.append(topic)
         
