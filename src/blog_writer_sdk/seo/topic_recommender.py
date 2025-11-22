@@ -150,15 +150,15 @@ class TopicRecommendationEngine:
                         # Analyze each candidate
                         if candidate_keywords:
                             for keyword in set(candidate_keywords):
-                            if not keyword or len(keyword) < 3:
-                                continue
-                            
-                            topic = await self._analyze_topic_potential(
-                                keyword, location, language
-                            )
-                            
-                            if topic and self._meets_criteria(topic, min_search_volume, max_difficulty):
-                                all_topics.append(topic)
+                                if not keyword or len(keyword) < 3:
+                                    continue
+                                
+                                topic = await self._analyze_topic_potential(
+                                    keyword, location, language
+                                )
+                                
+                                if topic and self._meets_criteria(topic, min_search_volume, max_difficulty):
+                                    all_topics.append(topic)
                                 
                     except Exception as e:
                         logger.warning(f"Failed to get suggestions for {seed}: {e}")
