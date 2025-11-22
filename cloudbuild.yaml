@@ -4,15 +4,17 @@
 
 steps:
   # Verify this is a trigger-based build (not manual)
-  # Cloud Build triggers automatically set BUILD_TRIGGER_ID environment variable
-  # Manual builds don't have this variable, so we can detect them
+  # Cloud Build triggers automatically set substitution variables (_REGION, _ENV, _SERVICE_NAME)
+  # Manual builds don't have these variables set correctly, so we can detect them
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: bash
     args:
       - '-c'
       - |
-        # Check if BUILD_TRIGGER_ID is set (indicates trigger-based build)
-        if [ -z "$$BUILD_TRIGGER_ID" ]; then
+        # Check if trigger-specific substitution variables are set (indicates trigger-based build)
+        # Triggers set _REGION, _ENV, _SERVICE_NAME via trigger substitutions
+        # Manual builds typically don't set these or use default values
+        if [ -z "${_REGION}" ] || [ -z "${_ENV}" ] || [ -z "${_SERVICE_NAME}" ]; then
           echo "❌ ERROR: This build must be triggered via Cloud Build trigger, not manually."
           echo "Manual builds are not allowed. Please use the configured Cloud Build trigger."
           echo ""
@@ -21,8 +23,8 @@ steps:
           echo "  - Push to 'main' branch → Deploys to production environment"
           exit 1
         fi
-        echo "✅ Build triggered via Cloud Build trigger (ID: $${BUILD_TRIGGER_ID})"
-        echo "✅ Deploying $${_SERVICE_NAME} to $${_REGION} (env: $${_ENV})"
+        echo "✅ Build triggered via Cloud Build trigger"
+        echo "✅ Deploying ${_SERVICE_NAME} to ${_REGION} (env: ${_ENV})"
   
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
