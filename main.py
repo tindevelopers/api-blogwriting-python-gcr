@@ -4766,45 +4766,6 @@ async def get_ai_topic_suggestions(
             status_code=500,
             detail=f"AI topic suggestions failed: {str(e)}"
         )
-                        language_code=request.language,
-                        tenant_id=tenant_id,
-                        platform="chat_gpt",
-                        limit=request.limit
-                    )
-                    llm_mentions_data[keyword] = mentions
-                    
-                    # Extract topics from mentions
-                    if mentions.get("topics"):
-                        for topic in mentions["topics"][:10]:  # Top 10 topics per keyword
-                            topic_suggestion = {
-                                "topic": topic.get("topic", ""),
-                                "source_keyword": keyword,
-                                "ai_search_volume": topic.get("ai_search_volume", 0),
-                                "mentions": topic.get("mentions", 0),
-                                "source": "llm_mentions"
-                            }
-                            results["topic_suggestions"].append(topic_suggestion)
-                    
-                    # Extract top pages as topic opportunities
-                    if mentions.get("top_pages"):
-                        for page in mentions["top_pages"][:5]:
-                            if page.get("title"):
-                                topic_suggestion = {
-                                    "topic": page["title"],
-                                    "source_keyword": keyword,
-                                    "ai_search_volume": page.get("ai_search_volume", 0),
-                                    "mentions": page.get("mentions", 0),
-                                    "url": page.get("url", ""),
-                                    "source": "top_cited_pages"
-                                }
-                                results["topic_suggestions"].append(topic_suggestion)
-                
-                except Exception as e:
-                    logger.warning(f"Failed to get LLM mentions for {keyword}: {e}")
-            
-            results["ai_metrics"]["llm_mentions"] = llm_mentions_data
-        
-        # 3. Get LLM Responses for topic research (optional)
         if request.include_llm_responses:
             for keyword in request.keywords[:3]:  # Limit to 3 keywords for cost control
                 try:
