@@ -2492,19 +2492,24 @@ class DataForSEOClient:
                 # Extract total_count from API response (this is the actual mentions count)
                 api_total_count = first_result.get("total_count", 0) or 0
                 
+                # Always use api_total_count if it's available and > 0, as it's the authoritative count
+                final_mentions_count = api_total_count if api_total_count > 0 else total_mentions
+                
                 if "aggregated_metrics" in first_result:
-                    metrics = first_result["aggregated_metrics"]
+                    metrics = first_result["aggregated_metrics"].copy()
                     result["ai_search_volume"] = metrics.get("ai_search_volume", 0) or total_ai_search_volume
-                    # Use total_count from API if aggregated_metrics mentions_count is 0
-                    result["mentions_count"] = metrics.get("mentions_count", 0) or api_total_count or total_mentions
+                    # Override mentions_count with api_total_count if it's available
+                    result["mentions_count"] = final_mentions_count
+                    # Update aggregated_metrics to reflect the correct count
+                    metrics["mentions_count"] = final_mentions_count
                     result["aggregated_metrics"] = metrics
                 else:
                     # Fallback to calculated values, but prefer API total_count
                     result["ai_search_volume"] = total_ai_search_volume
-                    result["mentions_count"] = api_total_count or total_mentions
+                    result["mentions_count"] = final_mentions_count
                     result["aggregated_metrics"] = {
                         "ai_search_volume": total_ai_search_volume,
-                        "mentions_count": api_total_count or total_mentions
+                        "mentions_count": final_mentions_count
                     }
                 
                 # Combine sources and search results as top pages (sources are more important - cited by LLMs)
