@@ -149,6 +149,10 @@ class TopicRecommendationEngine:
                         
                         # Analyze each candidate
                         if candidate_keywords:
+                            logger.info(f"Analyzing {len(set(candidate_keywords))} candidate keywords for seed '{seed}'")
+                            analyzed_count = 0
+                            filtered_count = 0
+                            added_count = 0
                             for keyword in set(candidate_keywords):
                                 if not keyword or len(keyword) < 3:
                                     continue
@@ -157,8 +161,18 @@ class TopicRecommendationEngine:
                                     keyword, location, language
                                 )
                                 
-                                if topic and self._meets_criteria(topic, min_search_volume, max_difficulty):
-                                    all_topics.append(topic)
+                                if topic:
+                                    analyzed_count += 1
+                                    if self._meets_criteria(topic, min_search_volume, max_difficulty):
+                                        all_topics.append(topic)
+                                        added_count += 1
+                                        logger.debug(f"✅ Topic added: {topic.topic} (volume={topic.search_volume}, difficulty={topic.difficulty:.1f})")
+                                    else:
+                                        filtered_count += 1
+                                        logger.debug(f"❌ Topic filtered: {topic.topic} (volume={topic.search_volume}<{min_search_volume} or difficulty={topic.difficulty:.1f}>{max_difficulty})")
+                            
+                            if analyzed_count > 0:
+                                logger.info(f"Seed '{seed}': {analyzed_count} analyzed, {filtered_count} filtered, {added_count} added")
                                 
                     except Exception as e:
                         logger.warning(f"Failed to get suggestions for {seed}: {e}")
@@ -759,10 +773,10 @@ Return only valid JSON, no markdown formatting."""
             )
             
             # Use provider_manager to generate content
+            # Note: model is set in AIRequest preferred_provider, not passed separately
             response = await self.ai_generator.provider_manager.generate_content(
                 request, 
-                preferred_provider="anthropic",
-                model="claude-3-5-sonnet-20241022"
+                preferred_provider="anthropic"
             )
             
             # Parse response
