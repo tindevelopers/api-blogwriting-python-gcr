@@ -101,12 +101,13 @@ class TopicRecommendationEngine:
         Returns:
             TopicRecommendationResult with recommended topics
         """
-        logger.info(f"Recommending topics for {len(seed_keywords)} seed keywords")
+        logger.info(f"🔍 Recommending topics for {len(seed_keywords)} seed keywords: {seed_keywords}")
         
         all_topics: List[RecommendedTopic] = []
         
         # Step 1: Get keyword suggestions from DataForSEO
         if self.df_client:
+            logger.info(f"✅ DataForSEO client available, starting keyword analysis...")
             try:
                 # Get related keywords and suggestions
                 for seed in seed_keywords[:5]:  # Limit to avoid too many API calls
@@ -144,8 +145,13 @@ class TopicRecommendationEngine:
                         elif isinstance(suggestions, dict) and "items" in suggestions:
                             suggestions_list = [s.get("keyword", "") for s in suggestions.get("items", [])[:30] if s.get("keyword")]
                         
+                        logger.info(f"📊 Seed '{seed}': {len(suggestions_list)} suggestions, {len(related_keywords_list)} related keywords")
+                        
                         # Combine and analyze
                         candidate_keywords = (suggestions_list or []) + (related_keywords_list or [])
+                        
+                        if not candidate_keywords:
+                            logger.warning(f"⚠️ No candidate keywords found for seed '{seed}'")
                         
                         # Analyze each candidate
                         if candidate_keywords:
