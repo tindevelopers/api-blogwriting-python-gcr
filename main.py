@@ -4212,6 +4212,502 @@ async def analyze_keywords_goal_based(
         )
 
 
+# Streaming version of goal-based analysis
+@app.post("/api/v1/keywords/goal-based-analysis/stream")
+async def analyze_keywords_goal_based_stream(
+    request: GoalBasedAnalysisRequest,
+    http_request: Request
+):
+    """
+    Streaming version of goal-based keyword analysis.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - initializing: Starting analysis
+    - detecting_location: Detecting user location
+    - analyzing_keywords: Analyzing primary keywords
+    - getting_search_volume: Getting search volume data
+    - getting_difficulty: Getting keyword difficulty
+    - getting_keyword_overview: Getting comprehensive keyword overview
+    - analyzing_serp: Analyzing SERP features (if requested)
+    - getting_llm_mentions: Getting LLM mentions (if requested)
+    - analyzing_content: Analyzing content (for Engagement/Brand Awareness)
+    - analyzing_intent: Analyzing search intent (for Engagement/Conversions)
+    - generating_recommendations: Generating recommendations
+    - completed: Final results
+    
+    Frontend can listen to these events to show real-time progress.
+    """
+    async def generate_stream():
+        try:
+            # Stage 1: Initializing
+            yield await stream_stage_update(
+                KeywordSearchStage.INITIALIZING,
+                5.0,
+                message=f"Initializing {request.content_goal.value} analysis..."
+            )
+            
+            # Stage 2: Detecting location
+            detected_location = None
+            if not request.location:
+                yield await stream_stage_update(
+                    KeywordSearchStage.DETECTING_LOCATION,
+                    10.0,
+                    message="Detecting location from IP..."
+                )
+                if http_request:
+                    detected_location = await detect_location_from_ip(http_request)
+                    if detected_location:
+                        yield await stream_stage_update(
+                            KeywordSearchStage.DETECTING_LOCATION,
+                            15.0,
+                            data={"detected_location": detected_location},
+                            message=f"Detected location: {detected_location}"
+                        )
+            
+            effective_location = request.location or detected_location or "United States"
+            tenant_id = os.getenv("TENANT_ID", "default")
+            
+            if not enhanced_analyzer or not enhanced_analyzer._df_client:
+                raise HTTPException(status_code=503, detail="DataForSEO client not available")
+            
+            await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+            
+            if not enhanced_analyzer._df_client.is_configured:
+                raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+            
+            df_client = enhanced_analyzer._df_client
+            results = {
+                "content_goal": request.content_goal.value,
+                "keywords": request.keywords,
+                "location": effective_location,
+                "language": request.language,
+                "analysis": {}
+            }
+            
+            # Route to goal-specific endpoints with streaming
+            if request.content_goal == ContentGoal.SEO_RANKINGS:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting SEO & Rankings analysis..."
+                )
+                
+                # Get search volume
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_SEARCH_VOLUME,
+                    30.0,
+                    message="Getting search volume data..."
+                )
+                search_volume_data = await df_client.get_search_volume_data(
+                    keywords=request.keywords,
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get difficulty
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_DIFFICULTY,
+                    50.0,
+                    message="Getting keyword difficulty scores..."
+                )
+                difficulty_data = await df_client.get_keyword_difficulty(
+                    keywords=request.keywords,
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get keyword overview
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_OVERVIEW,
+                    65.0,
+                    message="Getting comprehensive keyword overview..."
+                )
+                keyword_overview = {}
+                if request.keywords:
+                    keyword_overview = await df_client.get_keyword_overview(
+                        keywords=request.keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        75.0,
+                        message="Analyzing SERP features..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10
+                    )
+                
+                # Get LLM Mentions
+                llm_mentions = {}
+                if request.include_llm_mentions and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.GETTING_LLM_MENTIONS,
+                        85.0,
+                        message="Getting LLM mentions data..."
+                    )
+                    try:
+                        llm_mentions = await df_client.get_llm_mentions_search(
+                            target=request.keywords[0],
+                            target_type="keyword",
+                            location_name=effective_location,
+                            language_code=request.language,
+                            tenant_id=tenant_id,
+                            platform="auto",
+                            limit=30
+                        )
+                    except Exception as e:
+                        logger.warning(f"LLM mentions failed: {e}")
+                
+                # Generate recommendations
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating SEO recommendations..."
+                )
+                recommendations = _generate_seo_recommendations(search_volume_data, difficulty_data, llm_mentions)
+                
+                results["analysis"] = {
+                    "search_volume": search_volume_data,
+                    "difficulty": difficulty_data,
+                    "keyword_overview": keyword_overview,
+                    "serp_analysis": serp_analysis,
+                    "llm_mentions": llm_mentions,
+                    "recommendations": recommendations
+                }
+            
+            elif request.content_goal == ContentGoal.ENGAGEMENT:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting Engagement analysis..."
+                )
+                
+                # Get search intent
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_INTENT,
+                    30.0,
+                    message="Analyzing search intent..."
+                )
+                intent_data = await df_client.get_search_intent(
+                    keywords=request.keywords,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        50.0,
+                        message="Analyzing SERP for People Also Ask questions..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10,
+                        include_people_also_ask=True
+                    )
+                
+                # Get content analysis
+                content_analysis = {}
+                if request.include_content_analysis and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_CONTENT,
+                        70.0,
+                        message="Analyzing content sentiment and engagement..."
+                    )
+                    content_analysis = await df_client.analyze_content_search(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        limit=50
+                    )
+                
+                # Get LLM Mentions
+                llm_mentions = {}
+                if request.include_llm_mentions and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.GETTING_LLM_MENTIONS,
+                        85.0,
+                        message="Getting LLM mentions for engagement topics..."
+                    )
+                    try:
+                        llm_mentions = await df_client.get_llm_mentions_search(
+                            target=request.keywords[0],
+                            target_type="keyword",
+                            location_name=effective_location,
+                            language_code=request.language,
+                            tenant_id=tenant_id,
+                            platform="auto",
+                            limit=50
+                        )
+                    except Exception as e:
+                        logger.warning(f"LLM mentions failed: {e}")
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating engagement recommendations..."
+                )
+                recommendations = _generate_engagement_recommendations(intent_data, serp_analysis, content_analysis, llm_mentions)
+                
+                results["analysis"] = {
+                    "search_intent": intent_data,
+                    "serp_analysis": serp_analysis,
+                    "content_analysis": content_analysis,
+                    "llm_mentions": llm_mentions,
+                    "recommendations": recommendations
+                }
+            
+            elif request.content_goal == ContentGoal.CONVERSIONS:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting Conversions analysis..."
+                )
+                
+                # Get search volume (for CPC)
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_SEARCH_VOLUME,
+                    30.0,
+                    message="Getting search volume and CPC data..."
+                )
+                search_volume_data = await df_client.get_search_volume_data(
+                    keywords=request.keywords,
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get search intent (commercial)
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_INTENT,
+                    50.0,
+                    message="Analyzing commercial search intent..."
+                )
+                intent_data = await df_client.get_search_intent(
+                    keywords=request.keywords,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        65.0,
+                        message="Analyzing SERP for shopping results..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10
+                    )
+                
+                # Get keyword overview
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_OVERVIEW,
+                    75.0,
+                    message="Getting keyword overview for intent classification..."
+                )
+                keyword_overview = {}
+                if request.keywords:
+                    keyword_overview = await df_client.get_keyword_overview(
+                        keywords=request.keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                
+                # Get LLM Mentions
+                llm_mentions = {}
+                if request.include_llm_mentions and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.GETTING_LLM_MENTIONS,
+                        85.0,
+                        message="Getting LLM mentions for commercial topics..."
+                    )
+                    try:
+                        llm_mentions = await df_client.get_llm_mentions_search(
+                            target=request.keywords[0],
+                            target_type="keyword",
+                            location_name=effective_location,
+                            language_code=request.language,
+                            tenant_id=tenant_id,
+                            platform="auto",
+                            limit=30
+                        )
+                    except Exception as e:
+                        logger.warning(f"LLM mentions failed: {e}")
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating conversion recommendations..."
+                )
+                recommendations = _generate_conversion_recommendations(search_volume_data, intent_data, serp_analysis, llm_mentions)
+                
+                results["analysis"] = {
+                    "search_volume": search_volume_data,
+                    "search_intent": intent_data,
+                    "serp_analysis": serp_analysis,
+                    "keyword_overview": keyword_overview,
+                    "llm_mentions": llm_mentions,
+                    "recommendations": recommendations
+                }
+            
+            elif request.content_goal == ContentGoal.BRAND_AWARENESS:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting Brand Awareness analysis..."
+                )
+                
+                # Get content analysis
+                content_analysis = {}
+                if request.include_content_analysis and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_CONTENT,
+                        30.0,
+                        message="Analyzing content for brand mentions and sentiment..."
+                    )
+                    content_analysis = await df_client.analyze_content_search(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        limit=100
+                    )
+                    
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_CONTENT,
+                        50.0,
+                        message="Getting content summary..."
+                    )
+                    content_summary = await df_client.analyze_content_summary(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                    content_analysis["summary"] = content_summary
+                
+                # Get keyword overview
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_OVERVIEW,
+                    60.0,
+                    message="Getting keyword overview..."
+                )
+                keyword_overview = {}
+                if request.keywords:
+                    keyword_overview = await df_client.get_keyword_overview(
+                        keywords=request.keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        70.0,
+                        message="Analyzing SERP for competitor presence..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10
+                    )
+                
+                # Get keyword ideas
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_IDEAS,
+                    80.0,
+                    message="Getting brand + industry keyword ideas..."
+                )
+                keyword_ideas = {}
+                if request.keywords:
+                    keyword_ideas = await df_client.get_keyword_ideas(
+                        keywords=request.keywords[:3],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        limit=50
+                    )
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating brand awareness recommendations..."
+                )
+                recommendations = _generate_brand_awareness_recommendations(content_analysis, keyword_overview)
+                
+                results["analysis"] = {
+                    "content_analysis": content_analysis,
+                    "keyword_overview": keyword_overview,
+                    "serp_analysis": serp_analysis,
+                    "keyword_ideas": keyword_ideas,
+                    "recommendations": recommendations
+                }
+            
+            # Completed
+            yield await stream_stage_update(
+                KeywordSearchStage.COMPLETED,
+                100.0,
+                data={"result": results},
+                message=f"{request.content_goal.value} analysis completed successfully"
+            )
+            
+        except HTTPException as http_ex:
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": http_ex.detail, "status_code": http_ex.status_code},
+                message=f"Analysis failed: {http_ex.detail}"
+            )
+        except Exception as e:
+            logger.error(f"Goal-based streaming analysis failed: {e}", exc_info=True)
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"Analysis failed: {str(e)}"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 def _generate_seo_recommendations(
     search_volume_data: Dict,
     difficulty_data: Dict,
@@ -4770,6 +5266,303 @@ async def get_ai_topic_suggestions(
             status_code=500,
             detail=f"AI topic suggestions failed: {str(e)}"
         )
+
+
+# Streaming version of AI topic suggestions
+@app.post("/api/v1/keywords/ai-topic-suggestions/stream")
+async def get_ai_topic_suggestions_stream(
+    request: AITopicSuggestionsRequest,
+    http_request: Request
+):
+    """
+    Streaming version of AI topic suggestions.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - initializing: Starting AI topic research
+    - detecting_location: Detecting user location
+    - analyzing_keywords: Extracting/analyzing seed keywords
+    - getting_ai_search_volume: Getting AI search volume data
+    - getting_llm_mentions: Getting LLM mentions for each keyword
+    - getting_keyword_ideas: Getting keyword ideas and topics
+    - building_discovery: Building topic suggestions
+    - completed: Final results
+    
+    Frontend can listen to these events to show real-time progress.
+    """
+    async def generate_stream():
+        try:
+            # Stage 1: Initializing
+            yield await stream_stage_update(
+                KeywordSearchStage.INITIALIZING,
+                5.0,
+                message="Initializing AI topic research..."
+            )
+            
+            # Extract keywords from content objective if not provided
+            seed_keywords = request.keywords or []
+            if not seed_keywords and request.content_objective:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    10.0,
+                    message="Extracting keywords from content objective..."
+                )
+                import re
+                objective_text = request.content_objective.lower()
+                words = re.findall(r'\b\w+\b', objective_text)
+                stop_words = {'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'create', 'review', 'each', 'could', 'my', 'competitor'}
+                meaningful_words = [w for w in words if w not in stop_words and len(w) > 2]
+                
+                location_keywords = ['miami', 'florida', 'fl', 'city', 'area', 'near', 'local']
+                service_keywords = [w for w in meaningful_words if w not in location_keywords]
+                
+                for service in service_keywords[:3]:
+                    for location in location_keywords[:2]:
+                        if location in objective_text.lower():
+                            seed_keywords.append(f"{location} {service}")
+                            seed_keywords.append(f"{service} {location}")
+                
+                if len(meaningful_words) >= 2:
+                    for i in range(len(meaningful_words) - 1):
+                        phrase = f"{meaningful_words[i]} {meaningful_words[i+1]}"
+                        if len(phrase.split()) == 2 and phrase not in seed_keywords:
+                            seed_keywords.append(phrase)
+                        if len(seed_keywords) >= 5:
+                            break
+                
+                if len(seed_keywords) < 3:
+                    seed_keywords.extend([w for w in meaningful_words[:5] if w not in seed_keywords])
+                
+                seen = set()
+                seed_keywords = [kw for kw in seed_keywords if kw not in seen and not seen.add(kw)]
+                seed_keywords = seed_keywords[:5]
+            
+            if not seed_keywords:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Either 'keywords' or 'content_objective' must be provided"
+                )
+            
+            # Stage 2: Detecting location
+            detected_location = None
+            if not request.location:
+                yield await stream_stage_update(
+                    KeywordSearchStage.DETECTING_LOCATION,
+                    15.0,
+                    message="Detecting location from IP..."
+                )
+                if http_request:
+                    detected_location = await detect_location_from_ip(http_request)
+                    if detected_location:
+                        yield await stream_stage_update(
+                            KeywordSearchStage.DETECTING_LOCATION,
+                            20.0,
+                            data={"detected_location": detected_location},
+                            message=f"Detected location: {detected_location}"
+                        )
+            
+            effective_location = request.location or detected_location or "United States"
+            tenant_id = os.getenv("TENANT_ID", "default")
+            
+            # Stage 3: Getting topic recommendations
+            yield await stream_stage_update(
+                KeywordSearchStage.GETTING_KEYWORD_IDEAS,
+                25.0,
+                message="Getting AI-powered topic recommendations..."
+            )
+            
+            global topic_recommender
+            if not topic_recommender:
+                raise HTTPException(status_code=503, detail="Topic recommendation engine not available")
+            
+            try:
+                topic_result = await topic_recommender.recommend_topics(
+                    seed_keywords=seed_keywords[:5],
+                    location=effective_location,
+                    language=request.language or "en",
+                    max_topics=request.limit,
+                    min_search_volume=10,
+                    max_difficulty=80.0,
+                    include_ai_suggestions=True
+                )
+            except Exception as e:
+                logger.error(f"Topic recommendation engine failed: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Topic recommendation failed: {str(e)}"
+                )
+            
+            if not topic_result:
+                topic_result = type('TopicRecommendationResult', (), {
+                    'recommended_topics': [],
+                    'total_opportunities': 0,
+                    'high_priority_topics': [],
+                    'trending_topics': [],
+                    'low_competition_topics': [],
+                    'analysis_date': datetime.now().isoformat()
+                })()
+            
+            recommended_topics = getattr(topic_result, 'recommended_topics', []) or []
+            
+            # Stage 4: Converting topics to suggestions
+            yield await stream_stage_update(
+                KeywordSearchStage.BUILDING_DISCOVERY,
+                40.0,
+                message=f"Processing {len(recommended_topics)} topic suggestions..."
+            )
+            
+            topic_suggestions = []
+            for topic in recommended_topics:
+                try:
+                    topic_suggestion = {
+                        "topic": getattr(topic, 'topic', ''),
+                        "source_keyword": getattr(topic, 'primary_keyword', ''),
+                        "ai_search_volume": 0,
+                        "mentions": 0,
+                        "search_volume": getattr(topic, 'search_volume', 0),
+                        "difficulty": getattr(topic, 'difficulty', 0.0),
+                        "competition": getattr(topic, 'competition', 0.0),
+                        "cpc": getattr(topic, 'cpc', 0.0),
+                        "ranking_score": getattr(topic, 'ranking_score', 0.0),
+                        "opportunity_score": getattr(topic, 'opportunity_score', 0.0),
+                        "estimated_traffic": getattr(topic, 'estimated_traffic', 0),
+                        "reason": getattr(topic, 'reason', ''),
+                        "related_keywords": (getattr(topic, 'related_keywords', []) or [])[:5],
+                        "source": "ai_generated"
+                    }
+                    topic_suggestions.append(topic_suggestion)
+                except Exception as e:
+                    logger.error(f"Error converting topic: {e}", exc_info=True)
+                    continue
+            
+            # Stage 5: Getting AI search volume
+            df_client = enhanced_analyzer._df_client if enhanced_analyzer else None
+            ai_metrics = {}
+            
+            if df_client and request.include_ai_search_volume:
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_AI_SEARCH_VOLUME,
+                    50.0,
+                    message="Getting AI search volume data..."
+                )
+                try:
+                    await df_client.initialize_credentials(tenant_id)
+                    if df_client.is_configured:
+                        ai_search_volume_data = await df_client.get_ai_search_volume(
+                            keywords=seed_keywords[:5],
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id
+                        )
+                        ai_metrics["search_volume"] = ai_search_volume_data
+                        
+                        # Update topic suggestions with AI search volume
+                        if ai_search_volume_data:
+                            for suggestion in topic_suggestions:
+                                keyword = suggestion["source_keyword"]
+                                if keyword in ai_search_volume_data:
+                                    suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
+                except Exception as e:
+                    logger.warning(f"Failed to get AI search volume: {e}")
+            
+            # Stage 6: Getting LLM mentions
+            if df_client and request.include_llm_mentions:
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_LLM_MENTIONS,
+                    70.0,
+                    message="Getting LLM mentions data..."
+                )
+                try:
+                    await df_client.initialize_credentials(tenant_id)
+                    if df_client.is_configured:
+                        llm_mentions_data = {}
+                        for idx, keyword in enumerate(seed_keywords[:3]):
+                            yield await stream_stage_update(
+                                KeywordSearchStage.GETTING_LLM_MENTIONS,
+                                70.0 + (idx + 1) * 8.0,
+                                message=f"Getting LLM mentions for '{keyword}'..."
+                            )
+                            try:
+                                mentions = await df_client.get_llm_mentions_search(
+                                    target=keyword,
+                                    target_type="keyword",
+                                    location_name=effective_location,
+                                    language_code=request.language or "en",
+                                    tenant_id=tenant_id,
+                                    platform="auto",
+                                    limit=20
+                                )
+                                llm_mentions_data[keyword] = mentions
+                            except Exception as e:
+                                logger.warning(f"Failed to get LLM mentions for {keyword}: {e}")
+                        ai_metrics["llm_mentions"] = llm_mentions_data
+                except Exception as e:
+                    logger.warning(f"Failed to get LLM mentions: {e}")
+            
+            # Stage 7: Building final results
+            yield await stream_stage_update(
+                KeywordSearchStage.BUILDING_DISCOVERY,
+                95.0,
+                message="Building final results..."
+            )
+            
+            results = {
+                "seed_keywords": seed_keywords,
+                "content_objective": request.content_objective,
+                "target_audience": request.target_audience,
+                "industry": request.industry,
+                "content_goals": request.content_goals or [],
+                "location": {
+                    "used": effective_location,
+                    "detected": detected_location
+                },
+                "language": request.language or "en",
+                "topic_suggestions": topic_suggestions,
+                "content_gaps": [],
+                "citation_opportunities": [],
+                "ai_metrics": ai_metrics,
+                "summary": {
+                    "total_suggestions": len(topic_suggestions),
+                    "high_priority_topics": len(getattr(topic_result, 'high_priority_topics', [])) if topic_result else 0,
+                    "trending_topics": len(getattr(topic_result, 'trending_topics', [])) if topic_result else 0,
+                    "low_competition_topics": len(getattr(topic_result, 'low_competition_topics', [])) if topic_result else 0,
+                    "content_gaps_count": 0,
+                    "citation_opportunities_count": 0
+                }
+            }
+            
+            # Completed
+            yield await stream_stage_update(
+                KeywordSearchStage.COMPLETED,
+                100.0,
+                data={"result": results},
+                message=f"Found {len(topic_suggestions)} AI-optimized topic suggestions"
+            )
+            
+        except HTTPException as http_ex:
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": http_ex.detail, "status_code": http_ex.status_code},
+                message=f"AI topic suggestions failed: {http_ex.detail}"
+            )
+        except Exception as e:
+            logger.error(f"AI topic suggestions streaming failed: {e}", exc_info=True)
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"AI topic suggestions failed: {str(e)}"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 def _generate_llm_mentions_insights(

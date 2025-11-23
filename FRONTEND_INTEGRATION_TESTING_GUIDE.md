@@ -50,8 +50,11 @@ const defaultHeaders = {
 | Endpoint | Status | Cost/Request | Notes |
 |----------|--------|--------------|-------|
 | `/api/v1/keywords/ai-topic-suggestions` | ✅ Working | ~$0.12 | Requires `limit >= 10` |
+| `/api/v1/keywords/ai-topic-suggestions/stream` | ✅ **NEW** | ~$0.12 | Streaming with progress updates |
 | `/api/v1/keywords/ai-mentions` | ✅ Working | ~$0.12 | Platform fallback: `chat_gpt` → `google` |
 | `/api/v1/keywords/goal-based-analysis` | ✅ Working | ~$0.15-0.30 | Includes SERP when `include_serp: true` |
+| `/api/v1/keywords/goal-based-analysis/stream` | ✅ **NEW** | ~$0.15-0.30 | Streaming with progress updates |
+| `/api/v1/keywords/enhanced/stream` | ✅ Working | Variable | Streaming enhanced keyword analysis |
 | `/api/v1/generate` | ✅ Working | Variable | Basic content generation |
 | `/api/v1/blog/generate-enhanced` | ✅ Working | Variable | Multi-stage pipeline |
 
@@ -864,7 +867,123 @@ For issues or questions:
 
 ---
 
+## 🔄 Streaming Progress Updates
+
+### Available Streaming Endpoints
+
+All keyword research endpoints now support streaming progress updates via Server-Sent Events (SSE):
+
+1. **`/api/v1/keywords/ai-topic-suggestions/stream`** - AI topic suggestions with progress
+2. **`/api/v1/keywords/goal-based-analysis/stream`** - Goal-based analysis with progress
+3. **`/api/v1/keywords/enhanced/stream`** - Enhanced keyword analysis with progress
+
+### Frontend Implementation Example
+
+```typescript
+async function streamKeywordResearch(endpoint: string, request: any) {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request)
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+
+  if (!reader) {
+    throw new Error('Response body is not readable');
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    const lines = chunk.split('\n');
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const update = JSON.parse(line.slice(6));
+          
+          // Update UI with progress
+          console.log(`Stage: ${update.stage}, Progress: ${update.progress}%`);
+          if (update.message) {
+            console.log(`Message: ${update.message}`);
+          }
+          
+          // Handle completion
+          if (update.stage === 'completed' && update.data?.result) {
+            return update.data.result;
+          }
+          
+          // Handle errors
+          if (update.stage === 'error') {
+            throw new Error(update.data?.error || 'Unknown error');
+          }
+        } catch (e) {
+          console.error('Failed to parse SSE data:', e);
+        }
+      }
+    }
+  }
+}
+
+// Usage
+const results = await streamKeywordResearch(
+  '/api/v1/keywords/ai-topic-suggestions/stream',
+  {
+    keywords: ['python'],
+    location: 'United States',
+    language: 'en',
+    include_ai_search_volume: true,
+    include_llm_mentions: true,
+    limit: 10
+  }
+);
+```
+
+### Progress Stages
+
+**AI Topic Suggestions Stream:**
+- `initializing` (5%) - Starting AI topic research
+- `detecting_location` (15-20%) - Detecting user location
+- `analyzing_keywords` (10-25%) - Extracting/analyzing seed keywords
+- `getting_keyword_ideas` (25%) - Getting AI-powered topic recommendations
+- `building_discovery` (40-95%) - Processing topic suggestions
+- `getting_ai_search_volume` (50%) - Getting AI search volume data
+- `getting_llm_mentions` (70-94%) - Getting LLM mentions for each keyword
+- `completed` (100%) - Final results
+
+**Goal-Based Analysis Stream:**
+- `initializing` (5%) - Starting analysis
+- `detecting_location` (10-15%) - Detecting user location
+- `analyzing_keywords` (20%) - Analyzing primary keywords
+- `getting_search_volume` (30%) - Getting search volume data
+- `getting_difficulty` (50%) - Getting keyword difficulty
+- `getting_keyword_overview` (65-75%) - Getting comprehensive overview
+- `analyzing_serp` (75%) - Analyzing SERP features (if requested)
+- `getting_llm_mentions` (85%) - Getting LLM mentions (if requested)
+- `analyzing_content` (30-70%) - Analyzing content (for Engagement/Brand Awareness)
+- `analyzing_intent` (30-50%) - Analyzing search intent (for Engagement/Conversions)
+- `generating_recommendations` (95%) - Generating recommendations
+- `completed` (100%) - Final results
+
+---
+
 ## 🔄 Changelog
+
+### Version 1.3.7 (2025-11-23)
+- ✅ **NEW:** Added streaming endpoints for keyword research
+  - `/api/v1/keywords/ai-topic-suggestions/stream`
+  - `/api/v1/keywords/goal-based-analysis/stream`
+- ✅ Streaming provides real-time progress updates via SSE
+- ✅ Progress stages documented for frontend integration
+- ✅ Added streaming implementation examples
 
 ### Version 1.3.6 (2025-11-23)
 - ✅ Fixed `mentions_count` parsing (now uses `total_count` from API)
@@ -876,5 +995,5 @@ For issues or questions:
 ---
 
 **Last Updated:** 2025-11-23  
-**Status:** ✅ All endpoints tested and working
+**Status:** ✅ All endpoints tested and working, streaming endpoints available
 
