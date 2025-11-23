@@ -2223,7 +2223,7 @@ class DataForSEOClient:
         location_name: str = "United States",
         language_code: str = "en",
         tenant_id: str = "default",
-        platform: str = "chat_gpt",  # "chat_gpt" or "google"
+        platform: str = "chat_gpt",  # "chat_gpt" or "google" or "auto" for automatic fallback
         limit: int = 100,
         filters: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
@@ -2231,7 +2231,12 @@ class DataForSEOClient:
         Search for LLM mentions using DataForSEO AI Optimization API.
         
         This endpoint finds what topics, keywords, and URLs are being cited by AI agents
-        (ChatGPT, Claude, Gemini, Perplexity) in their responses.
+        (ChatGPT, Google AI/Gemini) in their responses.
+        
+        Platform fallback strategy:
+        - If platform="auto" or no results found: Try chat_gpt first, then google
+        - chat_gpt: Works best for United States (lower volume but available)
+        - google: Works for multiple locations (US, UK, Germany, Canada, Australia) with higher volume
         
         Critical for: Discovering AI-optimized topics and content gaps.
         
@@ -2239,9 +2244,9 @@ class DataForSEOClient:
             target: Keyword or domain to search for
             target_type: "keyword" or "domain"
             location_name: Location for analysis
-            language_code: Language code
+            language_code: Language code (not used by API but kept for compatibility)
             tenant_id: Tenant ID
-            platform: "chat_gpt" or "google"
+            platform: "chat_gpt", "google", or "auto" (auto tries chat_gpt then google)
             limit: Maximum number of results
             filters: Optional filters array
             
@@ -2254,6 +2259,7 @@ class DataForSEOClient:
             - top_domains: Top domains mentioned by LLMs
             - topics: Topics frequently mentioned
             - aggregated_metrics: Summary metrics
+            - platform: Platform used (chat_gpt or google)
         """
         try:
             # Build target object based on type
@@ -2264,179 +2270,98 @@ class DataForSEOClient:
             else:
                 target_obj = {"keyword": target}  # Default to keyword
             
-            # Note: AI optimization LLM mentions endpoint doesn't accept language_code parameter
-            payload = [{
-                "target": [target_obj],
-                "location_name": location_name,
-                "platform": platform,
-                "limit": limit
-            }]
+            # Determine platforms to try
+            platforms_to_try = []
+            if platform == "auto":
+                # Auto mode: Try chat_gpt first, then google
+                platforms_to_try = ["chat_gpt", "google"]
+            elif platform in ["chat_gpt", "google"]:
+                # Single platform specified
+                platforms_to_try = [platform]
+            else:
+                # Unknown platform, default to auto
+                logger.warning(f"Unknown platform '{platform}', using auto fallback")
+                platforms_to_try = ["chat_gpt", "google"]
             
-            # Add filters if provided
-            if filters:
-                payload[0]["filters"] = filters
+            # Try each platform until we get results
+            best_result = None
+            best_total_count = 0
+            last_error = None
             
-            data = await self._make_request("ai_optimization/llm_mentions/search/live", payload, tenant_id)
-            
-            # Debug: Log response structure
-            logger.info(f"LLM mentions API response: status_code={data.get('status_code')}, tasks_count={len(data.get('tasks', []))}")
-            if data.get("tasks") and len(data["tasks"]) > 0:
-                task = data["tasks"][0]
-                logger.info(f"LLM mentions task status_code: {task.get('status_code')}, status_message: {task.get('status_message')}, result_count: {len(task.get('result', []))}")
-                if task.get("result") and len(task["result"]) > 0:
-                    sample_result = task["result"][0]
-                    logger.info(f"LLM mentions result keys: {list(sample_result.keys())}")
-                    if "aggregated_metrics" in sample_result:
-                        metrics = sample_result.get("aggregated_metrics", {})
-                        logger.info(f"aggregated_metrics keys: {list(metrics.keys())}")
-                        logger.info(f"aggregated_metrics ai_search_volume: {metrics.get('ai_search_volume', 'N/A')}, mentions_count: {metrics.get('mentions_count', 'N/A')}")
-                    logger.info(f"LLM mentions sample result (first 1000 chars): {str(sample_result)[:1000]}")
-            
-            # Process response
-            result = {
-                "target": target,
-                "target_type": target_type,
-                "platform": platform,
-                "ai_search_volume": 0,
-                "mentions_count": 0,
-                "top_pages": [],
-                "top_domains": [],
-                "topics": [],
-                "aggregated_metrics": {},
-                "metadata": {}
-            }
-            
-            if data.get("tasks") and len(data["tasks"]) > 0:
-                task = data["tasks"][0]
-                task_result_list = task.get("result")
-                # Handle case where result is None or empty list
-                if task_result_list and isinstance(task_result_list, list) and len(task_result_list) > 0:
-                    # The API returns an array of results, each potentially containing platform-specific data
-                    # Aggregate data across all platforms/results
-                    total_ai_search_volume = 0
-                    total_mentions = 0
-                    all_sources = []
-                    all_search_results = []
+            for platform_to_try in platforms_to_try:
+                try:
+                    # Note: AI optimization LLM mentions endpoint doesn't accept language_code parameter
+                    payload = [{
+                        "target": [target_obj],
+                        "location_name": location_name,
+                        "platform": platform_to_try,
+                        "limit": limit
+                    }]
                     
-                    for task_result in task_result_list:
-                        # Extract AI search volume (can be at top level or in platform-specific data)
-                        # Use max instead of sum since each platform result represents the same keyword
-                        if "ai_search_volume" in task_result:
-                            ai_vol = task_result.get("ai_search_volume", 0) or 0
-                            total_ai_search_volume = max(total_ai_search_volume, ai_vol)
-                        
-                        # Extract monthly searches for trend calculation
-                        if "monthly_searches" in task_result:
-                            monthly_searches = task_result.get("monthly_searches", [])
-                            if monthly_searches and len(monthly_searches) > 0:
-                                # Use the most recent month's search volume
-                                latest = monthly_searches[0]
-                                if isinstance(latest, dict) and "search_volume" in latest:
-                                    total_ai_search_volume = max(total_ai_search_volume, latest.get("search_volume", 0))
-                        
-                        # Extract sources (cited URLs)
-                        if "sources" in task_result:
-                            sources = task_result.get("sources", [])
-                            for source in sources:
-                                if isinstance(source, dict):
-                                    page_data = {
-                                        "url": source.get("url", ""),
-                                        "title": source.get("title", ""),
-                                        "domain": source.get("domain", ""),
-                                        "mentions": 1,  # Each source is one mention
-                                        "ai_search_volume": task_result.get("ai_search_volume", 0) or 0,
-                                        "platforms": [task_result.get("platform", platform)],
-                                        "rank_group": source.get("position", 0) or 0,
-                                        "snippet": source.get("snippet", ""),
-                                        "publication_date": source.get("publication_date")
-                                    }
-                                    all_sources.append(page_data)
-                                    total_mentions += 1
-                        
-                        # Extract search results (SERP results)
-                        if "search_results" in task_result:
-                            search_results = task_result.get("search_results", [])
-                            for sr in search_results:
-                                if isinstance(sr, dict):
-                                    page_data = {
-                                        "url": sr.get("url", ""),
-                                        "title": sr.get("title", ""),
-                                        "domain": sr.get("domain", ""),
-                                        "mentions": 1,
-                                        "ai_search_volume": task_result.get("ai_search_volume", 0) or 0,
-                                        "platforms": [task_result.get("platform", platform)],
-                                        "rank_group": sr.get("position", 0) or 0,
-                                        "description": sr.get("description", "")
-                                    }
-                                    all_search_results.append(page_data)
+                    # Add filters if provided
+                    if filters:
+                        payload[0]["filters"] = filters
                     
-                    # Use aggregated metrics if available (preferred)
-                    first_result = task_result_list[0]
-                    if "aggregated_metrics" in first_result:
-                        metrics = first_result["aggregated_metrics"]
-                        result["ai_search_volume"] = metrics.get("ai_search_volume", 0) or total_ai_search_volume
-                        result["mentions_count"] = metrics.get("mentions_count", 0) or total_mentions
-                        result["aggregated_metrics"] = metrics
+                    logger.info(f"Trying LLM mentions API with platform='{platform_to_try}' for keyword='{target}' in location='{location_name}'")
+                    data = await self._make_request("ai_optimization/llm_mentions/search/live", payload, tenant_id)
+                    
+                    # Check if we got results
+                    if data.get("tasks") and len(data["tasks"]) > 0:
+                        task = data["tasks"][0]
+                        if task.get('status_code') == 20000:
+                            result_list = task.get("result", [])
+                            if result_list and len(result_list) > 0:
+                                first_result = result_list[0]
+                                total_count = first_result.get('total_count', 0)
+                                
+                                # If we have data, process it and use it
+                                if total_count > 0:
+                                    logger.info(f"✅ Platform '{platform_to_try}' returned {total_count:,} mentions for '{target}'")
+                                    # Process this result
+                                    processed_result = self._process_llm_mentions_response(
+                                        data, platform_to_try, target, target_type, limit
+                                    )
+                                    if processed_result:
+                                        # This platform has data, use it
+                                        best_result = processed_result
+                                        best_total_count = total_count
+                                        break  # Found data, stop trying other platforms
+                                    elif total_count > best_total_count:
+                                        # Keep track of best result even if processing failed
+                                        best_result = processed_result
+                                        best_total_count = total_count
+                                else:
+                                    logger.info(f"Platform '{platform_to_try}' returned 0 mentions, trying next platform...")
+                            else:
+                                logger.debug(f"Platform '{platform_to_try}' returned no result data")
+                        else:
+                            logger.warning(f"Platform '{platform_to_try}' returned error: {task.get('status_code')} - {task.get('status_message')}")
+                            last_error = f"{task.get('status_code')} - {task.get('status_message')}"
                     else:
-                        # Fallback to calculated values
-                        result["ai_search_volume"] = total_ai_search_volume
-                        result["mentions_count"] = total_mentions
-                        result["aggregated_metrics"] = {
-                            "ai_search_volume": total_ai_search_volume,
-                            "mentions_count": total_mentions
-                        }
-                    
-                    # Combine sources and search results as top pages (sources are more important - cited by LLMs)
-                    # Deduplicate by URL
-                    seen_urls = set()
-                    # Add sources first (these are cited by LLMs, more valuable)
-                    for page in all_sources:
-                        url = page.get("url", "")
-                        if url and url not in seen_urls:
-                            seen_urls.add(url)
-                            result["top_pages"].append(page)
-                            if len(result["top_pages"]) >= limit:
-                                break
-                    # Then add search results if we haven't reached the limit
-                    if len(result["top_pages"]) < limit:
-                        for page in all_search_results:
-                            url = page.get("url", "")
-                            if url and url not in seen_urls:
-                                seen_urls.add(url)
-                                result["top_pages"].append(page)
-                                if len(result["top_pages"]) >= limit:
-                                    break
-                    
-                    # Extract items if available (alternative structure)
-                    if "items" in first_result:
-                        items = first_result["items"]
-                        if isinstance(items, list):
-                            for item in items[:limit]:
-                                url = item.get("url", "")
-                                if url and url not in seen_urls:
-                                    seen_urls.add(url)
-                                    page_data = {
-                                        "url": url,
-                                        "title": item.get("title", ""),
-                                        "domain": item.get("domain", ""),
-                                        "mentions": item.get("mentions_count", 0) or 0,
-                                        "ai_search_volume": item.get("ai_search_volume", 0) or 0,
-                                        "platforms": item.get("platforms", []),
-                                        "rank_group": item.get("rank_group", 0) or 0
-                                    }
-                                    result["top_pages"].append(page_data)
-                                    if len(result["top_pages"]) >= limit:
-                                        break
-                
-                # Extract topics if available
-                    if "topics" in first_result:
-                        result["topics"] = first_result["topics"]
-                    
-                    logger.info(f"LLM mentions parsed: ai_search_volume={result['ai_search_volume']}, mentions_count={result['mentions_count']}, top_pages={len(result['top_pages'])}")
-                else:
-                    logger.warning(f"LLM mentions API returned no result data. Task result type: {type(task_result_list)}, value: {task_result_list}")
+                        logger.warning(f"Platform '{platform_to_try}' returned no tasks")
+                except Exception as e:
+                    logger.warning(f"Error trying platform '{platform_to_try}': {e}")
+                    last_error = str(e)
+                    continue
             
-            return result
+            # Use best result if found, otherwise return empty result
+            if best_result:
+                logger.info(f"✅ Using LLM mentions data from platform '{best_result.get('platform', 'unknown')}' with {best_result.get('mentions_count', 0):,} mentions")
+                return best_result
+            else:
+                logger.warning(f"⚠️  No LLM mentions data found for '{target}' in '{location_name}' after trying {len(platforms_to_try)} platforms")
+                return {
+                    "target": target,
+                    "target_type": target_type,
+                    "platform": platforms_to_try[-1] if platforms_to_try else platform,
+                    "ai_search_volume": 0,
+                    "mentions_count": 0,
+                    "top_pages": [],
+                    "top_domains": [],
+                    "topics": [],
+                    "aggregated_metrics": {},
+                    "metadata": {}
+                }
             
         except Exception as e:
             logger.error(f"DataForSEO LLM mentions search failed: {e}")
@@ -2452,6 +2377,182 @@ class DataForSEOClient:
                 "aggregated_metrics": {},
                 "metadata": {}
             }
+    
+    def _process_llm_mentions_response(
+        self,
+        data: Dict[str, Any],
+        platform: str,
+        target: str,
+        target_type: str,
+        limit: int
+    ) -> Dict[str, Any]:
+        """
+        Process LLM mentions API response and extract data.
+        
+        This is a helper method to avoid code duplication in the fallback logic.
+        """
+        # Process response
+        result = {
+            "target": target,
+            "target_type": target_type,
+            "platform": platform,
+            "ai_search_volume": 0,
+            "mentions_count": 0,
+            "top_pages": [],
+            "top_domains": [],
+            "topics": [],
+            "aggregated_metrics": {},
+            "metadata": {}
+        }
+        
+        if data.get("tasks") and len(data["tasks"]) > 0:
+            task = data["tasks"][0]
+            task_result_list = task.get("result")
+            # Handle case where result is None or empty list
+            if task_result_list and isinstance(task_result_list, list) and len(task_result_list) > 0:
+                # The API returns an array of results, each potentially containing platform-specific data
+                # Aggregate data across all platforms/results
+                total_ai_search_volume = 0
+                total_mentions = 0
+                all_sources = []
+                all_search_results = []
+                
+                for task_result in task_result_list:
+                    # Extract AI search volume (can be at top level or in platform-specific data)
+                    # Use max instead of sum since each platform result represents the same keyword
+                    if "ai_search_volume" in task_result:
+                        ai_vol = task_result.get("ai_search_volume", 0) or 0
+                        total_ai_search_volume = max(total_ai_search_volume, ai_vol)
+                    
+                    # Extract monthly searches for trend calculation
+                    if "monthly_searches" in task_result:
+                        monthly_searches = task_result.get("monthly_searches", [])
+                        if monthly_searches and len(monthly_searches) > 0:
+                            # Use the most recent month's search volume
+                            latest = monthly_searches[0]
+                            if isinstance(latest, dict) and "search_volume" in latest:
+                                total_ai_search_volume = max(total_ai_search_volume, latest.get("search_volume", 0))
+                    
+                    # Extract sources (cited URLs)
+                    if "sources" in task_result:
+                        sources = task_result.get("sources", [])
+                        for source in sources:
+                            if isinstance(source, dict):
+                                page_data = {
+                                    "url": source.get("url", ""),
+                                    "title": source.get("title", ""),
+                                    "domain": source.get("domain", ""),
+                                    "mentions": 1,  # Each source is one mention
+                                    "ai_search_volume": task_result.get("ai_search_volume", 0) or 0,
+                                    "platforms": [task_result.get("platform", platform)],
+                                    "rank_group": source.get("position", 0) or 0,
+                                    "snippet": source.get("snippet", ""),
+                                    "publication_date": source.get("publication_date")
+                                }
+                                all_sources.append(page_data)
+                                total_mentions += 1
+                    
+                    # Extract search results (SERP results)
+                    if "search_results" in task_result:
+                        search_results = task_result.get("search_results", [])
+                        for sr in search_results:
+                            if isinstance(sr, dict):
+                                page_data = {
+                                    "url": sr.get("url", ""),
+                                    "title": sr.get("title", ""),
+                                    "domain": sr.get("domain", ""),
+                                    "mentions": 1,
+                                    "ai_search_volume": task_result.get("ai_search_volume", 0) or 0,
+                                    "platforms": [task_result.get("platform", platform)],
+                                    "rank_group": sr.get("position", 0) or 0,
+                                    "description": sr.get("description", "")
+                                }
+                                all_search_results.append(page_data)
+                    
+                    # Extract items if available (alternative structure)
+                    if "items" in task_result:
+                        items = task_result.get("items", [])
+                        if isinstance(items, list):
+                            for item in items:
+                                if isinstance(item, dict):
+                                    # Extract AI search volume from item
+                                    item_ai_vol = item.get("ai_search_volume", 0) or 0
+                                    total_ai_search_volume = max(total_ai_search_volume, item_ai_vol)
+                                    
+                                    # Extract monthly searches from item
+                                    item_monthly = item.get("monthly_searches", [])
+                                    if item_monthly and len(item_monthly) > 0:
+                                        latest_item = item_monthly[0]
+                                        if isinstance(latest_item, dict) and "search_volume" in latest_item:
+                                            total_ai_search_volume = max(total_ai_search_volume, latest_item.get("search_volume", 0))
+                
+                # Use aggregated metrics if available (preferred)
+                first_result = task_result_list[0]
+                if "aggregated_metrics" in first_result:
+                    metrics = first_result["aggregated_metrics"]
+                    result["ai_search_volume"] = metrics.get("ai_search_volume", 0) or total_ai_search_volume
+                    result["mentions_count"] = metrics.get("mentions_count", 0) or total_mentions
+                    result["aggregated_metrics"] = metrics
+                else:
+                    # Fallback to calculated values
+                    result["ai_search_volume"] = total_ai_search_volume
+                    result["mentions_count"] = total_mentions
+                    result["aggregated_metrics"] = {
+                        "ai_search_volume": total_ai_search_volume,
+                        "mentions_count": total_mentions
+                    }
+                
+                # Combine sources and search results as top pages (sources are more important - cited by LLMs)
+                # Deduplicate by URL
+                seen_urls = set()
+                # Add sources first (these are cited by LLMs, more valuable)
+                for page in all_sources:
+                    url = page.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        result["top_pages"].append(page)
+                        if len(result["top_pages"]) >= limit:
+                            break
+                # Then add search results if we haven't reached the limit
+                if len(result["top_pages"]) < limit:
+                    for page in all_search_results:
+                        url = page.get("url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            result["top_pages"].append(page)
+                            if len(result["top_pages"]) >= limit:
+                                break
+                
+                # Extract items if available (alternative structure)
+                if "items" in first_result:
+                    items = first_result["items"]
+                    if isinstance(items, list):
+                        for item in items[:limit]:
+                            url = item.get("url", "")
+                            if url and url not in seen_urls:
+                                seen_urls.add(url)
+                                page_data = {
+                                    "url": url,
+                                    "title": item.get("title", ""),
+                                    "domain": item.get("domain", ""),
+                                    "mentions": item.get("mentions_count", 0) or 0,
+                                    "ai_search_volume": item.get("ai_search_volume", 0) or 0,
+                                    "platforms": item.get("platforms", []),
+                                    "rank_group": item.get("rank_group", 0) or 0
+                                }
+                                result["top_pages"].append(page_data)
+                                if len(result["top_pages"]) >= limit:
+                                    break
+                
+                # Extract topics if available
+                if "topics" in first_result:
+                    result["topics"] = first_result["topics"]
+                
+                logger.info(f"LLM mentions parsed: ai_search_volume={result['ai_search_volume']}, mentions_count={result['mentions_count']}, top_pages={len(result['top_pages'])}")
+            else:
+                logger.warning(f"LLM mentions API returned no result data. Task result type: {type(task_result_list)}, value: {task_result_list}")
+        
+        return result
     
     @monitor_performance("dataforseo_llm_mentions_top_pages")
     async def get_llm_mentions_top_pages(

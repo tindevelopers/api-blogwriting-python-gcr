@@ -4727,7 +4727,7 @@ async def get_ai_topic_suggestions(
                                 location_name=effective_location,
                                 language_code=request.language or "en",
                                 tenant_id=tenant_id,
-                                platform="chat_gpt",
+                                platform="auto",  # Auto tries chat_gpt first, then google
                                 limit=20
                             )
                             logger.info(f"LLM mentions for '{keyword}': ai_search_volume={mentions.get('ai_search_volume', 0)}, mentions_count={mentions.get('mentions_count', 0)}, top_pages={len(mentions.get('top_pages', []))}")
