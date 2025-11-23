@@ -2488,18 +2488,23 @@ class DataForSEOClient:
                 
                 # Use aggregated metrics if available (preferred)
                 first_result = task_result_list[0]
+                
+                # Extract total_count from API response (this is the actual mentions count)
+                api_total_count = first_result.get("total_count", 0) or 0
+                
                 if "aggregated_metrics" in first_result:
                     metrics = first_result["aggregated_metrics"]
                     result["ai_search_volume"] = metrics.get("ai_search_volume", 0) or total_ai_search_volume
-                    result["mentions_count"] = metrics.get("mentions_count", 0) or total_mentions
+                    # Use total_count from API if aggregated_metrics mentions_count is 0
+                    result["mentions_count"] = metrics.get("mentions_count", 0) or api_total_count or total_mentions
                     result["aggregated_metrics"] = metrics
                 else:
-                    # Fallback to calculated values
+                    # Fallback to calculated values, but prefer API total_count
                     result["ai_search_volume"] = total_ai_search_volume
-                    result["mentions_count"] = total_mentions
+                    result["mentions_count"] = api_total_count or total_mentions
                     result["aggregated_metrics"] = {
                         "ai_search_volume": total_ai_search_volume,
-                        "mentions_count": total_mentions
+                        "mentions_count": api_total_count or total_mentions
                     }
                 
                 # Combine sources and search results as top pages (sources are more important - cited by LLMs)
@@ -2524,10 +2529,12 @@ class DataForSEOClient:
                                 break
                 
                 # Extract items if available (alternative structure)
+                # Items may contain question/answer pairs with sources/search_results nested
                 if "items" in first_result:
                     items = first_result["items"]
                     if isinstance(items, list):
                         for item in items[:limit]:
+                            # Check if item has direct URL fields
                             url = item.get("url", "")
                             if url and url not in seen_urls:
                                 seen_urls.add(url)
@@ -2541,6 +2548,54 @@ class DataForSEOClient:
                                     "rank_group": item.get("rank_group", 0) or 0
                                 }
                                 result["top_pages"].append(page_data)
+                                if len(result["top_pages"]) >= limit:
+                                    break
+                            else:
+                                # Item might have nested sources or search_results
+                                item_sources = item.get("sources", [])
+                                if isinstance(item_sources, list) and len(item_sources) > 0:
+                                    for source in item_sources[:limit]:
+                                        if isinstance(source, dict):
+                                            source_url = source.get("url", "")
+                                            if source_url and source_url not in seen_urls:
+                                                seen_urls.add(source_url)
+                                                page_data = {
+                                                    "url": source_url,
+                                                    "title": source.get("title", ""),
+                                                    "domain": source.get("domain", ""),
+                                                    "mentions": 1,
+                                                    "ai_search_volume": result.get("ai_search_volume", 0),
+                                                    "platforms": [platform],
+                                                    "rank_group": source.get("position", 0) or 0,
+                                                    "snippet": source.get("snippet", "")
+                                                }
+                                                result["top_pages"].append(page_data)
+                                                if len(result["top_pages"]) >= limit:
+                                                    break
+                                if len(result["top_pages"]) >= limit:
+                                    break
+                                
+                                # Check search_results in item
+                                item_search_results = item.get("search_results", [])
+                                if isinstance(item_search_results, list) and len(item_search_results) > 0:
+                                    for sr in item_search_results[:limit]:
+                                        if isinstance(sr, dict):
+                                            sr_url = sr.get("url", "")
+                                            if sr_url and sr_url not in seen_urls:
+                                                seen_urls.add(sr_url)
+                                                page_data = {
+                                                    "url": sr_url,
+                                                    "title": sr.get("title", ""),
+                                                    "domain": sr.get("domain", ""),
+                                                    "mentions": 1,
+                                                    "ai_search_volume": result.get("ai_search_volume", 0),
+                                                    "platforms": [platform],
+                                                    "rank_group": sr.get("position", 0) or 0,
+                                                    "description": sr.get("description", "")
+                                                }
+                                                result["top_pages"].append(page_data)
+                                                if len(result["top_pages"]) >= limit:
+                                                    break
                                 if len(result["top_pages"]) >= limit:
                                     break
                 
