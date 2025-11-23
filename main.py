@@ -4671,28 +4671,28 @@ async def get_ai_topic_suggestions(
                             if keyword in ai_search_volume_data:
                                 suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
                             else:
-                            # Try partial match - check if any seed keyword is contained in the topic keyword
-                            matched = False
-                            for seed_kw in seed_keywords:
-                                if seed_kw.lower() in keyword.lower() or keyword.lower() in seed_kw.lower():
-                                    if seed_kw in ai_search_volume_data:
-                                        suggestion["ai_search_volume"] = ai_search_volume_data[seed_kw].get("ai_search_volume", 0)
-                                        matched = True
-                                        break
-                            
-                            # If still no match, try getting AI search volume for the topic keyword itself
-                            if not matched and df_client:
-                                try:
-                                    topic_ai_data = await df_client.get_ai_search_volume(
-                                        keywords=[keyword],
-                                        location_name=effective_location,
-                                        language_code=request.language or "en",
-                                        tenant_id=tenant_id
-                                    )
-                                    if keyword in topic_ai_data:
-                                        suggestion["ai_search_volume"] = topic_ai_data[keyword].get("ai_search_volume", 0)
-                                except Exception as e:
-                                    logger.debug(f"Failed to get AI search volume for topic keyword '{keyword}': {e}")
+                                # Try partial match - check if any seed keyword is contained in the topic keyword
+                                matched = False
+                                for seed_kw in seed_keywords:
+                                    if seed_kw.lower() in keyword.lower() or keyword.lower() in seed_kw.lower():
+                                        if seed_kw in ai_search_volume_data:
+                                            suggestion["ai_search_volume"] = ai_search_volume_data[seed_kw].get("ai_search_volume", 0)
+                                            matched = True
+                                            break
+                                
+                                # If still no match, try getting AI search volume for the topic keyword itself
+                                if not matched and df_client:
+                                    try:
+                                        topic_ai_data = await df_client.get_ai_search_volume(
+                                            keywords=[keyword],
+                                            location_name=effective_location,
+                                            language_code=request.language or "en",
+                                            tenant_id=tenant_id
+                                        )
+                                        if keyword in topic_ai_data:
+                                            suggestion["ai_search_volume"] = topic_ai_data[keyword].get("ai_search_volume", 0)
+                                    except Exception as e:
+                                        logger.debug(f"Failed to get AI search volume for topic keyword '{keyword}': {e}")
                         
                         # Calculate AI optimization score for this topic
                         ai_vol = suggestion.get("ai_search_volume", 0)
