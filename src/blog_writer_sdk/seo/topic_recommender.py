@@ -758,7 +758,12 @@ Return only valid JSON, no markdown formatting."""
                 preferred_provider="anthropic"
             )
             
-            response = await self.ai_generator.generate_content(request, model="claude-3-5-sonnet-20241022")
+            # Use provider_manager to generate content
+            response = await self.ai_generator.provider_manager.generate_content(
+                request, 
+                preferred_provider="anthropic",
+                model="claude-3-5-sonnet-20241022"
+            )
             
             # Parse response
             import json

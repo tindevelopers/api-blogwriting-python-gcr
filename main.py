@@ -4693,21 +4693,21 @@ async def get_ai_topic_suggestions(
                                             suggestion["ai_search_volume"] = topic_ai_data[keyword].get("ai_search_volume", 0)
                                     except Exception as e:
                                         logger.debug(f"Failed to get AI search volume for topic keyword '{keyword}': {e}")
-                        
-                        # Calculate AI optimization score for this topic
-                        ai_vol = suggestion.get("ai_search_volume", 0)
-                        if ai_vol > 0:
-                            # Calculate score similar to ai-optimization endpoint
-                            ai_score = min(50, math.log10(ai_vol + 1) * 10)
-                            # Add bonus for good traditional search volume
-                            if suggestion.get("search_volume", 0) > 1000:
-                                ai_score += 10
-                            # Add bonus for low difficulty
-                            if suggestion.get("difficulty", 100) < 50:
-                                ai_score += 10
-                            suggestion["ai_optimization_score"] = min(100, max(0, int(ai_score)))
-                        else:
-                            suggestion["ai_optimization_score"] = 0
+                            
+                            # Calculate AI optimization score for this topic (inside the loop)
+                            ai_vol = suggestion.get("ai_search_volume", 0)
+                            if ai_vol > 0:
+                                # Calculate score similar to ai-optimization endpoint
+                                ai_score = min(50, math.log10(ai_vol + 1) * 10)
+                                # Add bonus for good traditional search volume
+                                if suggestion.get("search_volume", 0) > 1000:
+                                    ai_score += 10
+                                # Add bonus for low difficulty
+                                if suggestion.get("difficulty", 100) < 50:
+                                    ai_score += 10
+                                suggestion["ai_optimization_score"] = min(100, max(0, int(ai_score)))
+                            else:
+                                suggestion["ai_optimization_score"] = 0
             except Exception as e:
                 logger.warning(f"Failed to get AI search volume: {e}")
         
