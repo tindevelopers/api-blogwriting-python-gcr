@@ -13,10 +13,11 @@
 3. [AI Topic Suggestions](#ai-topic-suggestions)
 4. [SERP Analysis](#serp-analysis)
 5. [Content Generation](#content-generation)
-6. [Goal-Based Keyword Analysis](#goal-based-keyword-analysis)
-7. [Cost Optimization](#cost-optimization)
-8. [Error Handling](#error-handling)
-9. [TypeScript Types](#typescript-types)
+6. [Blog Generation Flow](#blog-generation-flow) ⭐ **NEW**
+7. [Goal-Based Keyword Analysis](#goal-based-keyword-analysis)
+8. [Cost Optimization](#cost-optimization)
+9. [Error Handling](#error-handling)
+10. [TypeScript Types](#typescript-types)
 
 ---
 
@@ -310,6 +311,111 @@ interface GoalBasedAnalysisResponse {
 - ✅ Monthly searches trend available
 - ✅ SERP analysis included when `include_serp: true`
 - ✅ LLM mentions included when `include_llm_mentions: true`
+
+---
+
+## ✍️ Blog Generation Flow
+
+### Complete Flow: Keywords → Analysis → Generation → Semantic Keywords
+
+**Status:** ✅ **WORKING CORRECTLY**
+
+The blog generation endpoint handles the complete flow internally:
+
+1. ✅ **Keywords Input** → Accepts keywords array
+2. ✅ **Enhanced Keyword Analysis** → Performed internally via SDK (not HTTP call)
+3. ✅ **Content Generation** → Generates content with keywords integrated
+4. ✅ **Semantic Keywords** → Returned in response
+
+### Endpoint
+
+```
+POST /api/v1/blog/generate-enhanced
+```
+
+### Request Example
+
+```typescript
+const response = await fetch(`${API_BASE_URL}/api/v1/blog/generate-enhanced`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    topic: 'Introduction to Python',
+    keywords: ['python', 'programming'],  // ✅ Array of keywords
+    tone: 'professional',
+    length: 'short',
+    use_semantic_keywords: true  // ✅ Enable semantic keywords
+  })
+});
+
+const data = await response.json();
+
+// ✅ Access semantic keywords
+const semanticKeywords = data.semantic_keywords;  // ["programming", "coding", "python"]
+
+// ✅ Access keyword analysis
+const keywordAnalysis = data.seo_metadata.keyword_analysis;
+```
+
+### Response Structure
+
+```typescript
+{
+  title: string;
+  content: string;
+  semantic_keywords: string[];  // ✅ Semantic keywords array
+  seo_metadata: {
+    semantic_keywords: string[];
+    keyword_analysis: {
+      difficulty: number;
+      overview: {...};
+    };
+    search_intent: {...};
+  };
+  quality_score: number;
+  seo_score: number;
+  // ... other fields
+}
+```
+
+### Important Notes
+
+1. **No Separate API Call Needed**: The endpoint integrates keyword analysis internally via SDK methods (not HTTP endpoint calls)
+2. **Use Synchronous Mode**: Set timeout to 5 minutes and wait for response (no polling needed)
+3. **Semantic Keywords Included**: Set `use_semantic_keywords: true` to get semantic keywords in response
+4. **Error Handling**: Retry on 5xx errors, don't retry on 4xx errors
+
+### Timeout Configuration
+
+```typescript
+// Blog generation can take 2-5 minutes
+const BLOG_GENERATION_TIMEOUT = 300000; // 5 minutes
+
+const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), BLOG_GENERATION_TIMEOUT);
+
+try {
+  const response = await fetch(`${API_BASE_URL}/api/v1/blog/generate-enhanced`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal: controller.signal
+  });
+  // ... handle response
+} finally {
+  clearTimeout(timeoutId);
+}
+```
+
+### Test Results
+
+✅ **Flow Verified Working:**
+- Keywords input: ✅ Accepted
+- Keyword analysis: ✅ Integrated internally
+- Content generation: ✅ Generated with keywords
+- Semantic keywords: ✅ Returned in response
+
+**See:** `BLOG_GENERATION_FLOW_TEST_REPORT.md` for detailed test results
 
 ---
 
