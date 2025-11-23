@@ -2056,6 +2056,56 @@ class DataForSEOClient:
             logger.error(f"DataForSEO meta tag generation failed: {e}")
             raise
     
+    @monitor_performance("dataforseo_generate_subtopics")
+    async def generate_subtopics(
+        self,
+        text: str,
+        max_subtopics: int = 10,
+        language: str = "en",
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Generate subtopics from text using DataForSEO Content Generation API.
+        
+        Args:
+            text: Input text to generate subtopics from
+            max_subtopics: Maximum number of subtopics to generate
+            language: Language code (default: "en")
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with subtopics list and metadata
+        """
+        try:
+            payload = [{
+                "text": text,
+                "max_subtopics": max_subtopics,
+                "language": language
+            }]
+            
+            data = await self._make_request(
+                "content_generation/generate_subtopics/live",
+                payload,
+                tenant_id
+            )
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                subtopics = result_item.get("subtopics", [])
+                
+                return {
+                    "subtopics": subtopics,
+                    "count": len(subtopics),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"subtopics": [], "count": 0, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO subtopic generation failed: {e}")
+            raise
+    
     @monitor_performance("dataforseo_content_analysis_search")
     async def analyze_content_search(
         self,

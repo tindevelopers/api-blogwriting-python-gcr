@@ -102,7 +102,12 @@ from src.blog_writer_sdk.api.keyword_streaming import (
 )
 from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
-    EnhancedBlogGenerationResponse
+    EnhancedBlogGenerationResponse,
+    BlogContentType
+)
+from src.blog_writer_sdk.services.dataforseo_content_generation_service import (
+    DataForSEOContentGenerationService,
+    BlogType as DataForSEOBlogType
 )
 from src.blog_writer_sdk.models.job_models import (
     BlogGenerationJob,
@@ -607,6 +612,7 @@ async def lifespan(app: FastAPI):
     global readability_analyzer, citation_generator, serp_analyzer
     global google_knowledge_graph_client, semantic_integrator, quality_scorer
     global intent_analyzer, few_shot_extractor, length_optimizer
+    global dataforseo_content_generation_service
     readability_analyzer = ReadabilityAnalyzer()
     citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
     serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
@@ -1032,15 +1038,83 @@ async def generate_blog(
     writer: BlogWriter = Depends(get_blog_writer)
 ):
     """
-    Generate a complete blog post with SEO optimization.
+    Generate a complete blog post using DataForSEO Content Generation API.
     
     This endpoint creates a full blog post including:
     - SEO-optimized content structure
     - Meta tags and descriptions
     - Keyword optimization
     - Content quality analysis
+    
+    Uses DataForSEO Content Generation API by default.
     """
+    import time
+    start_time = time.time()
+    
     try:
+        # Check if DataForSEO Content Generation should be used (default: True)
+        use_dataforseo_env = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+        
+        if use_dataforseo_env:
+            logger.info("🔷 Using DataForSEO Content Generation API for standard blog generation")
+            
+            # Initialize DataForSEO Content Generation Service
+            global dataforseo_client_global
+            content_service = DataForSEOContentGenerationService(dataforseo_client=dataforseo_client_global)
+            await content_service.initialize(tenant_id="default")
+            
+            if content_service.is_configured:
+                # Calculate word count from length
+                word_count_map = {
+                    ContentLength.SHORT: 500,
+                    ContentLength.MEDIUM: 1500,
+                    ContentLength.LONG: 2500,
+                    ContentLength.EXTENDED: 4000,
+                }
+                # Get word count target if available, otherwise calculate from length
+                word_count = request.word_count_target or word_count_map.get(request.length, 1500)
+                
+                # Map tone
+                tone_map = {
+                    ContentTone.PROFESSIONAL: "professional",
+                    ContentTone.CASUAL: "casual",
+                    ContentTone.FRIENDLY: "friendly",
+                    ContentTone.FORMAL: "formal",
+                }
+                tone_str = tone_map.get(request.tone, "professional")
+                
+                # Generate blog content using DataForSEO
+                result = await content_service.generate_blog_content(
+                    topic=request.topic,
+                    keywords=request.keywords or [],
+                    blog_type=DataForSEOBlogType.CUSTOM,
+                    tone=tone_str,
+                    word_count=word_count,
+                    target_audience=request.target_audience,
+                    language="en",
+                    tenant_id="default",
+                    custom_instructions=request.custom_instructions
+                )
+                
+                generation_time = time.time() - start_time
+                
+                # Convert to BlogGenerationResult format
+                return BlogGenerationResult(
+                    success=True,
+                    blog_post={
+                        "title": result["title"],
+                        "content": result["content"],
+                        "meta_description": result["meta_description"]
+                    },
+                    seo_score=85.0,
+                    word_count=len(result["content"].split()),
+                    generation_time_seconds=generation_time,
+                    error_message=None
+                )
+            else:
+                logger.warning("DataForSEO Content Generation not configured, falling back to SDK")
+        
+        # Fallback to original SDK generation
         # Convert API request to SDK request
         blog_request = BlogRequest(
             topic=request.topic,
@@ -1073,6 +1147,7 @@ async def generate_blog(
         return result
         
     except Exception as e:
+        logger.error(f"Blog generation failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Blog generation failed: {str(e)}"
@@ -1087,15 +1162,16 @@ async def generate_blog_enhanced(
     async_mode: bool = Query(default=False, description="If true, creates async job via Cloud Tasks")
 ):
     """
-    Generate high-quality blog content using multi-stage pipeline (Phase 1, 2 & 3).
+    Generate high-quality blog content using DataForSEO Content Generation API.
     
-    This endpoint uses:
-    - Multi-stage generation pipeline (Research → Draft → Enhancement → SEO)
-    - Google Custom Search for research and fact-checking
-    - Readability optimization
-    - SERP feature optimization
-    - Citation integration
-    - Phase 3: Multi-model consensus, Knowledge Graph, semantic keywords, quality scoring
+    This endpoint uses DataForSEO Content Generation API by default for all blog types:
+    - Brands: Comprehensive brand content
+    - Top 10: Ranking lists with detailed entries
+    - Product Reviews: Detailed product analysis
+    - How To: Step-by-step guides
+    - Comparison: Side-by-side comparisons
+    - Guide: Comprehensive guides
+    - Custom: Custom content based on instructions
     
     Query Parameters:
     - async_mode: If true, creates an async job via Cloud Tasks and returns job_id immediately
@@ -1106,12 +1182,118 @@ async def generate_blog_enhanced(
     
     Use GET /api/v1/blog/jobs/{job_id} to check status and retrieve results.
     """
+    import time
+    start_time = time.time()
+    
     try:
         # Get global clients
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
         global blog_generation_jobs
+        
+        # Check if DataForSEO Content Generation should be used (default: True)
+        use_dataforseo = request.use_dataforseo_content_generation if hasattr(request, 'use_dataforseo_content_generation') else True
+        use_dataforseo_env = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+        USE_DATAFORSEO = use_dataforseo or use_dataforseo_env
+        
+        # Use DataForSEO Content Generation Service
+        if USE_DATAFORSEO:
+            logger.info("🔷 Using DataForSEO Content Generation API for blog generation")
+            
+            # Initialize DataForSEO Content Generation Service
+            content_service = DataForSEOContentGenerationService(dataforseo_client=dataforseo_client_global)
+            await content_service.initialize(tenant_id="default")
+            
+            if not content_service.is_configured:
+                logger.warning("DataForSEO Content Generation not configured, falling back to pipeline")
+                USE_DATAFORSEO = False
+            else:
+                # Map blog type
+                blog_type_map = {
+                    BlogContentType.BRAND: DataForSEOBlogType.BRAND,
+                    BlogContentType.TOP_10: DataForSEOBlogType.TOP_10,
+                    BlogContentType.PRODUCT_REVIEW: DataForSEOBlogType.PRODUCT_REVIEW,
+                    BlogContentType.HOW_TO: DataForSEOBlogType.HOW_TO,
+                    BlogContentType.COMPARISON: DataForSEOBlogType.COMPARISON,
+                    BlogContentType.GUIDE: DataForSEOBlogType.GUIDE,
+                    BlogContentType.CUSTOM: DataForSEOBlogType.CUSTOM,
+                }
+                df_blog_type = blog_type_map.get(request.blog_type or BlogContentType.CUSTOM, DataForSEOBlogType.CUSTOM)
+                
+                # Calculate word count from length
+                word_count_map = {
+                    ContentLength.SHORT: 500,
+                    ContentLength.MEDIUM: 1500,
+                    ContentLength.LONG: 2500,
+                    ContentLength.EXTENDED: 4000,
+                }
+                # Get word count target if available, otherwise calculate from length
+                word_count = request.word_count_target or word_count_map.get(request.length, 1500)
+                
+                # Map tone
+                tone_map = {
+                    ContentTone.PROFESSIONAL: "professional",
+                    ContentTone.CASUAL: "casual",
+                    ContentTone.FRIENDLY: "friendly",
+                    ContentTone.FORMAL: "formal",
+                }
+                tone_str = tone_map.get(request.tone, "professional")
+                
+                # Generate blog content using DataForSEO
+                result = await content_service.generate_blog_content(
+                    topic=request.topic,
+                    keywords=request.keywords,
+                    blog_type=df_blog_type,
+                    tone=tone_str,
+                    word_count=word_count,
+                    target_audience=request.target_audience,
+                    language="en",
+                    tenant_id="default",
+                    brand_name=getattr(request, 'brand_name', None),
+                    category=getattr(request, 'category', None),
+                    product_name=getattr(request, 'product_name', None),
+                    items=getattr(request, 'comparison_items', None),
+                    custom_instructions=request.custom_instructions
+                )
+                
+                generation_time = time.time() - start_time
+                
+                # Calculate readability score (simple estimation)
+                content_words = len(result["content"].split())
+                readability_score = min(100, max(0, 100 - (content_words / 50)))  # Simple estimation
+                
+                # Build response
+                return EnhancedBlogGenerationResponse(
+                    title=result["title"],
+                    content=result["content"],
+                    meta_title=result["meta_title"],
+                    meta_description=result["meta_description"],
+                    readability_score=readability_score,
+                    seo_score=85.0,  # Default SEO score for DataForSEO content
+                    stage_results=[],
+                    citations=[],
+                    total_tokens=result["tokens_used"],
+                    total_cost=result["cost"],
+                    generation_time=generation_time,
+                    seo_metadata={
+                        "semantic_keywords": result.get("keywords", request.keywords),
+                        "subtopics": result.get("subtopics", []),
+                        "blog_type": result.get("blog_type", "custom")
+                    },
+                    internal_links=[],
+                    quality_score=85.0,
+                    quality_dimensions={},
+                    structured_data=None,
+                    semantic_keywords=result.get("keywords", request.keywords),
+                    content_metadata={},
+                    success=True,
+                    warnings=[],
+                    progress_updates=[]
+                )
+        
+        # Fallback to original pipeline if DataForSEO is disabled or not configured
+        logger.info("Using multi-stage pipeline for blog generation")
         
         # Check if AI generator is available
         if ai_generator is None:

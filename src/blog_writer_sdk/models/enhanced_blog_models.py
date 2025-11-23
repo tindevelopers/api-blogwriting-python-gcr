@@ -5,8 +5,20 @@ Models for Phase 1 & 2 enhanced blog generation features.
 """
 
 from typing import List, Optional, Dict, Any
+from enum import Enum
 from pydantic import BaseModel, Field
 from .blog_models import ContentTone, ContentLength
+
+
+class BlogContentType(str, Enum):
+    """Blog content type enumeration."""
+    CUSTOM = "custom"
+    BRAND = "brand"
+    TOP_10 = "top_10"
+    PRODUCT_REVIEW = "product_review"
+    HOW_TO = "how_to"
+    COMPARISON = "comparison"
+    GUIDE = "guide"
 
 
 class EnhancedBlogGenerationRequest(BaseModel):
@@ -16,6 +28,24 @@ class EnhancedBlogGenerationRequest(BaseModel):
     keywords: List[str] = Field(..., min_items=1, description="Target SEO keywords")
     tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
     length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
+    
+    # Blog type for DataForSEO Content Generation
+    blog_type: Optional[BlogContentType] = Field(
+        default=BlogContentType.CUSTOM,
+        description="Type of blog content (brand, top_10, product_review, how_to, comparison, guide, custom)"
+    )
+    
+    # Blog type-specific fields
+    brand_name: Optional[str] = Field(None, description="Brand name (for brand type)")
+    category: Optional[str] = Field(None, description="Category for top 10 lists")
+    product_name: Optional[str] = Field(None, description="Product name (for product review type)")
+    comparison_items: Optional[List[str]] = Field(None, description="Items to compare (for comparison type)")
+    
+    # Use DataForSEO Content Generation (default: True)
+    use_dataforseo_content_generation: bool = Field(
+        default=True,
+        description="Use DataForSEO Content Generation API for all blog generation"
+    )
     
     # Enhanced options
     use_google_search: bool = Field(default=True, description="Use Google Custom Search for research")
@@ -33,6 +63,7 @@ class EnhancedBlogGenerationRequest(BaseModel):
     target_audience: Optional[str] = Field(None, description="Target audience")
     custom_instructions: Optional[str] = Field(None, max_length=2000, description="Additional instructions for content generation")
     template_type: Optional[str] = Field(None, description="Prompt template type (expert_authority, how_to_guide, etc.)")
+    word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
     
     # Product research options (for product review/comparison content)
     include_product_research: bool = Field(default=False, description="Enable comprehensive product research (brands, models, prices, features)")
