@@ -2415,16 +2415,18 @@ class DataForSEOClient:
                                 url = item.get("url", "")
                                 if url and url not in seen_urls:
                                     seen_urls.add(url)
-                        page_data = {
+                                    page_data = {
                                         "url": url,
-                            "title": item.get("title", ""),
-                            "domain": item.get("domain", ""),
+                                        "title": item.get("title", ""),
+                                        "domain": item.get("domain", ""),
                                         "mentions": item.get("mentions_count", 0) or 0,
                                         "ai_search_volume": item.get("ai_search_volume", 0) or 0,
-                            "platforms": item.get("platforms", []),
+                                        "platforms": item.get("platforms", []),
                                         "rank_group": item.get("rank_group", 0) or 0
-                        }
-                        result["top_pages"].append(page_data)
+                                    }
+                                    result["top_pages"].append(page_data)
+                                    if len(result["top_pages"]) >= limit:
+                                        break
                 
                 # Extract topics if available
                     if "topics" in first_result:
