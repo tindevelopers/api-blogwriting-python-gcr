@@ -54,7 +54,9 @@ const defaultHeaders = {
 | `/api/v1/keywords/ai-mentions` | ✅ Working | ~$0.12 | Platform fallback: `chat_gpt` → `google` |
 | `/api/v1/keywords/goal-based-analysis` | ✅ Working | ~$0.15-0.30 | Includes SERP when `include_serp: true` |
 | `/api/v1/keywords/goal-based-analysis/stream` | ✅ **NEW** | ~$0.15-0.30 | Streaming with progress updates |
+| `/api/v1/keywords/enhanced` | ✅ Working | Variable | Enhanced keyword analysis |
 | `/api/v1/keywords/enhanced/stream` | ✅ Working | Variable | Streaming enhanced keyword analysis |
+| `/api/v1/keywords/suggest` | ✅ Working | Variable | Get keyword suggestions (singular: `/suggest`) |
 | `/api/v1/generate` | ✅ Working | Variable | Basic content generation |
 | `/api/v1/blog/generate-enhanced` | ✅ Working | Variable | Multi-stage pipeline |
 
@@ -589,7 +591,52 @@ const testRequest = {
 
 ### Common Errors
 
-#### 1. Validation Error: Limit Too Low
+#### 1. 404 Page Not Found - Wrong Endpoint Path
+
+**Error:**
+```html
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>404 Page not found</title>
+</head>
+<body>
+<h1>Error: Page not found</h1>
+<h2>The requested URL was not found on this server.</h2>
+</body></html>
+```
+
+**Common Cause:** Using wrong endpoint path (plural vs singular)
+
+**Solution:**
+```typescript
+// ❌ WRONG - Using plural "suggestions"
+const response = await fetch(`${API_BASE_URL}/api/v1/keywords/suggestions`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ keyword: 'python' })
+});
+
+// ✅ CORRECT - Using singular "suggest"
+const response = await fetch(`${API_BASE_URL}/api/v1/keywords/suggest`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ 
+    keyword: 'python',  // Single keyword (string), not array
+    limit: 20            // Optional, default 20, max 150
+  })
+});
+
+// Response structure:
+// {
+//   "keyword_suggestions": ["python tutorial", "python guide", ...]
+// }
+```
+
+**Correct Endpoint Paths:**
+- ✅ `/api/v1/keywords/suggest` (singular)
+- ❌ `/api/v1/keywords/suggestions` (plural - does not exist)
+
+#### 2. Validation Error: Limit Too Low
 
 ```json
 {
