@@ -4653,12 +4653,14 @@ async def get_ai_topic_suggestions(
             try:
                 await df_client.initialize_credentials(tenant_id)
                 if df_client.is_configured:
+                    logger.info(f"Getting AI search volume for keywords: {seed_keywords[:5]}")
                     ai_search_volume_data = await df_client.get_ai_search_volume(
                         keywords=seed_keywords[:5],
                         location_name=effective_location,
                         language_code=request.language or "en",
                         tenant_id=tenant_id
                     )
+                    logger.info(f"AI search volume data received: {json.dumps(ai_search_volume_data, default=str)[:500]}")
                     ai_metrics["search_volume"] = ai_search_volume_data
                     
                     # Update topic suggestions with AI search volume
@@ -4718,6 +4720,7 @@ async def get_ai_topic_suggestions(
                     llm_mentions_data = {}
                     for keyword in seed_keywords[:3]:
                         try:
+                            logger.info(f"Getting LLM mentions for keyword: {keyword}")
                             mentions = await df_client.get_llm_mentions_search(
                                 target=keyword,
                                 target_type="keyword",
@@ -4727,9 +4730,10 @@ async def get_ai_topic_suggestions(
                                 platform="chat_gpt",
                                 limit=20
                             )
+                            logger.info(f"LLM mentions for '{keyword}': ai_search_volume={mentions.get('ai_search_volume', 0)}, mentions_count={mentions.get('mentions_count', 0)}, top_pages={len(mentions.get('top_pages', []))}")
                             llm_mentions_data[keyword] = mentions
                         except Exception as e:
-                            logger.warning(f"Failed to get LLM mentions for {keyword}: {e}")
+                            logger.warning(f"Failed to get LLM mentions for {keyword}: {e}", exc_info=True)
                     ai_metrics["llm_mentions"] = llm_mentions_data
             except Exception as e:
                 logger.warning(f"Failed to get LLM mentions: {e}")

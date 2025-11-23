@@ -1,0 +1,81 @@
+{
+    "seed_keywords": [
+        "chatgpt",
+        "artificial intelligence",
+        "machine learning"
+    ],
+    "content_objective": null,
+    "target_audience": null,
+    "industry": null,
+    "content_goals": [],
+    "location": "United States",
+    "language": "en",
+    "topic_suggestions": [],
+    "content_gaps": [],
+    "citation_opportunities": [],
+    "ai_metrics": {
+        "search_volume": {
+            "chatgpt": {
+                "ai_search_volume": 0,
+                "ai_monthly_searches": [],
+                "ai_trend": 0.0
+            },
+            "artificial intelligence": {
+                "ai_search_volume": 0,
+                "ai_monthly_searches": [],
+                "ai_trend": 0.0
+            },
+            "machine learning": {
+                "ai_search_volume": 0,
+                "ai_monthly_searches": [],
+                "ai_trend": 0.0
+            }
+        },
+        "llm_mentions": {
+            "chatgpt": {
+                "target": "chatgpt",
+                "target_type": "keyword",
+                "platform": "chat_gpt",
+                "ai_search_volume": 0,
+                "mentions_count": 0,
+                "top_pages": [],
+                "top_domains": [],
+                "topics": [],
+                "aggregated_metrics": {},
+                "metadata": {}
+            },
+            "artificial intelligence": {
+                "target": "artificial intelligence",
+                "target_type": "keyword",
+                "platform": "chat_gpt",
+                "ai_search_volume": 0,
+                "mentions_count": 0,
+                "top_pages": [],
+                "top_domains": [],
+                "topics": [],
+                "aggregated_metrics": {},
+                "metadata": {}
+            },
+            "machine learning": {
+                "target": "machine learning",
+                "target_type": "keyword",
+                "platform": "chat_gpt",
+                "ai_search_volume": 0,
+                "mentions_count": 0,
+                "top_pages": [],
+                "top_domains": [],
+                "topics": [],
+                "aggregated_metrics": {},
+                "metadata": {}
+            }
+        }
+    },
+    "summary": {
+        "total_suggestions": 0,
+        "high_priority_topics": 0,
+        "trending_topics": 0,
+        "low_competition_topics": 0,
+        "content_gaps_count": 0,
+        "citation_opportunities_count": 0
+    }
+}

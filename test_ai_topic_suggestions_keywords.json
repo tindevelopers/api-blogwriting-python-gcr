@@ -1,0 +1,63 @@
+{
+  "seed_keywords": [
+    "concrete remediation",
+    "foundation repair"
+  ],
+  "content_objective": null,
+  "target_audience": null,
+  "industry": null,
+  "content_goals": [],
+  "location": "United States",
+  "language": "en",
+  "topic_suggestions": [],
+  "content_gaps": [],
+  "citation_opportunities": [],
+  "ai_metrics": {
+    "search_volume": {
+      "concrete remediation": {
+        "ai_search_volume": 0,
+        "ai_monthly_searches": [],
+        "ai_trend": 0.0
+      },
+      "foundation repair": {
+        "ai_search_volume": 0,
+        "ai_monthly_searches": [],
+        "ai_trend": 0.0
+      }
+    },
+    "llm_mentions": {
+      "concrete remediation": {
+        "target": "concrete remediation",
+        "target_type": "keyword",
+        "platform": "chat_gpt",
+        "ai_search_volume": 0,
+        "mentions_count": 0,
+        "top_pages": [],
+        "top_domains": [],
+        "topics": [],
+        "aggregated_metrics": {},
+        "metadata": {}
+      },
+      "foundation repair": {
+        "target": "foundation repair",
+        "target_type": "keyword",
+        "platform": "chat_gpt",
+        "ai_search_volume": 0,
+        "mentions_count": 0,
+        "top_pages": [],
+        "top_domains": [],
+        "topics": [],
+        "aggregated_metrics": {},
+        "metadata": {}
+      }
+    }
+  },
+  "summary": {
+    "total_suggestions": 0,
+    "high_priority_topics": 0,
+    "trending_topics": 0,
+    "low_competition_topics": 0,
+    "content_gaps_count": 0,
+    "citation_opportunities_count": 0
+  }
+}
