@@ -472,10 +472,10 @@ class DataForSEOClient:
             logger.debug(f"Cache MISS for AI search volume: {keywords[:3]} (making API call)")
             
             # Prepare API request for AI optimization endpoint
+            # Note: AI optimization endpoints don't accept language_code parameter
             payload = [{
                 "keywords": keywords,
-                "location_name": location_name,
-                "language_code": language_code
+                "location_name": location_name
             }]
             
             # Based on DataForSEO API documentation and testing:
@@ -2264,10 +2264,10 @@ class DataForSEOClient:
             else:
                 target_obj = {"keyword": target}  # Default to keyword
             
+            # Note: AI optimization LLM mentions endpoint doesn't accept language_code parameter
             payload = [{
                 "target": [target_obj],
                 "location_name": location_name,
-                "language_code": language_code,
                 "platform": platform,
                 "limit": limit
             }]
