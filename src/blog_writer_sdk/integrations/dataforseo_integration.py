@@ -2376,7 +2376,7 @@ class DataForSEOClient:
                         metrics = first_result["aggregated_metrics"]
                         result["ai_search_volume"] = metrics.get("ai_search_volume", 0) or total_ai_search_volume
                         result["mentions_count"] = metrics.get("mentions_count", 0) or total_mentions
-                    result["aggregated_metrics"] = metrics
+                        result["aggregated_metrics"] = metrics
                     else:
                         # Fallback to calculated values
                         result["ai_search_volume"] = total_ai_search_volume

@@ -171,3 +171,4 @@ After fixes:
 
 **Conclusion**: The `develop` trigger **does not exist**, which is why deployments are failing. Create the trigger in the correct region (`europe-west9`) and ensure GitHub connection is active.
 
+

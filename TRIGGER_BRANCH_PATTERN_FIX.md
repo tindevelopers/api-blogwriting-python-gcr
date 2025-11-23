@@ -93,3 +93,4 @@ All triggers should show their specific branch pattern (not `null`).
 - `^develop.*` would match "develop", "develop-feature", etc.
 - `null` or empty means "matches all branches"
 
+
