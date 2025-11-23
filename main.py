@@ -2280,14 +2280,14 @@ async def analyze_keywords_enhanced(
     try:
         # Detect location from IP if not explicitly specified
         detected_location = None
-        if not request.location or request.location == "United States":
+        if not request.location:
             if http_request:
                 detected_location = await detect_location_from_ip(http_request)
                 if detected_location:
                     logger.info(f"Detected location from IP: {detected_location}")
         
         # Use detected location or fall back to request location or default
-        effective_location = detected_location or request.location or "United States"
+        effective_location = request.location or detected_location or "United States"
         from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
         
         # Apply testing mode limits
@@ -2815,7 +2815,7 @@ async def analyze_keywords_enhanced_stream(
             
             # Stage 2: Detecting location
             detected_location = None
-            if not request.location or request.location == "United States":
+            if not request.location:
                 yield await stream_stage_update(
                     KeywordSearchStage.DETECTING_LOCATION,
                     10.0,
@@ -2831,7 +2831,7 @@ async def analyze_keywords_enhanced_stream(
                             message=f"Detected location: {detected_location}"
                         )
             
-            effective_location = detected_location or request.location or "United States"
+            effective_location = request.location or detected_location or "United States"
             
             # Stage 3: Analyzing keywords
             yield await stream_stage_update(
@@ -3908,13 +3908,13 @@ async def analyze_keywords_goal_based(
     try:
         # Detect location from IP if not explicitly specified
         detected_location = None
-        if not request.location or request.location == "United States":
+        if not request.location:
             if http_request:
                 detected_location = await detect_location_from_ip(http_request)
                 if detected_location:
                     logger.info(f"Detected location from IP: {detected_location}")
         
-        effective_location = detected_location or request.location or "United States"
+        effective_location = request.location or detected_location or "United States"
         tenant_id = os.getenv("TENANT_ID", "default")
         
         if not enhanced_analyzer or not enhanced_analyzer._df_client:
@@ -4569,13 +4569,13 @@ async def get_ai_topic_suggestions(
         
         # Detect location from IP if not explicitly specified
         detected_location = None
-        if not request.location or request.location == "United States":
+        if not request.location:
             if http_request:
                 detected_location = await detect_location_from_ip(http_request)
                 if detected_location:
                     logger.info(f"Detected location from IP: {detected_location}")
         
-        effective_location = detected_location or request.location or "United States"
+        effective_location = request.location or detected_location or "United States"
         tenant_id = os.getenv("TENANT_ID", "default")
         
         # Use TopicRecommendationEngine for AI-powered topic generation
