@@ -2492,6 +2492,9 @@ class DataForSEOClient:
                 # Extract total_count from API response (this is the actual mentions count)
                 api_total_count = first_result.get("total_count", 0) or 0
                 
+                # Log for debugging
+                logger.info(f"LLM mentions response parsing: api_total_count={api_total_count}, total_mentions={total_mentions}, first_result keys={list(first_result.keys())[:10]}")
+                
                 # Always use api_total_count if it's available and > 0, as it's the authoritative count
                 final_mentions_count = api_total_count if api_total_count > 0 else total_mentions
                 
