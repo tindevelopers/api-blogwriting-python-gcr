@@ -64,18 +64,27 @@ elif [ -n "$DATAFORSEO_API_KEY" ] && [ -n "$DATAFORSEO_API_SECRET" ]; then
     echo "Using credentials from environment variables"
 else
     # Prompt interactively
-    echo "Please enter your DataForSEO API credentials:"
-    read -sp "DataForSEO API Key: " DATAFORSEO_API_KEY
+    echo "Please enter your DataForSEO credentials:"
     echo ""
-    read -sp "DataForSEO API Secret: " DATAFORSEO_API_SECRET
+    echo "DataForSEO uses Basic Authentication:"
+    echo "  - Username/Email address (used as API Key)"
+    echo "  - API Key (used as API Secret)"
+    echo ""
+    read -p "DataForSEO Username/Email: " DATAFORSEO_API_KEY
+    read -sp "DataForSEO API Key: " DATAFORSEO_API_SECRET
     echo ""
 fi
 
 # Validate credentials are provided
 if [ -z "$DATAFORSEO_API_KEY" ] || [ -z "$DATAFORSEO_API_SECRET" ]; then
-    echo "❌ Error: DataForSEO API Key and Secret are required"
-    echo "Usage: $0 [api-key] [api-secret]"
+    echo "❌ Error: DataForSEO Username/Email and API Key are required"
+    echo ""
+    echo "Usage: $0 [username-email] [api-key]"
     echo "   Or: DATAFORSEO_API_KEY=xxx DATAFORSEO_API_SECRET=yyy $0"
+    echo ""
+    echo "Where:"
+    echo "  username-email = Your DataForSEO account email/username"
+    echo "  api-key = Your DataForSEO API key"
     exit 1
 fi
 
