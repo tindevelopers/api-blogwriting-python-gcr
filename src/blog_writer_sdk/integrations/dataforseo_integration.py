@@ -1914,24 +1914,30 @@ class DataForSEOClient:
             # Debug: Log response structure
             logger.info(f"DataForSEO generate_text response structure: data_keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
             if isinstance(data, dict) and data.get("tasks"):
-                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(data['tasks'][0].keys()) if data['tasks'] else 'no_tasks'}")
-                if data["tasks"][0].get("result"):
-                    logger.info(f"DataForSEO result structure: result_count={len(data['tasks'][0]['result'])}, first_result_keys={list(data['tasks'][0]['result'][0].keys()) if data['tasks'][0]['result'] else 'no_results'}")
-            
-            # Process response
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                first_task = data["tasks"][0]
+                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(first_task.keys())}, result_count={first_task.get('result_count', 0)}")
                 
-                generated_text = result_item.get("text", "")
-                tokens_used = result_item.get("tokens_used", 0)
+                # Check result field - it might be None, empty list, or have data
+                result_data = first_task.get("result")
+                logger.info(f"DataForSEO result field: type={type(result_data)}, value={result_data}, is_empty={not result_data if isinstance(result_data, list) else result_data is None}")
                 
-                logger.info(f"DataForSEO generate_text parsed: text_length={len(generated_text)}, tokens_used={tokens_used}, result_item_keys={list(result_item.keys())}")
-                
-                return {
-                    "text": generated_text,
-                    "tokens_used": tokens_used,
-                    "metadata": result_item.get("metadata", {})
-                }
+                if result_data and isinstance(result_data, list) and len(result_data) > 0:
+                    result_item = result_data[0]
+                    logger.info(f"DataForSEO result structure: result_count={len(result_data)}, first_result_keys={list(result_item.keys()) if isinstance(result_item, dict) else 'not_dict'}")
+                    
+                    generated_text = result_item.get("text", "") if isinstance(result_item, dict) else ""
+                    tokens_used = result_item.get("tokens_used", 0) if isinstance(result_item, dict) else 0
+                    
+                    logger.info(f"DataForSEO generate_text parsed: text_length={len(generated_text)}, tokens_used={tokens_used}, result_item_keys={list(result_item.keys()) if isinstance(result_item, dict) else 'N/A'}")
+                    
+                    return {
+                        "text": generated_text,
+                        "tokens_used": tokens_used,
+                        "metadata": result_item.get("metadata", {}) if isinstance(result_item, dict) else {}
+                    }
+                else:
+                    # Log the actual result value for debugging
+                    logger.warning(f"DataForSEO generate_text: result is empty or invalid. result={result_data}, result_type={type(result_data)}")
             
             logger.warning(f"DataForSEO generate_text: No tasks or result found in response. Returning empty text.")
             return {"text": "", "tokens_used": 0, "metadata": {}}
