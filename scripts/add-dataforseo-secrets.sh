@@ -64,18 +64,27 @@ elif [ -n "$DATAFORSEO_API_KEY" ] && [ -n "$DATAFORSEO_API_SECRET" ]; then
     echo "Using credentials from environment variables"
 else
     # Prompt interactively
-    echo "Please enter your DataForSEO API credentials:"
-    read -sp "DataForSEO API Key: " DATAFORSEO_API_KEY
+    echo "Please enter your DataForSEO credentials:"
     echo ""
-    read -sp "DataForSEO API Secret: " DATAFORSEO_API_SECRET
+    echo "DataForSEO uses Basic Authentication:"
+    echo "  - Username/Email address (used as API Key)"
+    echo "  - API Key (used as API Secret)"
+    echo ""
+    read -p "DataForSEO Username/Email: " DATAFORSEO_API_KEY
+    read -sp "DataForSEO API Key: " DATAFORSEO_API_SECRET
     echo ""
 fi
 
 # Validate credentials are provided
 if [ -z "$DATAFORSEO_API_KEY" ] || [ -z "$DATAFORSEO_API_SECRET" ]; then
-    echo "❌ Error: DataForSEO API Key and Secret are required"
-    echo "Usage: $0 [api-key] [api-secret]"
+    echo "❌ Error: DataForSEO Username/Email and API Key are required"
+    echo ""
+    echo "Usage: $0 [username-email] [api-key]"
     echo "   Or: DATAFORSEO_API_KEY=xxx DATAFORSEO_API_SECRET=yyy $0"
+    echo ""
+    echo "Where:"
+    echo "  username-email = Your DataForSEO account email/username"
+    echo "  api-key = Your DataForSEO API key"
     exit 1
 fi
 
@@ -83,13 +92,17 @@ echo ""
 
 # Add to dev environment
 echo "=== DEV Environment ==="
+echo "Adding Username/Email as DATAFORSEO_API_KEY..."
 add_secret_value "blog-writer-env-dev" "DATAFORSEO_API_KEY" "$DATAFORSEO_API_KEY"
+echo "Adding API Key as DATAFORSEO_API_SECRET..."
 add_secret_value "blog-writer-env-dev" "DATAFORSEO_API_SECRET" "$DATAFORSEO_API_SECRET"
 echo ""
 
 # Add to staging environment
 echo "=== STAGING Environment ==="
+echo "Adding Username/Email as DATAFORSEO_API_KEY..."
 add_secret_value "blog-writer-env-staging" "DATAFORSEO_API_KEY" "$DATAFORSEO_API_KEY"
+echo "Adding API Key as DATAFORSEO_API_SECRET..."
 add_secret_value "blog-writer-env-staging" "DATAFORSEO_API_SECRET" "$DATAFORSEO_API_SECRET"
 echo ""
 
@@ -98,7 +111,9 @@ echo "=== PRODUCTION Environment ==="
 if [ -z "$SKIP_PROD" ]; then
     read -p "Add to production? (y/N): " CONFIRM_PROD
     if [[ "$CONFIRM_PROD" =~ ^[Yy]$ ]]; then
+        echo "Adding Username/Email as DATAFORSEO_API_KEY..."
         add_secret_value "blog-writer-env-prod" "DATAFORSEO_API_KEY" "$DATAFORSEO_API_KEY"
+        echo "Adding API Key as DATAFORSEO_API_SECRET..."
         add_secret_value "blog-writer-env-prod" "DATAFORSEO_API_SECRET" "$DATAFORSEO_API_SECRET"
     else
         echo "⏭️  Skipping production"
@@ -110,6 +125,10 @@ fi
 echo ""
 echo "✅ DataForSEO secrets added successfully!"
 echo ""
+echo "📋 Credential Mapping:"
+echo "   Username/Email → DATAFORSEO_API_KEY"
+echo "   API Key → DATAFORSEO_API_SECRET"
+echo ""
 echo "📋 Next steps:"
 echo "1. Redeploy each environment to pick up the new secrets:"
 echo "   - Push to 'develop' branch for dev"
@@ -118,4 +137,9 @@ echo "   - Push to 'main' branch for production"
 echo ""
 echo "2. Verify the secrets are accessible:"
 echo "   gcloud secrets versions access latest --secret=blog-writer-env-dev --project=$PROJECT_ID | jq '.DATAFORSEO_API_KEY'"
+echo ""
+echo "3. Test the endpoint after deployment:"
+echo "   curl -X POST https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/blog/generate-enhanced \\"
+echo "     -H 'Content-Type: application/json' \\"
+echo "     -d '{\"topic\":\"Test\",\"keywords\":[\"test\"],\"blog_type\":\"tutorial\",\"length\":\"short\"}'"
 

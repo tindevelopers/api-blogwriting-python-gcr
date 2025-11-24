@@ -1,0 +1,96 @@
+{
+  "seed_keywords": [
+    "concrete remediation",
+    "remediation foundation",
+    "foundation repair",
+    "repair for",
+    "for homeowners"
+  ],
+  "content_objective": "I want to write articles about concrete remediation and foundation repair for homeowners",
+  "target_audience": "general consumers",
+  "industry": "Construction",
+  "content_goals": [
+    "SEO & Rankings",
+    "Engagement"
+  ],
+  "location": "France",
+  "language": "en",
+  "topic_suggestions": [],
+  "content_gaps": [],
+  "citation_opportunities": [],
+  "ai_metrics": {
+    "search_volume": {
+      "concrete remediation": {
+        "ai_search_volume": 0,
+        "ai_monthly_searches": [],
+        "ai_trend": 0.0
+      },
+      "remediation foundation": {
+        "ai_search_volume": 0,
+        "ai_monthly_searches": [],
+        "ai_trend": 0.0
+      },
+      "foundation repair": {
+        "ai_search_volume": 0,
+        "ai_monthly_searches": [],
+        "ai_trend": 0.0
+      },
+      "repair for": {
+        "ai_search_volume": 0,
+        "ai_monthly_searches": [],
+        "ai_trend": 0.0
+      },
+      "for homeowners": {
+        "ai_search_volume": 0,
+        "ai_monthly_searches": [],
+        "ai_trend": 0.0
+      }
+    },
+    "llm_mentions": {
+      "concrete remediation": {
+        "target": "concrete remediation",
+        "target_type": "keyword",
+        "platform": "chat_gpt",
+        "ai_search_volume": 0,
+        "mentions_count": 0,
+        "top_pages": [],
+        "top_domains": [],
+        "topics": [],
+        "aggregated_metrics": {},
+        "metadata": {}
+      },
+      "remediation foundation": {
+        "target": "remediation foundation",
+        "target_type": "keyword",
+        "platform": "chat_gpt",
+        "ai_search_volume": 0,
+        "mentions_count": 0,
+        "top_pages": [],
+        "top_domains": [],
+        "topics": [],
+        "aggregated_metrics": {},
+        "metadata": {}
+      },
+      "foundation repair": {
+        "target": "foundation repair",
+        "target_type": "keyword",
+        "platform": "chat_gpt",
+        "ai_search_volume": 0,
+        "mentions_count": 0,
+        "top_pages": [],
+        "top_domains": [],
+        "topics": [],
+        "aggregated_metrics": {},
+        "metadata": {}
+      }
+    }
+  },
+  "summary": {
+    "total_suggestions": 0,
+    "high_priority_topics": 0,
+    "trending_topics": 0,
+    "low_competition_topics": 0,
+    "content_gaps_count": 0,
+    "citation_opportunities_count": 0
+  }
+}

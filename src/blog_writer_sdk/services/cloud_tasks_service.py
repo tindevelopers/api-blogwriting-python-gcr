@@ -106,6 +106,61 @@ class CloudTasksService:
             logger.error(f"Failed to create Cloud Task: {e}")
             raise
     
+    def create_image_generation_task(
+        self,
+        request_data: Dict[str, Any],
+        worker_url: str,
+        schedule_time: Optional[int] = None,
+        queue_name: Optional[str] = None
+    ) -> str:
+        """
+        Create a Cloud Task for image generation.
+        
+        Args:
+            request_data: Image generation request data
+            worker_url: URL of the worker service endpoint
+            schedule_time: Optional Unix timestamp to schedule the task
+            queue_name: Optional queue name (defaults to image-generation-queue)
+            
+        Returns:
+            Task name/ID
+        """
+        if not CLOUD_TASKS_AVAILABLE or self.client is None:
+            logger.warning("Cloud Tasks not available, returning placeholder task name")
+            return "in-memory-task-placeholder"
+        
+        # Use image-specific queue if provided, otherwise use default
+        queue_path = self.queue_path
+        if queue_name:
+            queue_path = self.client.queue_path(self.project_id, self.location, queue_name)
+        
+        try:
+            # Prepare HTTP request
+            http_request = tasks_v2.HttpRequest(
+                http_method=tasks_v2.HttpMethod.POST,
+                url=worker_url,
+                headers={"Content-Type": "application/json"},
+                body=json.dumps(request_data).encode()
+            )
+            
+            # Create task with shorter timeout for images (images are faster than blogs)
+            task = tasks_v2.Task(
+                http_request=http_request,
+                schedule_time=schedule_time if schedule_time else None
+            )
+            
+            # Create the task
+            response = self.client.create_task(
+                request={"parent": queue_path, "task": task}
+            )
+            
+            logger.info(f"Created Image Generation Cloud Task: {response.name}")
+            return response.name
+            
+        except Exception as e:
+            logger.error(f"Failed to create Image Generation Cloud Task: {e}")
+            raise
+    
     def get_task_status(self, task_name: str) -> Dict[str, Any]:
         """
         Get task status (requires Cloud Tasks API v2beta3 or monitoring).

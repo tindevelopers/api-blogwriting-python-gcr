@@ -17,6 +17,13 @@ from .media_storage import (
     create_cloudflare_r2_storage,
     create_media_storage_manager
 )
+from .google_reviews_client import GoogleReviewsClient
+from .review_aggregation import (
+    ReviewAggregationService,
+    Review,
+    ReviewSource,
+    BusinessReviewSummary,
+)
 
 __all__ = [
     "SupabaseClient",
@@ -31,4 +38,9 @@ __all__ = [
     "create_cloudinary_storage",
     "create_cloudflare_r2_storage",
     "create_media_storage_manager",
+    "GoogleReviewsClient",
+    "ReviewAggregationService",
+    "Review",
+    "ReviewSource",
+    "BusinessReviewSummary",
 ]

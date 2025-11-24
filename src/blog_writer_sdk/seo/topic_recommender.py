@@ -101,12 +101,13 @@ class TopicRecommendationEngine:
         Returns:
             TopicRecommendationResult with recommended topics
         """
-        logger.info(f"Recommending topics for {len(seed_keywords)} seed keywords")
+        logger.info(f"🔍 Recommending topics for {len(seed_keywords)} seed keywords: {seed_keywords}")
         
         all_topics: List[RecommendedTopic] = []
         
         # Step 1: Get keyword suggestions from DataForSEO
         if self.df_client:
+            logger.info(f"✅ DataForSEO client available, starting keyword analysis...")
             try:
                 # Get related keywords and suggestions
                 for seed in seed_keywords[:5]:  # Limit to avoid too many API calls
@@ -144,20 +145,40 @@ class TopicRecommendationEngine:
                         elif isinstance(suggestions, dict) and "items" in suggestions:
                             suggestions_list = [s.get("keyword", "") for s in suggestions.get("items", [])[:30] if s.get("keyword")]
                         
+                        logger.info(f"📊 Seed '{seed}': {len(suggestions_list)} suggestions, {len(related_keywords_list)} related keywords")
+                        
                         # Combine and analyze
-                        candidate_keywords = suggestions_list + related_keywords_list
+                        candidate_keywords = (suggestions_list or []) + (related_keywords_list or [])
+                        
+                        if not candidate_keywords:
+                            logger.warning(f"⚠️ No candidate keywords found for seed '{seed}'")
                         
                         # Analyze each candidate
-                        for keyword in set(candidate_keywords):
-                            if not keyword or len(keyword) < 3:
-                                continue
+                        if candidate_keywords:
+                            logger.info(f"Analyzing {len(set(candidate_keywords))} candidate keywords for seed '{seed}'")
+                            analyzed_count = 0
+                            filtered_count = 0
+                            added_count = 0
+                            for keyword in set(candidate_keywords):
+                                if not keyword or len(keyword) < 3:
+                                    continue
+                                
+                                topic = await self._analyze_topic_potential(
+                                    keyword, location, language
+                                )
+                                
+                                if topic:
+                                    analyzed_count += 1
+                                    if self._meets_criteria(topic, min_search_volume, max_difficulty):
+                                        all_topics.append(topic)
+                                        added_count += 1
+                                        logger.debug(f"✅ Topic added: {topic.topic} (volume={topic.search_volume}, difficulty={topic.difficulty:.1f})")
+                                    else:
+                                        filtered_count += 1
+                                        logger.debug(f"❌ Topic filtered: {topic.topic} (volume={topic.search_volume}<{min_search_volume} or difficulty={topic.difficulty:.1f}>{max_difficulty})")
                             
-                            topic = await self._analyze_topic_potential(
-                                keyword, location, language
-                            )
-                            
-                            if topic and self._meets_criteria(topic, min_search_volume, max_difficulty):
-                                all_topics.append(topic)
+                            if analyzed_count > 0:
+                                logger.info(f"Seed '{seed}': {analyzed_count} analyzed, {filtered_count} filtered, {added_count} added")
                                 
                     except Exception as e:
                         logger.warning(f"Failed to get suggestions for {seed}: {e}")
@@ -170,7 +191,8 @@ class TopicRecommendationEngine:
         if self.google_search:
             try:
                 gap_topics = await self._find_content_gaps(seed_keywords)
-                all_topics.extend(gap_topics)
+                if gap_topics:
+                    all_topics.extend(gap_topics)
             except Exception as e:
                 logger.warning(f"Content gap analysis failed: {e}")
         
@@ -180,7 +202,8 @@ class TopicRecommendationEngine:
                 ai_topics = await self._generate_ai_topics(
                     seed_keywords, location, language
                 )
-                all_topics.extend(ai_topics)
+                if ai_topics:
+                    all_topics.extend(ai_topics)
             except Exception as e:
                 logger.warning(f"AI topic generation failed: {e}")
         
@@ -755,7 +778,12 @@ Return only valid JSON, no markdown formatting."""
                 preferred_provider="anthropic"
             )
             
-            response = await self.ai_generator.generate_content(request, model="claude-3-5-sonnet-20241022")
+            # Use provider_manager to generate content
+            # Note: model is set in AIRequest preferred_provider, not passed separately
+            response = await self.ai_generator.provider_manager.generate_content(
+                request, 
+                preferred_provider="anthropic"
+            )
             
             # Parse response
             import json
@@ -801,12 +829,17 @@ Return only valid JSON, no markdown formatting."""
         topics: List[RecommendedTopic]
     ) -> List[RecommendedTopic]:
         """Remove duplicate topics based on primary keyword."""
+        if not topics:
+            return []
+        
         seen = set()
         unique = []
         
         for topic in topics:
-            key = topic.primary_keyword.lower().strip()
-            if key not in seen:
+            if not topic:
+                continue
+            key = getattr(topic, 'primary_keyword', '').lower().strip()
+            if key and key not in seen:
                 seen.add(key)
                 unique.append(topic)
         

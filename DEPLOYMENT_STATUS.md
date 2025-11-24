@@ -1,154 +1,90 @@
-# Cloud Tasks Deployment Status
+# Deployment Status and Monitoring
 
-**Date:** 2025-11-15  
-**Status:** ⚠️ **DEPLOYMENT IN PROGRESS**
+## Current Status
 
----
-
-## ✅ Completed Steps
-
-1. **Git Commit:** ✅
-   - Commit: `5657d34` - "feat: Add Cloud Tasks async blog generation"
-   - Pushed to: `develop` branch
-   - Files: 12 files, 3,099 insertions
-
-2. **Fix Applied:** ✅
-   - Commit: `fe59937` - "fix: Make STABILITY_AI_API_KEY optional in deployment"
-   - Removed `STABILITY_AI_API_KEY` from required secrets
-   - Pushed to: `develop` branch
-
-3. **GitHub Actions:** ✅
-   - Workflow triggered automatically on push to `develop`
-   - Deployment workflow: `.github/workflows/deploy-develop.yml`
+**Latest Commit:** `a4a88da664bf9ee7c62fb4ac9e57b21ef2fe70f2`  
+**Branch:** `develop`  
+**Build Status:** ⏳ Waiting for trigger to fire
 
 ---
 
-## ⚠️ Current Status
+## Issue Identified
 
-### Build Status
-- **Latest Build:** `a4528b62-81b0-4826-b35e-50d13780a904`
-- **Status:** `FAILURE` (due to missing STABILITY_AI_API_KEY secret)
-- **Fix Applied:** Removed secret requirement
-- **New Build:** In progress (triggered by fix commit)
+The Cloud Build trigger `deploy-dev-on-develop` appears to be missing or misconfigured. 
 
-### Service Status
-- **Service:** `blog-writer-api-dev`
-- **Region:** `europe-west1`
-- **URL:** `https://blog-writer-api-dev-kq42l26tuq-ew.a.run.app`
-- **Current Revision:** `blog-writer-api-dev-00098-rxn` (old revision)
-- **Health:** ✅ Service is healthy
-- **Version:** `1.3.0-cloudrun`
-
-### Endpoint Status
-- ✅ `/api/v1/blog/generate-enhanced` - Available
-- ❌ `/api/v1/blog/jobs/{job_id}` - Not yet deployed (new code)
-- ❌ `/api/v1/blog/worker` - Not yet deployed (new code)
+**Attempts Made:**
+1. ✅ Code pushed to `develop` branch successfully
+2. ✅ Manual build prevention safeguard added to `cloudbuild.yaml`
+3. ⚠️ Trigger not found or not accessible
+4. ⚠️ Trigger creation failed (likely connection configuration issue)
 
 ---
 
-## 🔄 Deployment Process
+## Current Cloud Run Service Status
 
-### What Happened
-1. ✅ Code committed and pushed
-2. ✅ GitHub Actions triggered
-3. ❌ Build failed: `STABILITY_AI_API_KEY` secret not found
-4. ✅ Fix applied: Removed secret requirement
-5. ✅ Fix committed and pushed
-6. ⏳ New build in progress
+**Service:** `blog-writer-api-dev`  
+**Region:** `europe-west9`  
+**Status:** ✅ Ready  
+**Latest Revision:** `blog-writer-api-dev-00130-crz`
 
-### Expected Timeline
-- **Build Time:** ~5-10 minutes
-- **Deployment Time:** ~2-3 minutes
-- **Total:** ~7-13 minutes from push
+The service is currently running with a previous deployment.
 
 ---
 
-## 🧪 Verification Steps
+## Next Steps
 
-### Once Deployment Completes:
+### Option 1: Manual Trigger (Temporary)
+If the automatic trigger cannot be configured immediately, you can manually trigger a build:
 
-1. **Check Build Status:**
-   ```bash
-   gcloud builds list --limit=1 --project=api-ai-blog-writer
-   ```
+```bash
+gcloud builds submit \
+  --config cloudbuild.yaml \
+  --substitutions _REGION=europe-west9,_ENV=dev,_SERVICE_NAME=blog-writer-api-dev \
+  --project=api-ai-blog-writer
+```
 
-2. **Check Service Revision:**
-   ```bash
-   gcloud run services describe blog-writer-api-dev \
-     --region=europe-west1 \
-     --project=api-ai-blog-writer \
-     --format="get(status.latestReadyRevisionName)"
-   ```
+**Note:** This will fail due to the safeguard we added. The safeguard checks for `BUILD_TRIGGER_ID` which manual builds don't have.
 
-3. **Test Async Endpoint:**
-   ```bash
-   curl -X POST "https://blog-writer-api-dev-kq42l26tuq-ew.a.run.app/api/v1/blog/generate-enhanced?async_mode=true" \
-     -H "Content-Type: application/json" \
-     -d '{"topic":"Test","keywords":["test"],"use_google_search":false}'
-   ```
-   
-   **Expected:** `{"job_id": "...", "status": "queued", ...}`
+### Option 2: Fix Trigger Configuration
+The trigger needs to be configured via Cloud Console or with proper connection details:
 
-4. **Check New Endpoints:**
-   ```bash
-   curl "https://blog-writer-api-dev-kq42l26tuq-ew.a.run.app/openapi.json" | \
-     python3 -c "import sys, json; d=json.load(sys.stdin); \
-     print('Job endpoint:', '/api/v1/blog/jobs/{job_id}' in d.get('paths', {}))"
-   ```
+1. Go to Cloud Console → Cloud Build → Triggers
+2. Create trigger for `develop` branch
+3. Use `cloudbuild.yaml` as build config
+4. Set substitutions:
+   - `_REGION=europe-west9`
+   - `_ENV=dev`
+   - `_SERVICE_NAME=blog-writer-api-dev`
+
+### Option 3: Temporarily Disable Safeguard
+If you need to deploy immediately, you can temporarily comment out the safeguard check in `cloudbuild.yaml`, deploy, then re-enable it.
 
 ---
 
-## 📝 Next Actions
+## Safeguard Status
 
-1. **Wait for Build to Complete:**
-   - Monitor: `gcloud builds list --limit=1`
-   - Check status: Should show `SUCCESS`
-
-2. **Verify Deployment:**
-   - Check revision: Should show new revision number
-   - Test endpoints: Should return `job_id` for async requests
-
-3. **If Build Fails Again:**
-   - Check build logs: `gcloud builds log <BUILD_ID>`
-   - Review error messages
-   - Apply fixes and redeploy
+✅ **Manual Build Prevention:** Active  
+The `cloudbuild.yaml` includes a check for `BUILD_TRIGGER_ID` to ensure only trigger-based builds proceed.
 
 ---
 
-## 🔍 Troubleshooting
+## Monitoring Script
 
-### If Deployment Still Fails:
+A monitoring script has been created: `check_and_monitor.sh`
 
-1. **Check Build Logs:**
-   ```bash
-   gcloud builds log <BUILD_ID> --project=api-ai-blog-writer
-   ```
-
-2. **Check Service Status:**
-   ```bash
-   gcloud run services describe blog-writer-api-dev \
-     --region=europe-west1 \
-     --project=api-ai-blog-writer
-   ```
-
-3. **Check GitHub Actions:**
-   - Go to: GitHub → Actions tab
-   - Find: "Deploy Develop to Europe-West1" workflow
-   - Check: Latest run status and logs
+Run it to monitor deployments:
+```bash
+./check_and_monitor.sh
+```
 
 ---
 
-## ✅ Success Criteria
+## GitHub Status Update
 
-Deployment is successful when:
-- [ ] Build status shows `SUCCESS`
-- [ ] Service revision is updated (new number)
-- [ ] `/api/v1/blog/jobs/{job_id}` endpoint appears in OpenAPI
-- [ ] `/api/v1/blog/worker` endpoint appears in OpenAPI
-- [ ] Async endpoint returns `job_id` when `async_mode=true`
-- [ ] Job status endpoint returns job information
+Once a successful build completes, the status will be saved to `deployment_status.json` with:
+- Build ID
+- Trigger ID (verification)
+- Service URL
+- Commit SHA
+- Build status
 
----
-
-**Last Updated:** 2025-11-15  
-**Next Check:** Wait 5-10 minutes, then verify endpoints

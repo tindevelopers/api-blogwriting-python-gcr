@@ -1,0 +1,149 @@
+{
+  "enhanced_analysis": {
+    "dog grooming": {
+      "search_volume": 301000,
+      "global_search_volume": 0,
+      "search_volume_by_country": {},
+      "monthly_searches": [
+        {
+          "year": 2025,
+          "month": 10,
+          "search_volume": 201000
+        },
+        {
+          "year": 2025,
+          "month": 9,
+          "search_volume": 201000
+        },
+        {
+          "year": 2025,
+          "month": 8,
+          "search_volume": 201000
+        },
+        {
+          "year": 2025,
+          "month": 7,
+          "search_volume": 246000
+        },
+        {
+          "year": 2025,
+          "month": 6,
+          "search_volume": 246000
+        },
+        {
+          "year": 2025,
+          "month": 5,
+          "search_volume": 246000
+        },
+        {
+          "year": 2025,
+          "month": 4,
+          "search_volume": 301000
+        },
+        {
+          "year": 2025,
+          "month": 3,
+          "search_volume": 450000
+        },
+        {
+          "year": 2025,
+          "month": 2,
+          "search_volume": 368000
+        },
+        {
+          "year": 2025,
+          "month": 1,
+          "search_volume": 368000
+        },
+        {
+          "year": 2024,
+          "month": 12,
+          "search_volume": 368000
+        },
+        {
+          "year": 2024,
+          "month": 11,
+          "search_volume": 368000
+        }
+      ],
+      "difficulty": "medium",
+      "difficulty_score": 50.0,
+      "competition": 0.0,
+      "cpc": 2.74,
+      "cpc_currency": null,
+      "cps": null,
+      "clicks": null,
+      "trend_score": -0.013404825737265416,
+      "recommended": true,
+      "reason": "Good search volume with manageable competition",
+      "related_keywords": [
+        "best dog grooming",
+        "top dog grooming",
+        "free dog grooming",
+        "online dog grooming",
+        "professional dog grooming",
+        "learn dog grooming",
+        "understand dog grooming",
+        "master dog grooming"
+      ],
+      "related_keywords_enhanced": [],
+      "long_tail_keywords": [
+        "how to use dog grooming",
+        "what is dog grooming",
+        "why dog grooming is important",
+        "benefits of dog grooming",
+        "dog grooming for beginners",
+        "dog grooming problems",
+        "dog grooming challenges"
+      ],
+      "questions": [],
+      "topics": [],
+      "keyword_ideas": [],
+      "parent_topic": "Dog Grooming",
+      "category_type": "topic",
+      "cluster_score": 0.5,
+      "ai_search_volume": 0,
+      "ai_trend": 0.0,
+      "ai_monthly_searches": [],
+      "traffic_potential": null,
+      "serp_features": [],
+      "serp_feature_counts": {},
+      "primary_intent": null,
+      "intent_probabilities": {},
+      "also_rank_for": [],
+      "also_talk_about": [],
+      "top_competitors": [],
+      "first_seen": null,
+      "last_updated": null
+    }
+  },
+  "total_keywords": 1,
+  "original_keywords": [
+    "dog grooming"
+  ],
+  "suggested_keywords": [],
+  "clusters": [
+    {
+      "parent_topic": "Dog Grooming",
+      "keywords": [
+        "dog grooming"
+      ],
+      "cluster_score": 0.5,
+      "category_type": "topic",
+      "keyword_count": 1
+    }
+  ],
+  "cluster_summary": {
+    "total_keywords": 1,
+    "cluster_count": 1,
+    "unclustered_count": 0
+  },
+  "location": {
+    "used": "France",
+    "detected_from_ip": true,
+    "specified": false
+  },
+  "discovery": {},
+  "serp_analysis": {},
+  "serp_ai_summary": {}
+}

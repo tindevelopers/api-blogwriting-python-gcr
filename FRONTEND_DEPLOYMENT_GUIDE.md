@@ -2,7 +2,7 @@
 
 **Version**: 1.3.2  
 **Last Updated**: 2025-11-15  
-**API Base URL**: `https://blog-writer-api-dev-kq42l26tuq-ew.a.run.app`
+**API Base URL**: `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app`
 
 ---
 
@@ -23,7 +23,7 @@
 ### Base Configuration
 
 ```typescript
-const API_BASE_URL = 'https://blog-writer-api-dev-kq42l26tuq-ew.a.run.app';
+const API_BASE_URL = 'https://blog-writer-api-dev-kq42l26tuq-od.a.run.app';
 
 const apiConfig = {
   baseURL: API_BASE_URL,
@@ -340,7 +340,7 @@ interface KeywordAnalysisResponse {
 ```typescript
 // api-client.ts
 
-const API_BASE_URL = 'https://blog-writer-api-dev-kq42l26tuq-ew.a.run.app';
+const API_BASE_URL = 'https://blog-writer-api-dev-kq42l26tuq-od.a.run.app';
 
 class BlogWriterAPI {
   private baseURL: string;
