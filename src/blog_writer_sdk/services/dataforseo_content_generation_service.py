@@ -365,7 +365,8 @@ class DataForSEOContentGenerationService:
             Dictionary with subtopics list and metadata
         """
         if not self.is_configured:
-            raise ValueError("DataForSEO Content Generation Service not configured")
+            logger.warning("DataForSEO Content Generation Service not configured, returning empty subtopics")
+            return {"subtopics": [], "count": 0, "cost": 0.0, "metadata": {}}
         
         try:
             result = await self.client.generate_subtopics(
@@ -383,8 +384,9 @@ class DataForSEOContentGenerationService:
             }
             
         except Exception as e:
-            logger.error(f"DataForSEO subtopic generation failed: {e}")
-            raise
+            # Log error but don't raise - subtopics are optional
+            logger.warning(f"DataForSEO subtopic generation failed (continuing without subtopics): {e}")
+            return {"subtopics": [], "count": 0, "cost": 0.0, "metadata": {}}
     
     async def generate_text(
         self,

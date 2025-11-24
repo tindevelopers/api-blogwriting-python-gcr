@@ -2090,6 +2090,11 @@ class DataForSEOClient:
             )
             
             # Process response
+            # Handle fallback data structure (from _fallback_data)
+            if data.get("status") == "error":
+                logger.warning(f"DataForSEO subtopic generation returned error status, returning empty subtopics")
+                return {"subtopics": [], "count": 0, "metadata": {}}
+            
             if data.get("tasks") and data["tasks"][0].get("result"):
                 result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
                 subtopics = result_item.get("subtopics", [])
@@ -2100,11 +2105,15 @@ class DataForSEOClient:
                     "metadata": result_item.get("metadata", {})
                 }
             
+            # No tasks or empty result - return empty subtopics (not an error)
+            logger.info(f"DataForSEO subtopic generation returned no results, returning empty subtopics")
             return {"subtopics": [], "count": 0, "metadata": {}}
             
         except Exception as e:
-            logger.error(f"DataForSEO subtopic generation failed: {e}")
-            raise
+            # Log error but return empty subtopics instead of raising
+            # Subtopics are optional - content generation can continue without them
+            logger.warning(f"DataForSEO subtopic generation failed (returning empty subtopics): {e}")
+            return {"subtopics": [], "count": 0, "metadata": {}}
     
     @monitor_performance("dataforseo_get_backlinks")
     async def get_backlinks(
