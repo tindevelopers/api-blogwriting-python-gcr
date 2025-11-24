@@ -1913,9 +1913,11 @@ class DataForSEOClient:
             
             # Debug: Log response structure
             logger.info(f"DataForSEO generate_text response structure: data_keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
+            if isinstance(data, dict):
+                logger.info(f"DataForSEO response status: status_code={data.get('status_code')}, status_message={data.get('status_message')}")
             if isinstance(data, dict) and data.get("tasks"):
                 first_task = data["tasks"][0]
-                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(first_task.keys())}, result_count={first_task.get('result_count', 0)}")
+                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(first_task.keys())}, result_count={first_task.get('result_count', 0)}, task_status_code={first_task.get('status_code')}, task_status_message={first_task.get('status_message')}")
                 
                 # Check result field - it might be None, empty list, or have data
                 result_data = first_task.get("result")
