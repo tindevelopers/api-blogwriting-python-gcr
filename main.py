@@ -1218,7 +1218,7 @@ async def generate_blog_enhanced(
                 logger.warning("DataForSEO Content Generation not configured, falling back to pipeline")
                 USE_DATAFORSEO = False
             else:
-                # Map blog type
+                # Map blog type (all 28 blog types supported)
                 blog_type_map = {
                     BlogContentType.BRAND: DataForSEOBlogType.BRAND,
                     BlogContentType.TOP_10: DataForSEOBlogType.TOP_10,
@@ -1227,6 +1227,28 @@ async def generate_blog_enhanced(
                     BlogContentType.COMPARISON: DataForSEOBlogType.COMPARISON,
                     BlogContentType.GUIDE: DataForSEOBlogType.GUIDE,
                     BlogContentType.CUSTOM: DataForSEOBlogType.CUSTOM,
+                    # New blog types (Top 80% of popular formats)
+                    BlogContentType.TUTORIAL: DataForSEOBlogType.TUTORIAL,
+                    BlogContentType.LISTICLE: DataForSEOBlogType.LISTICLE,
+                    BlogContentType.CASE_STUDY: DataForSEOBlogType.CASE_STUDY,
+                    BlogContentType.NEWS: DataForSEOBlogType.NEWS,
+                    BlogContentType.OPINION: DataForSEOBlogType.OPINION,
+                    BlogContentType.INTERVIEW: DataForSEOBlogType.INTERVIEW,
+                    BlogContentType.FAQ: DataForSEOBlogType.FAQ,
+                    BlogContentType.CHECKLIST: DataForSEOBlogType.CHECKLIST,
+                    BlogContentType.TIPS: DataForSEOBlogType.TIPS,
+                    BlogContentType.DEFINITION: DataForSEOBlogType.DEFINITION,
+                    BlogContentType.BENEFITS: DataForSEOBlogType.BENEFITS,
+                    BlogContentType.PROBLEM_SOLUTION: DataForSEOBlogType.PROBLEM_SOLUTION,
+                    BlogContentType.TREND_ANALYSIS: DataForSEOBlogType.TREND_ANALYSIS,
+                    BlogContentType.STATISTICS: DataForSEOBlogType.STATISTICS,
+                    BlogContentType.RESOURCE_LIST: DataForSEOBlogType.RESOURCE_LIST,
+                    BlogContentType.TIMELINE: DataForSEOBlogType.TIMELINE,
+                    BlogContentType.MYTH_BUSTING: DataForSEOBlogType.MYTH_BUSTING,
+                    BlogContentType.BEST_PRACTICES: DataForSEOBlogType.BEST_PRACTICES,
+                    BlogContentType.GETTING_STARTED: DataForSEOBlogType.GETTING_STARTED,
+                    BlogContentType.ADVANCED: DataForSEOBlogType.ADVANCED,
+                    BlogContentType.TROUBLESHOOTING: DataForSEOBlogType.TROUBLESHOOTING,
                 }
                 df_blog_type = blog_type_map.get(request.blog_type or BlogContentType.CUSTOM, DataForSEOBlogType.CUSTOM)
                 
