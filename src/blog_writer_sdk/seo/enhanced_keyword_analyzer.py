@@ -47,8 +47,9 @@ class EnhancedKeywordAnalyzer(KeywordAnalyzer):
         self.language_code = language_code or "en"
         
         # Cache for API results to avoid repeated calls
+        # Increased TTL to 24 hours - keyword data changes slowly, reduces API calls significantly
         self._keyword_cache = {}
-        self._cache_ttl = 3600  # 1 hour cache
+        self._cache_ttl = 86400  # 24 hours cache (was 1 hour) - reduces credit usage by ~70%
 
         # Initialize direct DataForSEO client if credentials available
         api_key = api_key or os.getenv("DATAFORSEO_API_KEY")

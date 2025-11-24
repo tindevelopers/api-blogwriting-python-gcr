@@ -19,6 +19,7 @@ class AIProviderType(str, Enum):
     GOOGLE = "google"
     COHERE = "cohere"
     HUGGINGFACE = "huggingface"
+    DATAFORSEO = "dataforseo"
 
 
 class ContentType(str, Enum):

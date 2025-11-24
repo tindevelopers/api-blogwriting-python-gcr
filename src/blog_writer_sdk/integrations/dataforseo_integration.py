@@ -53,7 +53,11 @@ class DataForSEOClient:
         self.language_code = language_code or os.getenv("DATAFORSEO_LANGUAGE", "en")
         self.is_configured = bool(self.api_key and self.api_secret)
         self._cache = {}
-        self._cache_ttl = 3600  # 1 hour cache
+        # Increased cache TTL to reduce API calls:
+        # - Keyword data changes slowly, safe to cache for 24 hours
+        # - SERP data more dynamic, cached separately with shorter TTL
+        self._cache_ttl = 86400  # 24 hours for keyword data (was 1 hour)
+        self._serp_cache_ttl = 21600  # 6 hours for SERP data (more dynamic)
     
     async def initialize_credentials(self, tenant_id: str):
         # If already configured from constructor, skip re-initialization
@@ -225,6 +229,14 @@ class DataForSEOClient:
                 if not isinstance(json_data, dict):
                     logger.warning(f"DataForSEO API returned non-dict response for {endpoint}: {type(json_data)}")
                     return self._fallback_data(endpoint, payload)
+                
+                # Debug: Log full response structure for AI optimization endpoints
+                if "ai_optimization" in endpoint or "keywords_data/ai_optimization" in endpoint:
+                    logger.info(f"DataForSEO {endpoint} FULL RESPONSE: {json.dumps(json_data, default=str)[:2000]}")
+                    if json_data.get("tasks") and len(json_data["tasks"]) > 0:
+                        task = json_data["tasks"][0]
+                        logger.info(f"Task full structure: {json.dumps(task, default=str)[:1500]}")
+                
                 return json_data
             except Exception as json_error:
                 logger.error(f"Failed to parse JSON response for {endpoint}: {json_error}")
@@ -264,7 +276,9 @@ class DataForSEOClient:
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
                 if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    logger.info(f"✅ Cache HIT for search volume: {keywords[:3]} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for search volume: {keywords[:3]} (making API call)")
             
             # Prepare API request
             payload = [{
@@ -326,7 +340,9 @@ class DataForSEOClient:
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
                 if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    logger.info(f"✅ Cache HIT for keyword difficulty: {keywords[:3]} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for keyword difficulty: {keywords[:3]} (making API call)")
             
             # Prepare API request
             payload = [{
@@ -451,60 +467,257 @@ class DataForSEOClient:
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
                 if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    logger.info(f"✅ Cache HIT for AI search volume: {keywords[:3]} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for AI search volume: {keywords[:3]} (making API call)")
             
             # Prepare API request for AI optimization endpoint
+            # Note: AI optimization endpoints don't accept language_code parameter
             payload = [{
                 "keywords": keywords,
-                "location_name": location_name,
-                "language_code": language_code
+                "location_name": location_name
             }]
             
-            data = await self._make_request("keywords_data/ai_optimization/search_volume/live", payload, tenant_id)
+            # Based on DataForSEO API documentation and testing:
+            # - LLM Mentions works at: ai_optimization/llm_mentions/search/live
+            # - AI Keyword Data API is mentioned in docs but exact path needs verification
+            # 
+            # Try the most likely correct path based on API structure:
+            # ai_optimization/keyword_data/live (following the pattern of llm_mentions)
+            # If that fails, try alternatives and log the error
             
-            # Debug: Log response structure for troubleshooting
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                sample_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
-                logger.debug(f"DataForSEO AI optimization response structure: {list(sample_result.keys())}")
+            # Based on DataForSEO API documentation:
+            # Correct endpoint path: "ai_optimization/ai_keyword_data/keywords_search_volume/live"
+            # Source: https://docs.dataforseo.com/v3/ai_optimization/ai_keyword_data/keywords_search_volume/live/
+            endpoint_paths_to_try = [
+                "ai_optimization/ai_keyword_data/keywords_search_volume/live",  # ✅ CORRECT PATH from official docs
+                "ai_optimization/keyword_data/search_volume/live",  # Alternative (from endpoint name)
+                "ai_optimization/keyword_data/live",  # Alternative (without search_volume)
+                "keywords_data/ai_optimization/search_volume/live",  # Original (known to be wrong)
+            ]
+            
+            data = None
+            last_error = None
+            
+            for endpoint_path in endpoint_paths_to_try:
+                try:
+                    data = await self._make_request(endpoint_path, payload, tenant_id)
+                    
+                    # Check if we got an "Invalid Path" error
+                    if data.get("tasks") and len(data["tasks"]) > 0:
+                        task = data["tasks"][0]
+                        task_status = task.get("status_code")
+                        
+                        if task_status == 20000:
+                            # Success! This is the correct path
+                            logger.info(f"✅ Found correct AI search volume endpoint: {endpoint_path}")
+                            break
+                        elif task_status == 40204:
+                            # Path is correct but needs subscription
+                            logger.info(f"✅ AI search volume endpoint path is correct: {endpoint_path} (subscription needed)")
+                            break
+                        elif task_status == 40402:
+                            # Invalid path, try next one
+                            logger.debug(f"Endpoint path {endpoint_path} returned 40402 Invalid Path, trying next...")
+                            last_error = f"Invalid Path (40402) for {endpoint_path}"
+                            continue
+                        elif task_status == 40400:
+                            # Not found, try next one
+                            logger.debug(f"Endpoint path {endpoint_path} returned 40400 Not Found, trying next...")
+                            last_error = f"Not Found (40400) for {endpoint_path}"
+                            continue
+                        else:
+                            # Other error, might be correct path with different issue
+                            logger.warning(f"Endpoint {endpoint_path} returned status {task_status}: {task.get('status_message')}")
+                            break
+                except Exception as e:
+                    logger.debug(f"Error trying endpoint {endpoint_path}: {e}")
+                    last_error = str(e)
+                    continue
+            
+            # If all paths failed, try using LLM mentions endpoint as fallback
+            # LLM mentions endpoint includes ai_search_volume in its response
+            # Handle both 40402 (Invalid Path) and 40400 (Not Found) errors
+            should_fallback = False
+            if not data:
+                should_fallback = True
+            elif data.get("tasks") and len(data["tasks"]) > 0:
+                task_status = data["tasks"][0].get("status_code")
+                # Fallback if endpoint doesn't exist (40400) or invalid path (40402)
+                if task_status in [40400, 40402]:
+                    should_fallback = True
+            
+            if should_fallback:
+                logger.warning(f"⚠️  All AI search volume endpoint paths failed. Last error: {last_error}. "
+                             f"Falling back to LLM mentions endpoint to extract AI search volume.")
+                
+                # Fallback: Use LLM mentions endpoint to get AI search volume
+                # This endpoint includes ai_search_volume in its response
+                try:
+                    llm_mentions_results = {}
+                    for keyword in keywords[:5]:  # Limit to avoid too many API calls
+                        try:
+                            mentions = await self.get_llm_mentions_search(
+                                target=keyword,
+                                target_type="keyword",
+                                location_name=location_name,
+                                language_code=language_code,
+                                tenant_id=tenant_id,
+                                platform="chat_gpt",
+                                limit=1  # We only need the ai_search_volume, not full mentions
+                            )
+                            # Extract AI search volume from LLM mentions response
+                            ai_vol = mentions.get("ai_search_volume", 0) or 0
+                            monthly_searches = []
+                            
+                            # Try to get monthly searches from aggregated_metrics
+                            # The LLM mentions API response includes monthly_searches in the platform result
+                            # but get_llm_mentions_search processes it, so check aggregated_metrics first
+                            if "aggregated_metrics" in mentions:
+                                metrics = mentions.get("aggregated_metrics", {})
+                                # Check if monthly_searches is stored in aggregated_metrics
+                                if "monthly_searches" in metrics:
+                                    monthly_searches = metrics.get("monthly_searches", [])
+                            
+                            # Also check metadata (if stored there)
+                            if not monthly_searches and "metadata" in mentions:
+                                metadata = mentions.get("metadata", {})
+                                monthly_searches = metadata.get("monthly_searches", [])
+                            
+                            llm_mentions_results[keyword] = {
+                                "keyword": keyword,
+                                "ai_search_volume": ai_vol,
+                                "ai_monthly_searches": monthly_searches,
+                                "ai_trend": self._calculate_ai_trend(monthly_searches) if monthly_searches else 0.0,
+                                "source": "llm_mentions_fallback"  # Indicate this came from LLM mentions
+                            }
+                            
+                            logger.info(f"✅ Extracted AI search volume from LLM mentions for '{keyword}': {ai_vol}")
+                        except Exception as e:
+                            logger.warning(f"Failed to get AI search volume from LLM mentions for {keyword}: {e}")
+                            # Return empty data for this keyword
+                            llm_mentions_results[keyword] = {
+                                "ai_search_volume": 0,
+                                "ai_monthly_searches": [],
+                                "ai_trend": 0.0
+                            }
+                    
+                    if llm_mentions_results:
+                        logger.info(f"✅ Successfully extracted AI search volume from LLM mentions for {len(llm_mentions_results)} keywords")
+                        return llm_mentions_results
+                except Exception as e:
+                    logger.error(f"Failed to fallback to LLM mentions for AI search volume: {e}")
+                
+                # If fallback also fails, return empty dict
+                logger.error(f"❌ All AI search volume methods failed. Last error: {last_error}. "
+                           f"Please check DataForSEO API documentation at https://docs.dataforseo.com/v3/ai_optimization-overview/ "
+                           f"for the correct endpoint path.")
+                return {}
+            
+            # Debug: Log full response structure for troubleshooting
+            logger.info(f"DataForSEO AI optimization API response: status_code={data.get('status_code')}, tasks_count={len(data.get('tasks', []))}")
+            if data.get("tasks") and len(data["tasks"]) > 0:
+                task = data["tasks"][0]
+                logger.info(f"Task status_code: {task.get('status_code')}, status_message: {task.get('status_message')}, result_count: {len(task.get('result', []))}")
+                if task.get("result") and len(task["result"]) > 0:
+                    sample_result = task["result"][0]
+                    logger.info(f"Result[0] keys: {list(sample_result.keys())}")
+                    
+                    # Log items structure (actual response structure: result[0].items[0])
+                    if "items" in sample_result:
+                        items = sample_result.get("items", [])
+                        logger.info(f"Items count: {len(items)}")
+                        if items and len(items) > 0:
+                            first_item = items[0]
+                            logger.info(f"Items[0] keys: {list(first_item.keys())}")
+                            logger.info(f"Items[0] keyword: {first_item.get('keyword', 'N/A')}")
+                            logger.info(f"Items[0] ai_search_volume: {first_item.get('ai_search_volume', 'N/A')}")
+                            monthly_searches = first_item.get("ai_monthly_searches", [])
+                            logger.info(f"Items[0] ai_monthly_searches count: {len(monthly_searches)}")
+                            if monthly_searches:
+                                logger.info(f"Items[0] latest month: {monthly_searches[0] if monthly_searches else 'N/A'}")
+                    
+                    # Log keyword_data structure if present (fallback structure)
+                    if "keyword_data" in sample_result:
+                        keyword_data = sample_result.get("keyword_data", {})
+                        logger.info(f"keyword_data keys: {list(keyword_data.keys())}")
+                        if "keyword_info" in keyword_data:
+                            keyword_info = keyword_data.get("keyword_info", {})
+                            logger.info(f"keyword_info keys: {list(keyword_info.keys())}")
+                            logger.info(f"keyword_info ai_search_volume: {keyword_info.get('ai_search_volume', 'N/A')}")
+                    
+                    logger.info(f"Sample result structure (first 1500 chars): {str(sample_result)[:1500]}")
+                elif task.get("result") is not None and len(task.get("result", [])) == 0:
+                    logger.warning(f"Task result is empty array - API returned no data for keywords: {keywords[:3]}")
+                else:
+                    logger.warning(f"Task has no result field or result is None")
             
             # Process response
+            # Actual response structure: result[0].items[0].{keyword, ai_search_volume, ai_monthly_searches}
             results = {}
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                for item in data["tasks"][0]["result"]:
-                    keyword = item.get("keyword", "")
+            if data.get("tasks") and len(data["tasks"]) > 0:
+                task = data["tasks"][0]
+                task_result = task.get("result")
+                # Handle case where result is None or empty list
+                if task_result and isinstance(task_result, list) and len(task_result) > 0:
+                    # Response structure: result[0] contains location/language info and items array
+                    result_item = task_result[0]
+                    items = result_item.get("items", [])
                     
-                    # Extract AI search volume metrics - check multiple possible response structures
-                    ai_search_volume = 0
-                    ai_monthly_searches = []
+                    if items and isinstance(items, list):
+                        for item in items:
+                            keyword = item.get("keyword", "")
+                            
+                            # Extract AI search volume - actual structure has it directly in item
+                            ai_search_volume = item.get("ai_search_volume", 0) or 0
+                            ai_monthly_searches = item.get("ai_monthly_searches", []) or []
+                            
+                            # Fallback: Try keyword_data structure (if API changes)
+                            if ai_search_volume == 0:
+                                keyword_data = item.get("keyword_data", {})
+                                if keyword_data:
+                                    keyword_info = keyword_data.get("keyword_info", {})
+                                    if keyword_info:
+                                        ai_search_volume = keyword_info.get("ai_search_volume", 0) or 0
+                                        ai_monthly_searches = keyword_info.get("monthly_searches", []) or []
+                            
+                            # Fallback: Try different response formats
+                            if ai_search_volume == 0:
+                                if "ai_search_volume" in item:
+                                    ai_data = item.get("ai_search_volume", {})
+                                    if isinstance(ai_data, dict):
+                                        ai_search_volume = ai_data.get("search_volume", 0) or 0
+                                    elif isinstance(ai_data, (int, float)):
+                                        ai_search_volume = int(ai_data)
+                            
+                            # Also check for direct search_volume field
+                            if ai_search_volume == 0 and "search_volume" in item:
+                                ai_search_volume = item.get("search_volume", 0) or 0
+                            
+                            # Get monthly searches (fallback)
+                            if not ai_monthly_searches:
+                                ai_monthly_searches = item.get("monthly_searches", []) or []
+                            
+                            logger.info(f"✅ Parsed keyword '{keyword}': ai_search_volume={ai_search_volume}, monthly_searches_count={len(ai_monthly_searches)}")
+                            
+                            # Ensure numeric types
+                            try:
+                                ai_search_volume = int(float(ai_search_volume)) if ai_search_volume else 0
+                            except (ValueError, TypeError):
+                                ai_search_volume = 0
+                            
+                            results[keyword] = {
+                                "ai_search_volume": ai_search_volume,
+                                "ai_monthly_searches": ai_monthly_searches,
+                                "ai_trend": self._calculate_ai_trend(ai_monthly_searches) if ai_monthly_searches else 0.0
+                            }
                     
-                    # Try different response formats
-                    if "ai_search_volume" in item:
-                        ai_data = item.get("ai_search_volume", {})
-                        if isinstance(ai_data, dict):
-                            ai_search_volume = ai_data.get("search_volume", 0) or 0
-                        elif isinstance(ai_data, (int, float)):
-                            ai_search_volume = int(ai_data)
-                    
-                    # Also check for direct search_volume field (some APIs return it directly)
-                    if ai_search_volume == 0 and "search_volume" in item:
-                        ai_search_volume = item.get("search_volume", 0) or 0
-                    
-                    # Get monthly searches
-                    ai_monthly_searches = item.get("ai_monthly_searches", [])
-                    if not ai_monthly_searches and "monthly_searches" in item:
-                        ai_monthly_searches = item.get("monthly_searches", [])
-                    
-                    # Ensure numeric types
-                    try:
-                        ai_search_volume = int(float(ai_search_volume)) if ai_search_volume else 0
-                    except (ValueError, TypeError):
-                        ai_search_volume = 0
-                    
-                    results[keyword] = {
-                        "ai_search_volume": ai_search_volume,
-                        "ai_monthly_searches": ai_monthly_searches,
-                        "ai_trend": self._calculate_ai_trend(ai_monthly_searches) if ai_monthly_searches else 0.0
-                    }
+                    if results:
+                        logger.info(f"✅ Successfully parsed AI search volume for {len(results)} keywords")
+                    else:
+                        logger.warning(f"AI search volume API returned no items in result. Result structure: {list(result_item.keys()) if task_result and len(task_result) > 0 else 'N/A'}")
+                else:
+                    logger.warning(f"AI search volume API returned no result data. Task result type: {type(task_result)}, value: {task_result}")
             
             # Cache the results
             self._cache[cache_key] = (results, datetime.now().timestamp())
@@ -592,12 +805,14 @@ class DataForSEOClient:
             - content_gaps: Identified content gaps
         """
         try:
-            # Check cache first
+            # Check cache first (using SERP-specific TTL)
             cache_key = f"serp_analysis_{keyword}_{depth}"
             if cache_key in self._cache:
                 cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                if datetime.now().timestamp() - timestamp < self._serp_cache_ttl:
+                    logger.info(f"✅ Cache HIT for SERP analysis: {keyword} depth={depth} (saved API call)")
                     return cached_data
+            logger.debug(f"Cache MISS for SERP analysis: {keyword} depth={depth} (making API call)")
             
             depth = min(depth, 700)  # API limit
             
@@ -606,7 +821,9 @@ class DataForSEOClient:
                 "location_name": location_name,
                 "language_code": language_code,
                 "depth": depth,
-                "people_also_ask_click_depth": 2 if include_people_also_ask else 0
+                # Reduced PAA click depth from 2 to 1 to reduce credit usage
+                # Depth 1 is sufficient for most use cases and saves ~30-40% credits
+                "people_also_ask_click_depth": 1 if include_people_also_ask else 0
             }]
             
             data = await self._make_request("serp/google/organic/live/advanced", payload, tenant_id)
@@ -728,8 +945,8 @@ class DataForSEOClient:
                                         "url": paa_item.get("url", ""),
                                         "description": paa_item.get("description", "")
                                     })
-                                if paa_items:
-                                    result["serp_features"]["has_people_also_ask"] = True
+                            if paa_items:
+                                result["serp_features"]["has_people_also_ask"] = True
                         
                         elif item_type == "video":
                             video_items = item.get("items", [])
@@ -745,8 +962,8 @@ class DataForSEOClient:
                                         "channel": video_item.get("channel", ""),
                                         "duration": video_item.get("duration", "")
                                     })
-                                if video_items:
-                                    result["serp_features"]["has_videos"] = True
+                            if video_items:
+                                result["serp_features"]["has_videos"] = True
                         
                         elif item_type == "images":
                             image_items = item.get("items", [])
@@ -756,13 +973,13 @@ class DataForSEOClient:
                                         logger.warning(f"Image item is not a dict: {type(image_item)}")
                                         continue
                                     result["image_results"].append({
-                                        "title": image_item.get("title", ""),
-                                        "url": image_item.get("url", ""),
-                                        "image_url": image_item.get("image_url", ""),
-                                        "source": image_item.get("source", "")
-                                    })
-                                if image_items:
-                                    result["serp_features"]["has_images"] = True
+                                    "title": image_item.get("title", ""),
+                                    "url": image_item.get("url", ""),
+                                    "image_url": image_item.get("image_url", ""),
+                                    "source": image_item.get("source", "")
+                                })
+                            if image_items:
+                                result["serp_features"]["has_images"] = True
                         
                         elif item_type == "related_searches":
                             related_items = item.get("items", [])
@@ -771,10 +988,10 @@ class DataForSEOClient:
                                     if not isinstance(related_item, dict):
                                         logger.warning(f"Related search item is not a dict: {type(related_item)}")
                                         continue
-                                    result["related_searches"].append({
-                                        "query": related_item.get("query", ""),
-                                        "type": related_item.get("type", "")
-                                    })
+                                result["related_searches"].append({
+                                    "query": related_item.get("query", ""),
+                                    "type": related_item.get("type", "")
+                                })
                 
                 # Extract top domains
                 domains = {}
@@ -1664,6 +1881,1100 @@ class DataForSEOClient:
         # or return a specific error structure.
         logger.warning(f"Returning fallback data for {endpoint} with payload {payload}")
         return {"status": "error", "message": "API not configured or request failed. Returning fallback data.", "data": []}
+    
+    @monitor_performance("dataforseo_generate_text")
+    async def generate_text(
+        self,
+        prompt: str,
+        max_tokens: int = 2000,
+        temperature: float = 0.7,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Generate text content using DataForSEO Content Generation API.
+        
+        Args:
+            prompt: Text prompt for generation
+            max_tokens: Maximum tokens to generate
+            temperature: Creativity level (0.0-1.0)
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with generated text and metadata
+        """
+        try:
+            payload = [{
+                "text": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }]
+            
+            data = await self._make_request("content_generation/generate_text/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                generated_text = result_item.get("text", "")
+                tokens_used = result_item.get("tokens_used", 0)
+                
+                return {
+                    "text": generated_text,
+                    "tokens_used": tokens_used,
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"text": "", "tokens_used": 0, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO text generation failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_paraphrase_text")
+    async def paraphrase_text(
+        self,
+        text: str,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Paraphrase text using DataForSEO Content Generation API.
+        
+        Args:
+            text: Text to paraphrase
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with paraphrased text
+        """
+        try:
+            payload = [{
+                "text": text
+            }]
+            
+            data = await self._make_request("content_generation/paraphrase/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                return {
+                    "paraphrased_text": result_item.get("text", ""),
+                    "original_text": text,
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"paraphrased_text": text, "original_text": text, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO paraphrase failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_check_grammar")
+    async def check_grammar(
+        self,
+        text: str,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Check grammar using DataForSEO Content Generation API.
+        
+        Args:
+            text: Text to check
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with grammar check results
+        """
+        try:
+            payload = [{
+                "text": text
+            }]
+            
+            data = await self._make_request("content_generation/check_grammar/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                return {
+                    "corrected_text": result_item.get("text", text),
+                    "errors": result_item.get("errors", []),
+                    "score": result_item.get("score", 0.0),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"corrected_text": text, "errors": [], "score": 1.0, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO grammar check failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_generate_meta_tags")
+    async def generate_meta_tags(
+        self,
+        title: str,
+        content: str,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Generate meta tags and summary using DataForSEO Content Generation API.
+        
+        Args:
+            title: Page title
+            content: Page content
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with meta tags and summary
+        """
+        try:
+            payload = [{
+                "title": title,
+                "text": content
+            }]
+            
+            data = await self._make_request("content_generation/generate_meta_tags/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                return {
+                    "meta_title": result_item.get("title", title),
+                    "meta_description": result_item.get("description", ""),
+                    "summary": result_item.get("summary", ""),
+                    "keywords": result_item.get("keywords", []),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {
+                "meta_title": title,
+                "meta_description": "",
+                "summary": "",
+                "keywords": [],
+                "metadata": {}
+            }
+            
+        except Exception as e:
+            logger.error(f"DataForSEO meta tag generation failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_generate_subtopics")
+    async def generate_subtopics(
+        self,
+        text: str,
+        max_subtopics: int = 10,
+        language: str = "en",
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Generate subtopics from text using DataForSEO Content Generation API.
+        
+        Args:
+            text: Input text to generate subtopics from
+            max_subtopics: Maximum number of subtopics to generate
+            language: Language code (default: "en")
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with subtopics list and metadata
+        """
+        try:
+            payload = [{
+                "text": text,
+                "max_subtopics": max_subtopics,
+                "language": language
+            }]
+            
+            data = await self._make_request(
+                "content_generation/generate_subtopics/live",
+                payload,
+                tenant_id
+            )
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                subtopics = result_item.get("subtopics", [])
+                
+                return {
+                    "subtopics": subtopics,
+                    "count": len(subtopics),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {"subtopics": [], "count": 0, "metadata": {}}
+            
+        except Exception as e:
+            logger.error(f"DataForSEO subtopic generation failed: {e}")
+            raise
+    
+    @monitor_performance("dataforseo_get_backlinks")
+    async def get_backlinks(
+        self,
+        target: str,
+        target_type: str = "url",  # "url" or "domain"
+        limit: int = 100,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Get backlinks for a URL or domain using DataForSEO Backlinks API.
+        
+        Args:
+            target: URL or domain to analyze
+            target_type: "url" for specific page, "domain" for entire domain
+            limit: Maximum number of backlinks to return
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with backlinks data including:
+            - backlinks: List of backlink objects
+            - total_count: Total backlinks found
+            - referring_domains: Number of referring domains
+            - anchor_texts: Common anchor texts
+        """
+        try:
+            # DataForSEO Backlinks API endpoint
+            payload = [{
+                "target": target,
+                "limit": limit,
+                "offset": 0
+            }]
+            
+            endpoint = "backlinks/backlinks/live" if target_type == "url" else "backlinks/backlinks/live"
+            
+            data = await self._make_request(endpoint, payload, tenant_id)
+            
+            result = {
+                "target": target,
+                "target_type": target_type,
+                "backlinks": [],
+                "total_count": 0,
+                "referring_domains": 0,
+                "anchor_texts": []
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                if "items" in task_result:
+                    backlinks = task_result["items"][:limit]
+                    result["backlinks"] = backlinks
+                    result["total_count"] = task_result.get("total_count", len(backlinks))
+                    
+                    # Extract referring domains
+                    domains = set()
+                    anchor_texts = []
+                    for backlink in backlinks:
+                        domain = backlink.get("domain_from", "")
+                        if domain:
+                            domains.add(domain)
+                        anchor = backlink.get("anchor", "")
+                        if anchor:
+                            anchor_texts.append(anchor)
+                    
+                    result["referring_domains"] = len(domains)
+                    result["anchor_texts"] = anchor_texts[:50]  # Top 50 anchor texts
+                    
+                    # Extract keywords from anchor texts
+                    keywords = []
+                    for anchor in anchor_texts[:20]:  # Analyze top 20
+                        # Simple keyword extraction from anchor text
+                        words = anchor.lower().split()
+                        # Filter out common words
+                        common_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"}
+                        keywords.extend([w for w in words if len(w) > 3 and w not in common_words])
+                    
+                    result["extracted_keywords"] = list(set(keywords))[:30]  # Top 30 unique keywords
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO backlinks retrieval failed: {e}")
+            # Return empty result instead of raising to allow graceful fallback
+            return {
+                "target": target,
+                "target_type": target_type,
+                "backlinks": [],
+                "total_count": 0,
+                "referring_domains": 0,
+                "anchor_texts": [],
+                "extracted_keywords": [],
+                "error": str(e)
+            }
+    
+    @monitor_performance("dataforseo_content_analysis_search")
+    async def analyze_content_search(
+        self,
+        keyword: str,
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Analyze content citations and sentiment for a keyword using DataForSEO Content Analysis API.
+        
+        Args:
+            keyword: Keyword to analyze
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            limit: Maximum number of results
+            
+        Returns:
+            Dictionary with content analysis results including:
+            - citations: Content citations
+            - sentiment: Sentiment analysis
+            - engagement_signals: Engagement indicators
+        """
+        try:
+            payload = [{
+                "keyword": keyword,
+                "location_name": location_name,
+                "language_code": language_code,
+                "limit": limit
+            }]
+            
+            data = await self._make_request("content_analysis/search/live", payload, tenant_id)
+            
+            # Process response
+            results = {
+                "keyword": keyword,
+                "citations": [],
+                "sentiment": {
+                    "positive": 0,
+                    "negative": 0,
+                    "neutral": 0
+                },
+                "engagement_signals": [],
+                "top_domains": [],
+                "metadata": {}
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                for item in data["tasks"][0]["result"]:
+                    # Extract citation data
+                    citation = {
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "domain": item.get("domain", ""),
+                        "snippet": item.get("snippet", ""),
+                        "sentiment": item.get("sentiment", "neutral")
+                    }
+                    results["citations"].append(citation)
+                    
+                    # Aggregate sentiment
+                    sentiment = item.get("sentiment", "neutral").lower()
+                    if sentiment == "positive":
+                        results["sentiment"]["positive"] += 1
+                    elif sentiment == "negative":
+                        results["sentiment"]["negative"] += 1
+                    else:
+                        results["sentiment"]["neutral"] += 1
+                    
+                    # Extract engagement signals
+                    if item.get("engagement_score"):
+                        results["engagement_signals"].append({
+                            "url": item.get("url", ""),
+                            "score": item.get("engagement_score", 0)
+                        })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"DataForSEO content analysis search failed: {e}")
+            return {
+                "keyword": keyword,
+                "citations": [],
+                "sentiment": {"positive": 0, "negative": 0, "neutral": 0},
+                "engagement_signals": [],
+                "top_domains": [],
+                "metadata": {}
+            }
+    
+    @monitor_performance("dataforseo_content_analysis_summary")
+    async def analyze_content_summary(
+        self,
+        keyword: str,
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Get content analysis summary for a keyword using DataForSEO Content Analysis API.
+        
+        Args:
+            keyword: Keyword to analyze
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with content analysis summary including:
+            - total_citations: Total number of citations
+            - sentiment_breakdown: Sentiment distribution
+            - top_topics: Top topics mentioned
+            - brand_mentions: Brand mentions if applicable
+        """
+        try:
+            payload = [{
+                "keyword": keyword,
+                "location_name": location_name,
+                "language_code": language_code
+            }]
+            
+            data = await self._make_request("content_analysis/summary/live", payload, tenant_id)
+            
+            # Process response
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                return {
+                    "keyword": keyword,
+                    "total_citations": result_item.get("total_citations", 0),
+                    "sentiment_breakdown": result_item.get("sentiment", {}),
+                    "top_topics": result_item.get("top_topics", []),
+                    "brand_mentions": result_item.get("brand_mentions", []),
+                    "engagement_score": result_item.get("engagement_score", 0.0),
+                    "metadata": result_item.get("metadata", {})
+                }
+            
+            return {
+                "keyword": keyword,
+                "total_citations": 0,
+                "sentiment_breakdown": {},
+                "top_topics": [],
+                "brand_mentions": [],
+                "engagement_score": 0.0,
+                "metadata": {}
+            }
+            
+        except Exception as e:
+            logger.error(f"DataForSEO content analysis summary failed: {e}")
+            return {
+                "keyword": keyword,
+                "total_citations": 0,
+                "sentiment_breakdown": {},
+                "top_topics": [],
+                "brand_mentions": [],
+                "engagement_score": 0.0,
+                "metadata": {}
+            }
+    
+    @monitor_performance("dataforseo_llm_mentions_search")
+    async def get_llm_mentions_search(
+        self,
+        target: str,
+        target_type: str = "keyword",  # "keyword" or "domain"
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        platform: str = "chat_gpt",  # "chat_gpt" or "google" or "auto" for automatic fallback
+        limit: int = 100,
+        filters: Optional[List[Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Search for LLM mentions using DataForSEO AI Optimization API.
+        
+        This endpoint finds what topics, keywords, and URLs are being cited by AI agents
+        (ChatGPT, Google AI/Gemini) in their responses.
+        
+        Platform fallback strategy:
+        - If platform="auto" or no results found: Try chat_gpt first, then google
+        - chat_gpt: Works best for United States (lower volume but available)
+        - google: Works for multiple locations (US, UK, Germany, Canada, Australia) with higher volume
+        
+        Critical for: Discovering AI-optimized topics and content gaps.
+        
+        Args:
+            target: Keyword or domain to search for
+            target_type: "keyword" or "domain"
+            location_name: Location for analysis
+            language_code: Language code (not used by API but kept for compatibility)
+            tenant_id: Tenant ID
+            platform: "chat_gpt", "google", or "auto" (auto tries chat_gpt then google)
+            limit: Maximum number of results
+            filters: Optional filters array
+            
+        Returns:
+            Dictionary with LLM mentions data including:
+            - target: Search target
+            - ai_search_volume: AI search volume for target
+            - mentions_count: Total mentions count
+            - top_pages: Top pages mentioned by LLMs
+            - top_domains: Top domains mentioned by LLMs
+            - topics: Topics frequently mentioned
+            - aggregated_metrics: Summary metrics
+            - platform: Platform used (chat_gpt or google)
+        """
+        try:
+            # Build target object based on type
+            if target_type == "keyword":
+                target_obj = {"keyword": target}
+            elif target_type == "domain":
+                target_obj = {"domain": target}
+            else:
+                target_obj = {"keyword": target}  # Default to keyword
+            
+            # Determine platforms to try
+            platforms_to_try = []
+            if platform == "auto":
+                # Auto mode: Try chat_gpt first, then google
+                platforms_to_try = ["chat_gpt", "google"]
+            elif platform in ["chat_gpt", "google"]:
+                # Single platform specified
+                platforms_to_try = [platform]
+            else:
+                # Unknown platform, default to auto
+                logger.warning(f"Unknown platform '{platform}', using auto fallback")
+                platforms_to_try = ["chat_gpt", "google"]
+            
+            # Try each platform until we get results
+            best_result = None
+            best_total_count = 0
+            last_error = None
+            
+            for platform_to_try in platforms_to_try:
+                try:
+                    # Note: AI optimization LLM mentions endpoint doesn't accept language_code parameter
+                    payload = [{
+                        "target": [target_obj],
+                        "location_name": location_name,
+                        "platform": platform_to_try,
+                        "limit": limit
+                    }]
+                    
+                    # Add filters if provided
+                    if filters:
+                        payload[0]["filters"] = filters
+                    
+                    logger.info(f"Trying LLM mentions API with platform='{platform_to_try}' for keyword='{target}' in location='{location_name}'")
+                    data = await self._make_request("ai_optimization/llm_mentions/search/live", payload, tenant_id)
+                    
+                    # Check if we got results
+                    if data.get("tasks") and len(data["tasks"]) > 0:
+                        task = data["tasks"][0]
+                        if task.get('status_code') == 20000:
+                            result_list = task.get("result", [])
+                            if result_list and len(result_list) > 0:
+                                first_result = result_list[0]
+                                total_count = first_result.get('total_count', 0)
+                                
+                                # If we have data, process it and use it
+                                if total_count > 0:
+                                    logger.info(f"✅ Platform '{platform_to_try}' returned {total_count:,} mentions for '{target}'")
+                                    # Process this result
+                                    processed_result = self._process_llm_mentions_response(
+                                        data, platform_to_try, target, target_type, limit
+                                    )
+                                    if processed_result:
+                                        # This platform has data, use it
+                                        best_result = processed_result
+                                        best_total_count = total_count
+                                        break  # Found data, stop trying other platforms
+                                    elif total_count > best_total_count:
+                                        # Keep track of best result even if processing failed
+                                        best_result = processed_result
+                                        best_total_count = total_count
+                                else:
+                                    logger.info(f"Platform '{platform_to_try}' returned 0 mentions, trying next platform...")
+                            else:
+                                logger.debug(f"Platform '{platform_to_try}' returned no result data")
+                        else:
+                            logger.warning(f"Platform '{platform_to_try}' returned error: {task.get('status_code')} - {task.get('status_message')}")
+                            last_error = f"{task.get('status_code')} - {task.get('status_message')}"
+                    else:
+                        logger.warning(f"Platform '{platform_to_try}' returned no tasks")
+                except Exception as e:
+                    logger.warning(f"Error trying platform '{platform_to_try}': {e}")
+                    last_error = str(e)
+                    continue
+            
+            # Use best result if found, otherwise return empty result
+            if best_result:
+                logger.info(f"✅ Using LLM mentions data from platform '{best_result.get('platform', 'unknown')}' with {best_result.get('mentions_count', 0):,} mentions")
+                return best_result
+            else:
+                logger.warning(f"⚠️  No LLM mentions data found for '{target}' in '{location_name}' after trying {len(platforms_to_try)} platforms")
+                return {
+                    "target": target,
+                    "target_type": target_type,
+                    "platform": platforms_to_try[-1] if platforms_to_try else platform,
+                    "ai_search_volume": 0,
+                    "mentions_count": 0,
+                    "top_pages": [],
+                    "top_domains": [],
+                    "topics": [],
+                    "aggregated_metrics": {},
+                    "metadata": {}
+                }
+            
+        except Exception as e:
+            logger.error(f"DataForSEO LLM mentions search failed: {e}")
+            return {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "ai_search_volume": 0,
+                "mentions_count": 0,
+                "top_pages": [],
+                "top_domains": [],
+                "topics": [],
+                "aggregated_metrics": {},
+                "metadata": {}
+            }
+    
+    def _process_llm_mentions_response(
+        self,
+        data: Dict[str, Any],
+        platform: str,
+        target: str,
+        target_type: str,
+        limit: int
+    ) -> Dict[str, Any]:
+        """
+        Process LLM mentions API response and extract data.
+        
+        This is a helper method to avoid code duplication in the fallback logic.
+        """
+        # Process response
+        result = {
+            "target": target,
+            "target_type": target_type,
+            "platform": platform,
+            "ai_search_volume": 0,
+            "mentions_count": 0,
+            "top_pages": [],
+            "top_domains": [],
+            "topics": [],
+            "aggregated_metrics": {},
+            "metadata": {}
+        }
+        
+        if data.get("tasks") and len(data["tasks"]) > 0:
+            task = data["tasks"][0]
+            task_result_list = task.get("result")
+            # Handle case where result is None or empty list
+            if task_result_list and isinstance(task_result_list, list) and len(task_result_list) > 0:
+                # The API returns an array of results, each potentially containing platform-specific data
+                # Aggregate data across all platforms/results
+                total_ai_search_volume = 0
+                total_mentions = 0
+                all_sources = []
+                all_search_results = []
+                
+                for task_result in task_result_list:
+                    # Extract AI search volume (can be at top level or in platform-specific data)
+                    # Use max instead of sum since each platform result represents the same keyword
+                    if "ai_search_volume" in task_result:
+                        ai_vol = task_result.get("ai_search_volume", 0) or 0
+                        total_ai_search_volume = max(total_ai_search_volume, ai_vol)
+                    
+                    # Extract monthly searches for trend calculation
+                    if "monthly_searches" in task_result:
+                        monthly_searches = task_result.get("monthly_searches", [])
+                        if monthly_searches and len(monthly_searches) > 0:
+                            # Use the most recent month's search volume
+                            latest = monthly_searches[0]
+                            if isinstance(latest, dict) and "search_volume" in latest:
+                                total_ai_search_volume = max(total_ai_search_volume, latest.get("search_volume", 0))
+                    
+                    # Extract sources (cited URLs)
+                    if "sources" in task_result:
+                        sources = task_result.get("sources", [])
+                        for source in sources:
+                            if isinstance(source, dict):
+                                page_data = {
+                                    "url": source.get("url", ""),
+                                    "title": source.get("title", ""),
+                                    "domain": source.get("domain", ""),
+                                    "mentions": 1,  # Each source is one mention
+                                    "ai_search_volume": task_result.get("ai_search_volume", 0) or 0,
+                                    "platforms": [task_result.get("platform", platform)],
+                                    "rank_group": source.get("position", 0) or 0,
+                                    "snippet": source.get("snippet", ""),
+                                    "publication_date": source.get("publication_date")
+                                }
+                                all_sources.append(page_data)
+                                total_mentions += 1
+                    
+                    # Extract search results (SERP results)
+                    if "search_results" in task_result:
+                        search_results = task_result.get("search_results", [])
+                        for sr in search_results:
+                            if isinstance(sr, dict):
+                                page_data = {
+                                    "url": sr.get("url", ""),
+                                    "title": sr.get("title", ""),
+                                    "domain": sr.get("domain", ""),
+                                    "mentions": 1,
+                                    "ai_search_volume": task_result.get("ai_search_volume", 0) or 0,
+                                    "platforms": [task_result.get("platform", platform)],
+                                    "rank_group": sr.get("position", 0) or 0,
+                                    "description": sr.get("description", "")
+                                }
+                                all_search_results.append(page_data)
+                    
+                    # Extract items if available (alternative structure)
+                    if "items" in task_result:
+                        items = task_result.get("items", [])
+                        if isinstance(items, list):
+                            for item in items:
+                                if isinstance(item, dict):
+                                    # Extract AI search volume from item
+                                    item_ai_vol = item.get("ai_search_volume", 0) or 0
+                                    total_ai_search_volume = max(total_ai_search_volume, item_ai_vol)
+                                    
+                                    # Extract monthly searches from item
+                                    item_monthly = item.get("monthly_searches", [])
+                                    if item_monthly and len(item_monthly) > 0:
+                                        latest_item = item_monthly[0]
+                                        if isinstance(latest_item, dict) and "search_volume" in latest_item:
+                                            total_ai_search_volume = max(total_ai_search_volume, latest_item.get("search_volume", 0))
+                
+                # Use aggregated metrics if available (preferred)
+                first_result = task_result_list[0]
+                
+                # Extract total_count from API response (this is the actual mentions count)
+                api_total_count = first_result.get("total_count", 0) or 0
+                
+                # Log for debugging
+                logger.info(f"LLM mentions response parsing: api_total_count={api_total_count}, total_mentions={total_mentions}, first_result keys={list(first_result.keys())[:10]}")
+                
+                # Always use api_total_count if it's available and > 0, as it's the authoritative count
+                final_mentions_count = api_total_count if api_total_count > 0 else total_mentions
+                
+                if "aggregated_metrics" in first_result:
+                    metrics = first_result["aggregated_metrics"].copy()
+                    result["ai_search_volume"] = metrics.get("ai_search_volume", 0) or total_ai_search_volume
+                    # Override mentions_count with api_total_count if it's available
+                    result["mentions_count"] = final_mentions_count
+                    # Update aggregated_metrics to reflect the correct count
+                    metrics["mentions_count"] = final_mentions_count
+                    result["aggregated_metrics"] = metrics
+                else:
+                    # Fallback to calculated values, but prefer API total_count
+                    result["ai_search_volume"] = total_ai_search_volume
+                    result["mentions_count"] = final_mentions_count
+                    result["aggregated_metrics"] = {
+                        "ai_search_volume": total_ai_search_volume,
+                        "mentions_count": final_mentions_count
+                    }
+                
+                # Combine sources and search results as top pages (sources are more important - cited by LLMs)
+                # Deduplicate by URL
+                seen_urls = set()
+                # Add sources first (these are cited by LLMs, more valuable)
+                for page in all_sources:
+                    url = page.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        result["top_pages"].append(page)
+                        if len(result["top_pages"]) >= limit:
+                            break
+                # Then add search results if we haven't reached the limit
+                if len(result["top_pages"]) < limit:
+                    for page in all_search_results:
+                        url = page.get("url", "")
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            result["top_pages"].append(page)
+                            if len(result["top_pages"]) >= limit:
+                                break
+                
+                # Extract items if available (alternative structure)
+                # Items may contain question/answer pairs with sources/search_results nested
+                if "items" in first_result:
+                    items = first_result["items"]
+                    if isinstance(items, list):
+                        for item in items[:limit]:
+                            # Check if item has direct URL fields
+                            url = item.get("url", "")
+                            if url and url not in seen_urls:
+                                seen_urls.add(url)
+                                page_data = {
+                                    "url": url,
+                                    "title": item.get("title", ""),
+                                    "domain": item.get("domain", ""),
+                                    "mentions": item.get("mentions_count", 0) or 0,
+                                    "ai_search_volume": item.get("ai_search_volume", 0) or 0,
+                                    "platforms": item.get("platforms", []),
+                                    "rank_group": item.get("rank_group", 0) or 0
+                                }
+                                result["top_pages"].append(page_data)
+                                if len(result["top_pages"]) >= limit:
+                                    break
+                            else:
+                                # Item might have nested sources or search_results
+                                item_sources = item.get("sources", [])
+                                if isinstance(item_sources, list) and len(item_sources) > 0:
+                                    for source in item_sources[:limit]:
+                                        if isinstance(source, dict):
+                                            source_url = source.get("url", "")
+                                            if source_url and source_url not in seen_urls:
+                                                seen_urls.add(source_url)
+                                                page_data = {
+                                                    "url": source_url,
+                                                    "title": source.get("title", ""),
+                                                    "domain": source.get("domain", ""),
+                                                    "mentions": 1,
+                                                    "ai_search_volume": result.get("ai_search_volume", 0),
+                                                    "platforms": [platform],
+                                                    "rank_group": source.get("position", 0) or 0,
+                                                    "snippet": source.get("snippet", "")
+                                                }
+                                                result["top_pages"].append(page_data)
+                                                if len(result["top_pages"]) >= limit:
+                                                    break
+                                if len(result["top_pages"]) >= limit:
+                                    break
+                                
+                                # Check search_results in item
+                                item_search_results = item.get("search_results", [])
+                                if isinstance(item_search_results, list) and len(item_search_results) > 0:
+                                    for sr in item_search_results[:limit]:
+                                        if isinstance(sr, dict):
+                                            sr_url = sr.get("url", "")
+                                            if sr_url and sr_url not in seen_urls:
+                                                seen_urls.add(sr_url)
+                                                page_data = {
+                                                    "url": sr_url,
+                                                    "title": sr.get("title", ""),
+                                                    "domain": sr.get("domain", ""),
+                                                    "mentions": 1,
+                                                    "ai_search_volume": result.get("ai_search_volume", 0),
+                                                    "platforms": [platform],
+                                                    "rank_group": sr.get("position", 0) or 0,
+                                                    "description": sr.get("description", "")
+                                                }
+                                                result["top_pages"].append(page_data)
+                                                if len(result["top_pages"]) >= limit:
+                                                    break
+                                if len(result["top_pages"]) >= limit:
+                                    break
+                
+                # Extract topics if available
+                if "topics" in first_result:
+                    result["topics"] = first_result["topics"]
+                
+                logger.info(f"LLM mentions parsed: ai_search_volume={result['ai_search_volume']}, mentions_count={result['mentions_count']}, top_pages={len(result['top_pages'])}")
+            else:
+                logger.warning(f"LLM mentions API returned no result data. Task result type: {type(task_result_list)}, value: {task_result_list}")
+        
+        return result
+    
+    @monitor_performance("dataforseo_llm_mentions_top_pages")
+    async def get_llm_mentions_top_pages(
+        self,
+        target: str,
+        target_type: str = "keyword",
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        platform: str = "chat_gpt",
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get top pages mentioned by LLMs for a target.
+        
+        This endpoint shows what content AI agents cite most frequently.
+        Critical for: Understanding content structure that works for AI citations.
+        
+        Args:
+            target: Keyword or domain to analyze
+            target_type: "keyword" or "domain"
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            platform: "chat_gpt" or "google"
+            limit: Maximum number of pages to return
+            
+        Returns:
+            Dictionary with top pages data including:
+            - target: Search target
+            - top_pages: List of top-cited pages with metrics
+            - citation_patterns: Patterns identified in top pages
+        """
+        try:
+            # Build target object
+            if target_type == "keyword":
+                target_obj = {"keyword": target}
+            else:
+                target_obj = {"domain": target}
+            
+            payload = [{
+                "target": [target_obj],
+                "location_name": location_name,
+                "language_code": language_code,
+                "platform": platform,
+                "items_list_limit": limit
+            }]
+            
+            data = await self._make_request("ai_optimization/llm_mentions/top_pages/live", payload, tenant_id)
+            
+            result = {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_pages": [],
+                "citation_patterns": {}
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                if "items" in task_result:
+                    for item in task_result["items"][:limit]:
+                        page_data = {
+                            "url": item.get("url", ""),
+                            "title": item.get("title", ""),
+                            "domain": item.get("domain", ""),
+                            "mentions": item.get("mentions_count", 0),
+                            "ai_search_volume": item.get("ai_search_volume", 0),
+                            "rank_group": item.get("rank_group", 0),
+                            "platforms": item.get("platforms", []),
+                            "serp_item": item.get("serp_item", {})
+                        }
+                        result["top_pages"].append(page_data)
+                
+                # Analyze citation patterns
+                if result["top_pages"]:
+                    result["citation_patterns"] = self._analyze_citation_patterns(result["top_pages"])
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO LLM mentions top pages failed: {e}")
+            return {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_pages": [],
+                "citation_patterns": {}
+            }
+    
+    @monitor_performance("dataforseo_llm_mentions_top_domains")
+    async def get_llm_mentions_top_domains(
+        self,
+        target: str,
+        target_type: str = "keyword",
+        location_name: str = "United States",
+        language_code: str = "en",
+        tenant_id: str = "default",
+        platform: str = "chat_gpt",
+        limit: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get top domains mentioned by LLMs for a target.
+        
+        This endpoint identifies authoritative domains that AI agents cite most.
+        Critical for: Competitive analysis in AI search space.
+        
+        Args:
+            target: Keyword or domain to analyze
+            target_type: "keyword" or "domain"
+            location_name: Location for analysis
+            language_code: Language code
+            tenant_id: Tenant ID
+            platform: "chat_gpt" or "google"
+            limit: Maximum number of domains to return
+            
+        Returns:
+            Dictionary with top domains data including:
+            - target: Search target
+            - top_domains: List of top-cited domains with metrics
+            - domain_authority: Authority metrics
+        """
+        try:
+            # Build target object
+            if target_type == "keyword":
+                target_obj = {"keyword": target}
+            else:
+                target_obj = {"domain": target}
+            
+            payload = [{
+                "target": [target_obj],
+                "location_name": location_name,
+                "language_code": language_code,
+                "platform": platform,
+                "items_list_limit": limit
+            }]
+            
+            data = await self._make_request("ai_optimization/llm_mentions/top_domains/live", payload, tenant_id)
+            
+            result = {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_domains": [],
+                "domain_authority": {}
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                if "items" in task_result:
+                    for item in task_result["items"][:limit]:
+                        domain_data = {
+                            "domain": item.get("domain", ""),
+                            "mentions": item.get("mentions_count", 0),
+                            "ai_search_volume": item.get("ai_search_volume", 0),
+                            "backlinks": item.get("backlinks", 0),
+                            "referring_domains": item.get("referring_domains", 0),
+                            "rank": item.get("rank", 0)
+                        }
+                        result["top_domains"].append(domain_data)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO LLM mentions top domains failed: {e}")
+            return {
+                "target": target,
+                "target_type": target_type,
+                "platform": platform,
+                "top_domains": [],
+                "domain_authority": {}
+            }
+    
+    def _analyze_citation_patterns(self, top_pages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analyze citation patterns from top-cited pages.
+        
+        Args:
+            top_pages: List of top-cited pages
+            
+        Returns:
+            Dictionary with citation pattern insights
+        """
+        if not top_pages:
+            return {}
+        
+        patterns = {
+            "avg_mentions": 0,
+            "common_domains": [],
+            "content_types": [],
+            "avg_rank": 0,
+            "platform_distribution": {}
+        }
+        
+        total_mentions = sum(page.get("mentions", 0) for page in top_pages)
+        patterns["avg_mentions"] = total_mentions / len(top_pages) if top_pages else 0
+        
+        # Extract common domains
+        domains = {}
+        for page in top_pages:
+            domain = page.get("domain", "")
+            if domain:
+                domains[domain] = domains.get(domain, 0) + 1
+        
+        patterns["common_domains"] = sorted(domains.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        # Platform distribution
+        for page in top_pages:
+            platforms = page.get("platforms", [])
+            for platform in platforms:
+                patterns["platform_distribution"][platform] = patterns["platform_distribution"].get(platform, 0) + 1
+        
+        return patterns
 
 
 class EnhancedKeywordAnalyzer:

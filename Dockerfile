@@ -24,14 +24,16 @@ COPY pyproject.toml README.md ./
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e .
+    && pip install --no-cache-dir -e . \
+    && python -c "import pydantic; print('✅ Pydantic installed:', pydantic.__version__)" || (echo "❌ Pydantic installation failed" && exit 1)
 
 # Copy application code
 COPY . .
 
 # Create non-root user for security
 RUN adduser --disabled-password --gecos '' --uid 1000 appuser \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app \
+    && chmod -R a+rX /usr/local/lib/python3.11/site-packages || true
 USER appuser
 
 # Expose port

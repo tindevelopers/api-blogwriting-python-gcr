@@ -64,6 +64,16 @@ class StabilityAIProvider(BaseImageProvider):
         self.timeout = kwargs.get("timeout", 120)
         self._session = None
     
+        # Model mapping for quality levels
+        # Note: For draft, we use the same model but with fewer steps and lower cfg_scale
+        # This provides faster generation while maintaining compatibility
+        self._model_map = {
+            "draft": "stable-diffusion-xl-1024-v1-0",  # Fast draft (fewer steps)
+            "standard": "stable-diffusion-xl-1024-v1-0",  # Standard quality
+            "high": "stable-diffusion-xl-1024-v1-0",  # High quality (more steps)
+            "ultra": "stable-diffusion-xl-1024-v1-0"  # Ultra quality (most steps)
+        }
+    
     @property
     def provider_type(self) -> ImageProviderType:
         """Return the provider type."""
@@ -151,6 +161,9 @@ class StabilityAIProvider(BaseImageProvider):
             # Validate request
             self._validate_request(request)
             
+            # Select model based on quality level
+            model = self._select_model_for_quality(request.quality)
+            
             # Calculate dimensions
             width, height = self._calculate_dimensions(
                 request.aspect_ratio, 
@@ -159,11 +172,11 @@ class StabilityAIProvider(BaseImageProvider):
             )
             
             # Prepare request payload
-            payload = self._prepare_generation_payload(request, width, height)
+            payload = self._prepare_generation_payload(request, width, height, model)
             
             # Make API call
             async with self._session.post(
-                f"{self.base_url}/v1/generation/{self.default_model}/text-to-image",
+                f"{self.base_url}/v1/generation/{model}/text-to-image",
                 json=payload
             ) as response:
                 if response.status == 401:
@@ -216,7 +229,7 @@ class StabilityAIProvider(BaseImageProvider):
                         seed=artifact.get("seed"),
                         steps=payload.get("steps"),
                         guidance_scale=payload.get("cfg_scale"),
-                        model=self.default_model
+                        model=model  # Use the selected model
                     )
                     images.append(generated_image)
             
@@ -234,7 +247,7 @@ class StabilityAIProvider(BaseImageProvider):
                 images=images,
                 generation_time_seconds=generation_time,
                 provider=self.provider_type,
-                model=self.default_model,
+                model=model,  # Use the selected model
                 cost=cost,
                 request_id=result.get("id"),
                 prompt_used=request.prompt
@@ -596,11 +609,31 @@ class StabilityAIProvider(BaseImageProvider):
             "max_image_size": "2048x2048"
         }
     
+    def _select_model_for_quality(self, quality: ImageQuality) -> str:
+        """
+        Select the appropriate model based on quality level.
+        
+        Args:
+            quality: Image quality level
+            
+        Returns:
+            Model name to use
+        """
+        model = self._model_map.get(quality.value, self._default_model)
+        
+        # For turbo models, use different endpoint structure
+        if "turbo" in model:
+            # Turbo models may need different parameters
+            return model
+        
+        return model
+    
     def _prepare_generation_payload(
         self, 
         request: ImageGenerationRequest, 
         width: int, 
-        height: int
+        height: int,
+        model: Optional[str] = None
     ) -> Dict[str, Any]:
         """Prepare the API payload for image generation."""
         # Build prompt with style
@@ -611,6 +644,20 @@ class StabilityAIProvider(BaseImageProvider):
         # Add negative prompt
         negative_prompt = request.negative_prompt or ""
         
+        # Adjust steps based on quality
+        default_steps = 30
+        if request.quality == ImageQuality.DRAFT:
+            default_steps = 20  # Fewer steps for draft
+        elif request.quality == ImageQuality.HIGH:
+            default_steps = 50  # More steps for high quality
+        elif request.quality == ImageQuality.ULTRA:
+            default_steps = 60  # Even more steps for ultra
+        
+        # Adjust guidance scale based on quality
+        default_cfg_scale = 7.0
+        if request.quality == ImageQuality.DRAFT:
+            default_cfg_scale = 5.0  # Lower guidance for faster generation
+        
         payload = {
             "text_prompts": [
                 {
@@ -618,8 +665,8 @@ class StabilityAIProvider(BaseImageProvider):
                     "weight": 1.0
                 }
             ],
-            "cfg_scale": request.guidance_scale or 7.0,
-            "steps": request.steps or 30,
+            "cfg_scale": request.guidance_scale or default_cfg_scale,
+            "steps": request.steps or default_steps,
             "samples": 1,
             "width": width,
             "height": height,
