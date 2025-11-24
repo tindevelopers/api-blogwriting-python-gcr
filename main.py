@@ -426,6 +426,7 @@ class LocalBusinessBlogResponse(BaseModel):
 def load_env_from_secrets():
     """Load environment variables from mounted secrets file.
     
+    Supports both JSON and plain text (key=value) formats.
     Note: Individual secrets (set via --update-secrets) take precedence over
     values in the mounted secret file to avoid placeholder values overriding real credentials.
     """
@@ -434,24 +435,56 @@ def load_env_from_secrets():
         print("📁 Loading environment variables from mounted secrets...")
         loaded_count = 0
         skipped_count = 0
-        with open(secrets_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    # Only set if not already set (individual secrets take precedence)
-                    # Also skip placeholder values
-                    if key not in os.environ:
-                        # Skip placeholder values that look like templates
-                        if not (value.startswith('your_') or value.startswith('YOUR_') or 
-                                'placeholder' in value.lower() or value == ''):
-                            os.environ[key] = value
-                            loaded_count += 1
+        
+        try:
+            # Try JSON format first (Google Secret Manager stores as JSON)
+            import json
+            with open(secrets_file, 'r') as f:
+                content = f.read().strip()
+                if content:
+                    try:
+                        secrets_dict = json.loads(content)
+                        # Load JSON format
+                        for key, value in secrets_dict.items():
+                            if key not in os.environ:
+                                # Skip placeholder values
+                                str_value = str(value) if value is not None else ""
+                                if not (str_value.startswith('your_') or str_value.startswith('YOUR_') or 
+                                        'placeholder' in str_value.lower() or str_value == ''):
+                                    os.environ[key] = str_value
+                                    loaded_count += 1
+                                else:
+                                    skipped_count += 1
+                            else:
+                                skipped_count += 1
+                        print(f"✅ Environment variables loaded from secrets (JSON format): {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
+                        return
+                    except json.JSONDecodeError:
+                        # Not JSON, fall through to plain text parsing
+                        pass
+            
+            # Plain text format (key=value)
+            with open(secrets_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        # Only set if not already set (individual secrets take precedence)
+                        # Also skip placeholder values
+                        if key not in os.environ:
+                            # Skip placeholder values that look like templates
+                            if not (value.startswith('your_') or value.startswith('YOUR_') or 
+                                    'placeholder' in value.lower() or value == ''):
+                                os.environ[key] = value
+                                loaded_count += 1
+                            else:
+                                skipped_count += 1
                         else:
                             skipped_count += 1
-                    else:
-                        skipped_count += 1
-        print(f"✅ Environment variables loaded from secrets: {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
+            print(f"✅ Environment variables loaded from secrets (plain text format): {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
+        except Exception as e:
+            print(f"⚠️ Error loading secrets from {secrets_file}: {e}")
+            print("⚠️ Falling back to system environment variables")
     else:
         print("⚠️ No secrets file found at /secrets/env, using system environment variables")
 
