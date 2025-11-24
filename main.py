@@ -1138,78 +1138,100 @@ async def generate_blog_enhanced(
                     tone_str = str(request.tone).lower()
                 
                 # Generate blog content using DataForSEO
-                result = await content_service.generate_blog_content(
-                    topic=request.topic,
-                    keywords=request.keywords,
-                    blog_type=df_blog_type,
-                    tone=tone_str,
-                    word_count=word_count,
-                    target_audience=request.target_audience,
-                    language="en",
-                    tenant_id="default",
-                    optimize_for_traffic=getattr(request, 'optimize_for_traffic', True),
-                    analyze_backlinks=getattr(request, 'analyze_backlinks', False),
-                    backlink_url=getattr(request, 'backlink_url', None),
-                    brand_name=getattr(request, 'brand_name', None),
-                    category=getattr(request, 'category', None),
-                    product_name=getattr(request, 'product_name', None),
-                    items=getattr(request, 'comparison_items', None),
-                    custom_instructions=request.custom_instructions
-                )
-                
-                generation_time = time.time() - start_time
-                
-                # Extract SEO metrics from result
-                seo_metrics = result.get("seo_metrics", {})
-                readability_score = seo_metrics.get("readability_score", 75.0)
-                seo_score = seo_metrics.get("seo_score", 85.0)
-                
-                # Build SEO metadata
-                seo_metadata = {
-                    "semantic_keywords": result.get("keywords", request.keywords),
-                    "subtopics": result.get("subtopics", []),
-                    "blog_type": result.get("blog_type", "custom"),
-                    "keyword_density": seo_metrics.get("keyword_density", {}),
-                    "headings_count": seo_metrics.get("headings_count", 0),
-                    "avg_sentence_length": seo_metrics.get("avg_sentence_length", 0),
-                    "seo_factors": seo_metrics.get("seo_factors", []),
-                    "word_count_range": seo_metrics.get("word_count_range", {}),
-                    "backlink_keywords": result.get("backlink_keywords", [])
-                }
-                
-                # Build quality dimensions from SEO metrics
-                # quality_dimensions expects Dict[str, float] where values are scores (0-100)
-                quality_dimensions = {
-                    "readability": readability_score,
-                    "seo": seo_score,
-                    "structure": min(100, seo_metrics.get("headings_count", 0) * 20),  # 5 headings = 100
-                    "keyword_optimization": min(100, seo_score * 0.8)  # Based on SEO score
-                }
-                
-                # Build response
-                return EnhancedBlogGenerationResponse(
-                    title=result["title"],
-                    content=result["content"],
-                    meta_title=result["meta_title"],
-                    meta_description=result["meta_description"],
-                    readability_score=readability_score,
-                    seo_score=seo_score,
-                    stage_results=[],
-                    citations=[],
-                    total_tokens=result["tokens_used"],
-                    total_cost=result["cost"],
-                    generation_time=generation_time,
-                    seo_metadata=seo_metadata,
-                    internal_links=[],
-                    quality_score=seo_score,  # Use SEO score as quality score
-                    quality_dimensions=quality_dimensions,
-                    structured_data=None,
-                    semantic_keywords=result.get("keywords", request.keywords),
-                    content_metadata={},
-                    success=True,
-                    warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
-                    progress_updates=[]
-                )
+                logger.info(f"Calling DataForSEO generate_blog_content: topic={request.topic}, blog_type={df_blog_type.value}, word_count={word_count}")
+                try:
+                    result = await content_service.generate_blog_content(
+                        topic=request.topic,
+                        keywords=request.keywords,
+                        blog_type=df_blog_type,
+                        tone=tone_str,
+                        word_count=word_count,
+                        target_audience=request.target_audience,
+                        language="en",
+                        tenant_id="default",
+                        optimize_for_traffic=getattr(request, 'optimize_for_traffic', True),
+                        analyze_backlinks=getattr(request, 'analyze_backlinks', False),
+                        backlink_url=getattr(request, 'backlink_url', None),
+                        brand_name=getattr(request, 'brand_name', None),
+                        category=getattr(request, 'category', None),
+                        product_name=getattr(request, 'product_name', None),
+                        items=getattr(request, 'comparison_items', None),
+                        custom_instructions=request.custom_instructions
+                    )
+                    
+                    logger.info(f"DataForSEO generation completed: content_length={len(result.get('content', ''))}, tokens={result.get('tokens_used', 0)}")
+                    
+                    # Validate that content was actually generated
+                    generated_content = result.get("content", "")
+                    if not generated_content or len(generated_content.strip()) < 50:
+                        logger.error(f"DataForSEO returned empty or insufficient content: length={len(generated_content)}, result_keys={list(result.keys())}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Content generation failed: Generated content is empty or too short ({len(generated_content)} chars). DataForSEO API may not be configured correctly or subscription may be required."
+                        )
+                    
+                    generation_time = time.time() - start_time
+                    
+                    # Extract SEO metrics from result
+                    seo_metrics = result.get("seo_metrics", {})
+                    readability_score = seo_metrics.get("readability_score", 75.0)
+                    seo_score = seo_metrics.get("seo_score", 85.0)
+                    
+                    # Build SEO metadata
+                    seo_metadata = {
+                        "semantic_keywords": result.get("keywords", request.keywords),
+                        "subtopics": result.get("subtopics", []),
+                        "blog_type": result.get("blog_type", "custom"),
+                        "keyword_density": seo_metrics.get("keyword_density", {}),
+                        "headings_count": seo_metrics.get("headings_count", 0),
+                        "avg_sentence_length": seo_metrics.get("avg_sentence_length", 0),
+                        "seo_factors": seo_metrics.get("seo_factors", []),
+                        "word_count_range": seo_metrics.get("word_count_range", {}),
+                        "backlink_keywords": result.get("backlink_keywords", [])
+                    }
+                    
+                    # Build quality dimensions from SEO metrics
+                    # quality_dimensions expects Dict[str, float] where values are scores (0-100)
+                    quality_dimensions = {
+                        "readability": readability_score,
+                        "seo": seo_score,
+                        "structure": min(100, seo_metrics.get("headings_count", 0) * 20),  # 5 headings = 100
+                        "keyword_optimization": min(100, seo_score * 0.8)  # Based on SEO score
+                    }
+                    
+                    logger.info(f"Returning successful response: title={result.get('title', '')[:50]}, content_length={len(generated_content)}")
+                    
+                    # Build response
+                    return EnhancedBlogGenerationResponse(
+                        title=result.get("title", request.topic),
+                        content=generated_content,
+                        meta_title=result.get("meta_title", result.get("title", request.topic)),
+                        meta_description=result.get("meta_description", ""),
+                        readability_score=readability_score,
+                        seo_score=seo_score,
+                        stage_results=[],
+                        citations=[],
+                        total_tokens=result.get("tokens_used", 0),
+                        total_cost=result.get("cost", 0.0),
+                        generation_time=generation_time,
+                        seo_metadata=seo_metadata,
+                        internal_links=[],
+                        quality_score=seo_score,  # Use SEO score as quality score
+                        quality_dimensions=quality_dimensions,
+                        structured_data=None,
+                        semantic_keywords=result.get("keywords", request.keywords),
+                        content_metadata={},
+                        success=True,
+                        warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
+                        progress_updates=[]
+                    )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.error(f"DataForSEO content generation failed: {e}", exc_info=True)
+                    # Fall through to pipeline fallback
+                    USE_DATAFORSEO = False
+                    logger.warning(f"Falling back to pipeline due to DataForSEO error: {str(e)}")
         
         # Fallback to original pipeline if DataForSEO is disabled or not configured
         logger.info("Using multi-stage pipeline for blog generation")
@@ -1354,18 +1376,38 @@ async def generate_blog_enhanced(
                 logger.warning(f"SERP analysis failed: {e}")
         
         # Generate using multi-stage pipeline
-        pipeline_result = await pipeline.generate(
-            topic=request.topic,
-            keywords=request.keywords,
-            tone=request.tone,
-            length=request.length,
-            template=template,
-            additional_context=additional_context
-        )
-        
-        # Image generation has been moved to a separate endpoint
-        # Frontend should call /api/v1/images/generate separately after blog generation
-        final_content = pipeline_result.final_content
+        logger.info(f"Using multi-stage pipeline for blog generation: topic={request.topic}")
+        try:
+            pipeline_result = await pipeline.generate(
+                topic=request.topic,
+                keywords=request.keywords,
+                tone=request.tone,
+                length=request.length,
+                template=template,
+                additional_context=additional_context
+            )
+            
+            logger.info(f"Pipeline generation completed: content_length={len(pipeline_result.final_content) if pipeline_result.final_content else 0}, tokens={pipeline_result.total_tokens}")
+            
+            # Image generation has been moved to a separate endpoint
+            # Frontend should call /api/v1/images/generate separately after blog generation
+            final_content = pipeline_result.final_content
+            
+            # Validate that content was actually generated
+            if not final_content or len(final_content.strip()) < 50:
+                logger.error(f"Pipeline returned empty or insufficient content: length={len(final_content) if final_content else 0}, pipeline_result_keys={dir(pipeline_result)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Content generation failed: Generated content is empty or too short ({len(final_content) if final_content else 0} chars). AI provider may not be configured correctly (check OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)."
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Pipeline generation failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Blog generation failed: {str(e)}"
+            )
         
         # Add citations if enabled
         citations = []
