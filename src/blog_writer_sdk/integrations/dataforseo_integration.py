@@ -2077,14 +2077,16 @@ class DataForSEOClient:
             Dictionary with subtopics list and metadata
         """
         try:
+            # According to DataForSEO docs: https://docs.dataforseo.com/v3/content_generation-generate_sub_topics-live/
+            # The endpoint expects "topic" (not "text") and "creativity_index" (optional)
             payload = [{
-                "text": text,
-                "max_subtopics": max_subtopics,
-                "language": language
+                "topic": text,  # Use "topic" parameter as per API docs
+                "creativity_index": 0.7,  # Optional, default creativity
+                "max_subtopics": max_subtopics  # Note: API docs show this may not be a parameter
             }]
             
             data = await self._make_request(
-                "content_generation/generate_subtopics/live",
+                "content_generation/generate_sub_topics/live",
                 payload,
                 tenant_id
             )
@@ -2097,7 +2099,8 @@ class DataForSEOClient:
             
             if data.get("tasks") and data["tasks"][0].get("result"):
                 result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
-                subtopics = result_item.get("subtopics", [])
+                # API returns "sub_topics" (with underscore) according to docs
+                subtopics = result_item.get("sub_topics", [])
                 
                 return {
                     "subtopics": subtopics,
