@@ -83,13 +83,17 @@ echo ""
 
 # Add to dev environment
 echo "=== DEV Environment ==="
+echo "Adding Username/Email as DATAFORSEO_API_KEY..."
 add_secret_value "blog-writer-env-dev" "DATAFORSEO_API_KEY" "$DATAFORSEO_API_KEY"
+echo "Adding API Key as DATAFORSEO_API_SECRET..."
 add_secret_value "blog-writer-env-dev" "DATAFORSEO_API_SECRET" "$DATAFORSEO_API_SECRET"
 echo ""
 
 # Add to staging environment
 echo "=== STAGING Environment ==="
+echo "Adding Username/Email as DATAFORSEO_API_KEY..."
 add_secret_value "blog-writer-env-staging" "DATAFORSEO_API_KEY" "$DATAFORSEO_API_KEY"
+echo "Adding API Key as DATAFORSEO_API_SECRET..."
 add_secret_value "blog-writer-env-staging" "DATAFORSEO_API_SECRET" "$DATAFORSEO_API_SECRET"
 echo ""
 
@@ -98,7 +102,9 @@ echo "=== PRODUCTION Environment ==="
 if [ -z "$SKIP_PROD" ]; then
     read -p "Add to production? (y/N): " CONFIRM_PROD
     if [[ "$CONFIRM_PROD" =~ ^[Yy]$ ]]; then
+        echo "Adding Username/Email as DATAFORSEO_API_KEY..."
         add_secret_value "blog-writer-env-prod" "DATAFORSEO_API_KEY" "$DATAFORSEO_API_KEY"
+        echo "Adding API Key as DATAFORSEO_API_SECRET..."
         add_secret_value "blog-writer-env-prod" "DATAFORSEO_API_SECRET" "$DATAFORSEO_API_SECRET"
     else
         echo "⏭️  Skipping production"
@@ -110,6 +116,10 @@ fi
 echo ""
 echo "✅ DataForSEO secrets added successfully!"
 echo ""
+echo "📋 Credential Mapping:"
+echo "   Username/Email → DATAFORSEO_API_KEY"
+echo "   API Key → DATAFORSEO_API_SECRET"
+echo ""
 echo "📋 Next steps:"
 echo "1. Redeploy each environment to pick up the new secrets:"
 echo "   - Push to 'develop' branch for dev"
@@ -118,4 +128,9 @@ echo "   - Push to 'main' branch for production"
 echo ""
 echo "2. Verify the secrets are accessible:"
 echo "   gcloud secrets versions access latest --secret=blog-writer-env-dev --project=$PROJECT_ID | jq '.DATAFORSEO_API_KEY'"
+echo ""
+echo "3. Test the endpoint after deployment:"
+echo "   curl -X POST https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/blog/generate-enhanced \\"
+echo "     -H 'Content-Type: application/json' \\"
+echo "     -d '{\"topic\":\"Test\",\"keywords\":[\"test\"],\"blog_type\":\"tutorial\",\"length\":\"short\"}'"
 
