@@ -1903,11 +1903,19 @@ class DataForSEOClient:
             Dictionary with generated text and metadata
         """
         try:
+            # According to DataForSEO API documentation, generate_text endpoint may require:
+            # - "text" or "prompt" for the input text
+            # - "max_tokens" for maximum tokens
+            # - "temperature" or "creativity_index" for creativity
+            # Error 40503 "POST Data Is Invalid" suggests wrong parameter name or format
+            # Try "text" parameter (similar to paraphrase and check_grammar endpoints)
             payload = [{
                 "text": prompt,
                 "max_tokens": max_tokens,
                 "temperature": temperature
             }]
+            
+            logger.info(f"DataForSEO generate_text payload: text_length={len(prompt)}, max_tokens={max_tokens}, temperature={temperature}, payload_keys={list(payload[0].keys())}")
             
             data = await self._make_request("content_generation/generate_text/live", payload, tenant_id)
             
