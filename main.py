@@ -1100,9 +1100,12 @@ async def generate_blog_enhanced(
         global blog_generation_jobs
         
         # Check if DataForSEO Content Generation should be used (default: True)
-        use_dataforseo = request.use_dataforseo_content_generation if hasattr(request, 'use_dataforseo_content_generation') else True
-        use_dataforseo_env = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
-        USE_DATAFORSEO = use_dataforseo or use_dataforseo_env
+        # Request flag takes precedence over environment variable
+        if hasattr(request, 'use_dataforseo_content_generation'):
+            USE_DATAFORSEO = request.use_dataforseo_content_generation
+        else:
+            # Fall back to environment variable if request doesn't specify
+            USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
         
         # Use DataForSEO Content Generation Service
         if USE_DATAFORSEO:
