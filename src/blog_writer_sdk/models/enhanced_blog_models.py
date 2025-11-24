@@ -11,7 +11,12 @@ from .blog_models import ContentTone, ContentLength
 
 
 class BlogContentType(str, Enum):
-    """Blog content type enumeration."""
+    """
+    Blog content type enumeration - Top 80% of popular content formats.
+    
+    Supports all major blog types that drive traffic and engagement.
+    """
+    # Core Types
     CUSTOM = "custom"
     BRAND = "brand"
     TOP_10 = "top_10"
@@ -19,6 +24,29 @@ class BlogContentType(str, Enum):
     HOW_TO = "how_to"
     COMPARISON = "comparison"
     GUIDE = "guide"
+    
+    # Popular Content Types (Top 80%)
+    TUTORIAL = "tutorial"
+    LISTICLE = "listicle"
+    CASE_STUDY = "case_study"
+    NEWS = "news"
+    OPINION = "opinion"
+    INTERVIEW = "interview"
+    FAQ = "faq"
+    CHECKLIST = "checklist"
+    TIPS = "tips"
+    DEFINITION = "definition"
+    BENEFITS = "benefits"
+    PROBLEM_SOLUTION = "problem_solution"
+    TREND_ANALYSIS = "trend_analysis"
+    STATISTICS = "statistics"
+    RESOURCE_LIST = "resource_list"
+    TIMELINE = "timeline"
+    MYTH_BUSTING = "myth_busting"
+    BEST_PRACTICES = "best_practices"
+    GETTING_STARTED = "getting_started"
+    ADVANCED = "advanced"
+    TROUBLESHOOTING = "troubleshooting"
 
 
 class EnhancedBlogGenerationRequest(BaseModel):
@@ -45,6 +73,22 @@ class EnhancedBlogGenerationRequest(BaseModel):
     use_dataforseo_content_generation: bool = Field(
         default=True,
         description="Use DataForSEO Content Generation API for all blog generation"
+    )
+    
+    # SEO and Traffic Optimization
+    optimize_for_traffic: bool = Field(
+        default=True,
+        description="Enable SEO post-processing and traffic optimization"
+    )
+    
+    # Backlink Analysis (Premium Feature)
+    analyze_backlinks: bool = Field(
+        default=False,
+        description="Analyze backlinks from a premium blog URL to extract high-performing keywords"
+    )
+    backlink_url: Optional[str] = Field(
+        None,
+        description="URL of premium blog to analyze for keyword extraction (required if analyze_backlinks=True)"
     )
     
     # Enhanced options

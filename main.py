@@ -1074,14 +1074,23 @@ async def generate_blog(
                 # Get word count target if available, otherwise calculate from length
                 word_count = request.word_count_target or word_count_map.get(request.length, 1500)
                 
-                # Map tone
+                # Map tone (handle all ContentTone enum values)
                 tone_map = {
                     ContentTone.PROFESSIONAL: "professional",
                     ContentTone.CASUAL: "casual",
                     ContentTone.FRIENDLY: "friendly",
-                    ContentTone.FORMAL: "formal",
+                    ContentTone.AUTHORITATIVE: "professional",
+                    ContentTone.CONVERSATIONAL: "casual",
+                    ContentTone.TECHNICAL: "professional",
+                    ContentTone.CREATIVE: "casual",
                 }
-                tone_str = tone_map.get(request.tone, "professional")
+                # Get tone string, fallback to string value if not in map
+                if request.tone in tone_map:
+                    tone_str = tone_map[request.tone]
+                elif hasattr(request.tone, 'value'):
+                    tone_str = request.tone.value
+                else:
+                    tone_str = str(request.tone).lower()
                 
                 # Generate blog content using DataForSEO
                 result = await content_service.generate_blog_content(
@@ -1231,14 +1240,23 @@ async def generate_blog_enhanced(
                 # Get word count target if available, otherwise calculate from length
                 word_count = request.word_count_target or word_count_map.get(request.length, 1500)
                 
-                # Map tone
+                # Map tone (handle all ContentTone enum values)
                 tone_map = {
                     ContentTone.PROFESSIONAL: "professional",
                     ContentTone.CASUAL: "casual",
                     ContentTone.FRIENDLY: "friendly",
-                    ContentTone.FORMAL: "formal",
+                    ContentTone.AUTHORITATIVE: "professional",
+                    ContentTone.CONVERSATIONAL: "casual",
+                    ContentTone.TECHNICAL: "professional",
+                    ContentTone.CREATIVE: "casual",
                 }
-                tone_str = tone_map.get(request.tone, "professional")
+                # Get tone string, fallback to string value if not in map
+                if request.tone in tone_map:
+                    tone_str = tone_map[request.tone]
+                elif hasattr(request.tone, 'value'):
+                    tone_str = request.tone.value
+                else:
+                    tone_str = str(request.tone).lower()
                 
                 # Generate blog content using DataForSEO
                 result = await content_service.generate_blog_content(
@@ -1250,6 +1268,9 @@ async def generate_blog_enhanced(
                     target_audience=request.target_audience,
                     language="en",
                     tenant_id="default",
+                    optimize_for_traffic=getattr(request, 'optimize_for_traffic', True),
+                    analyze_backlinks=getattr(request, 'analyze_backlinks', False),
+                    backlink_url=getattr(request, 'backlink_url', None),
                     brand_name=getattr(request, 'brand_name', None),
                     category=getattr(request, 'category', None),
                     product_name=getattr(request, 'product_name', None),
@@ -1259,9 +1280,23 @@ async def generate_blog_enhanced(
                 
                 generation_time = time.time() - start_time
                 
-                # Calculate readability score (simple estimation)
-                content_words = len(result["content"].split())
-                readability_score = min(100, max(0, 100 - (content_words / 50)))  # Simple estimation
+                # Extract SEO metrics from result
+                seo_metrics = result.get("seo_metrics", {})
+                readability_score = seo_metrics.get("readability_score", 75.0)
+                seo_score = seo_metrics.get("seo_score", 85.0)
+                
+                # Build SEO metadata
+                seo_metadata = {
+                    "semantic_keywords": result.get("keywords", request.keywords),
+                    "subtopics": result.get("subtopics", []),
+                    "blog_type": result.get("blog_type", "custom"),
+                    "keyword_density": seo_metrics.get("keyword_density", {}),
+                    "headings_count": seo_metrics.get("headings_count", 0),
+                    "avg_sentence_length": seo_metrics.get("avg_sentence_length", 0),
+                    "seo_factors": seo_metrics.get("seo_factors", []),
+                    "word_count_range": seo_metrics.get("word_count_range", {}),
+                    "backlink_keywords": result.get("backlink_keywords", [])
+                }
                 
                 # Build response
                 return EnhancedBlogGenerationResponse(
@@ -1270,25 +1305,21 @@ async def generate_blog_enhanced(
                     meta_title=result["meta_title"],
                     meta_description=result["meta_description"],
                     readability_score=readability_score,
-                    seo_score=85.0,  # Default SEO score for DataForSEO content
+                    seo_score=seo_score,
                     stage_results=[],
                     citations=[],
                     total_tokens=result["tokens_used"],
                     total_cost=result["cost"],
                     generation_time=generation_time,
-                    seo_metadata={
-                        "semantic_keywords": result.get("keywords", request.keywords),
-                        "subtopics": result.get("subtopics", []),
-                        "blog_type": result.get("blog_type", "custom")
-                    },
+                    seo_metadata=seo_metadata,
                     internal_links=[],
-                    quality_score=85.0,
-                    quality_dimensions={},
+                    quality_score=seo_score,  # Use SEO score as quality score
+                    quality_dimensions=seo_metrics.get("keyword_density", {}),
                     structured_data=None,
                     semantic_keywords=result.get("keywords", request.keywords),
                     content_metadata={},
                     success=True,
-                    warnings=[],
+                    warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
                     progress_updates=[]
                 )
         

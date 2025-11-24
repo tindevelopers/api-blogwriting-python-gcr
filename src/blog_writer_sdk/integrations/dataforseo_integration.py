@@ -2106,6 +2106,100 @@ class DataForSEOClient:
             logger.error(f"DataForSEO subtopic generation failed: {e}")
             raise
     
+    @monitor_performance("dataforseo_get_backlinks")
+    async def get_backlinks(
+        self,
+        target: str,
+        target_type: str = "url",  # "url" or "domain"
+        limit: int = 100,
+        tenant_id: str = "default"
+    ) -> Dict[str, Any]:
+        """
+        Get backlinks for a URL or domain using DataForSEO Backlinks API.
+        
+        Args:
+            target: URL or domain to analyze
+            target_type: "url" for specific page, "domain" for entire domain
+            limit: Maximum number of backlinks to return
+            tenant_id: Tenant ID
+            
+        Returns:
+            Dictionary with backlinks data including:
+            - backlinks: List of backlink objects
+            - total_count: Total backlinks found
+            - referring_domains: Number of referring domains
+            - anchor_texts: Common anchor texts
+        """
+        try:
+            # DataForSEO Backlinks API endpoint
+            payload = [{
+                "target": target,
+                "limit": limit,
+                "offset": 0
+            }]
+            
+            endpoint = "backlinks/backlinks/live" if target_type == "url" else "backlinks/backlinks/live"
+            
+            data = await self._make_request(endpoint, payload, tenant_id)
+            
+            result = {
+                "target": target,
+                "target_type": target_type,
+                "backlinks": [],
+                "total_count": 0,
+                "referring_domains": 0,
+                "anchor_texts": []
+            }
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                if "items" in task_result:
+                    backlinks = task_result["items"][:limit]
+                    result["backlinks"] = backlinks
+                    result["total_count"] = task_result.get("total_count", len(backlinks))
+                    
+                    # Extract referring domains
+                    domains = set()
+                    anchor_texts = []
+                    for backlink in backlinks:
+                        domain = backlink.get("domain_from", "")
+                        if domain:
+                            domains.add(domain)
+                        anchor = backlink.get("anchor", "")
+                        if anchor:
+                            anchor_texts.append(anchor)
+                    
+                    result["referring_domains"] = len(domains)
+                    result["anchor_texts"] = anchor_texts[:50]  # Top 50 anchor texts
+                    
+                    # Extract keywords from anchor texts
+                    keywords = []
+                    for anchor in anchor_texts[:20]:  # Analyze top 20
+                        # Simple keyword extraction from anchor text
+                        words = anchor.lower().split()
+                        # Filter out common words
+                        common_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"}
+                        keywords.extend([w for w in words if len(w) > 3 and w not in common_words])
+                    
+                    result["extracted_keywords"] = list(set(keywords))[:30]  # Top 30 unique keywords
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO backlinks retrieval failed: {e}")
+            # Return empty result instead of raising to allow graceful fallback
+            return {
+                "target": target,
+                "target_type": target_type,
+                "backlinks": [],
+                "total_count": 0,
+                "referring_domains": 0,
+                "anchor_texts": [],
+                "extracted_keywords": [],
+                "error": str(e)
+            }
+    
     @monitor_performance("dataforseo_content_analysis_search")
     async def analyze_content_search(
         self,
