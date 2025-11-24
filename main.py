@@ -445,16 +445,24 @@ def load_env_from_secrets():
                     try:
                         secrets_dict = json.loads(content)
                         # Load JSON format
+                        # For DATAFORSEO secrets, prefer volume-mounted secrets over individual secrets
+                        # to match STAGING/PRODUCTION behavior
                         for key, value in secrets_dict.items():
-                            if key not in os.environ:
-                                # Skip placeholder values
-                                str_value = str(value) if value is not None else ""
-                                if not (str_value.startswith('your_') or str_value.startswith('YOUR_') or 
-                                        'placeholder' in str_value.lower() or str_value == ''):
-                                    os.environ[key] = str_value
-                                    loaded_count += 1
-                                else:
-                                    skipped_count += 1
+                            # Skip placeholder values
+                            str_value = str(value) if value is not None else ""
+                            if str_value.startswith('your_') or str_value.startswith('YOUR_') or 
+                               'placeholder' in str_value.lower() or str_value == '':
+                                skipped_count += 1
+                                continue
+                            
+                            # For DATAFORSEO secrets, always use volume-mounted secrets (override individual secrets)
+                            if key in ['DATAFORSEO_API_KEY', 'DATAFORSEO_API_SECRET']:
+                                os.environ[key] = str_value
+                                loaded_count += 1
+                            elif key not in os.environ:
+                                # For other secrets, only set if not already set
+                                os.environ[key] = str_value
+                                loaded_count += 1
                             else:
                                 skipped_count += 1
                         print(f"✅ Environment variables loaded from secrets (JSON format): {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
