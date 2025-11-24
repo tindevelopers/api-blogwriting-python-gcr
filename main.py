@@ -1298,6 +1298,15 @@ async def generate_blog_enhanced(
                     "backlink_keywords": result.get("backlink_keywords", [])
                 }
                 
+                # Build quality dimensions from SEO metrics
+                # quality_dimensions expects Dict[str, float] where values are scores (0-100)
+                quality_dimensions = {
+                    "readability": readability_score,
+                    "seo": seo_score,
+                    "structure": min(100, seo_metrics.get("headings_count", 0) * 20),  # 5 headings = 100
+                    "keyword_optimization": min(100, seo_score * 0.8)  # Based on SEO score
+                }
+                
                 # Build response
                 return EnhancedBlogGenerationResponse(
                     title=result["title"],
@@ -1314,7 +1323,7 @@ async def generate_blog_enhanced(
                     seo_metadata=seo_metadata,
                     internal_links=[],
                     quality_score=seo_score,  # Use SEO score as quality score
-                    quality_dimensions=seo_metrics.get("keyword_density", {}),
+                    quality_dimensions=quality_dimensions,
                     structured_data=None,
                     semantic_keywords=result.get("keywords", request.keywords),
                     content_metadata={},
