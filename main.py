@@ -450,8 +450,8 @@ def load_env_from_secrets():
                         for key, value in secrets_dict.items():
                             # Skip placeholder values
                             str_value = str(value) if value is not None else ""
-                            if str_value.startswith('your_') or str_value.startswith('YOUR_') or 
-                               'placeholder' in str_value.lower() or str_value == '':
+                            if (str_value.startswith('your_') or str_value.startswith('YOUR_') or 
+                                'placeholder' in str_value.lower() or str_value == ''):
                                 skipped_count += 1
                                 continue
                             
