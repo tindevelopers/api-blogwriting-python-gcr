@@ -2105,7 +2105,11 @@ class DataForSEOClient:
                 return {
                     "subtopics": subtopics,
                     "count": len(subtopics),
-                    "metadata": result_item.get("metadata", {})
+                    "metadata": {
+                        "input_tokens": result_item.get("input_tokens", 0),
+                        "output_tokens": result_item.get("output_tokens", 0),
+                        "new_tokens": result_item.get("new_tokens", 0)
+                    }
                 }
             
             # No tasks or empty result - return empty subtopics (not an error)
