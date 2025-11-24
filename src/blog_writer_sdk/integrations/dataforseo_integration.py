@@ -1911,6 +1911,13 @@ class DataForSEOClient:
             
             data = await self._make_request("content_generation/generate_text/live", payload, tenant_id)
             
+            # Debug: Log response structure
+            logger.info(f"DataForSEO generate_text response structure: data_keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
+            if isinstance(data, dict) and data.get("tasks"):
+                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(data['tasks'][0].keys()) if data['tasks'] else 'no_tasks'}")
+                if data["tasks"][0].get("result"):
+                    logger.info(f"DataForSEO result structure: result_count={len(data['tasks'][0]['result'])}, first_result_keys={list(data['tasks'][0]['result'][0].keys()) if data['tasks'][0]['result'] else 'no_results'}")
+            
             # Process response
             if data.get("tasks") and data["tasks"][0].get("result"):
                 result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
@@ -1918,12 +1925,15 @@ class DataForSEOClient:
                 generated_text = result_item.get("text", "")
                 tokens_used = result_item.get("tokens_used", 0)
                 
+                logger.info(f"DataForSEO generate_text parsed: text_length={len(generated_text)}, tokens_used={tokens_used}, result_item_keys={list(result_item.keys())}")
+                
                 return {
                     "text": generated_text,
                     "tokens_used": tokens_used,
                     "metadata": result_item.get("metadata", {})
                 }
             
+            logger.warning(f"DataForSEO generate_text: No tasks or result found in response. Returning empty text.")
             return {"text": "", "tokens_used": 0, "metadata": {}}
             
         except Exception as e:
