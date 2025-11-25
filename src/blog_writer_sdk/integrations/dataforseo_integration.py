@@ -1888,7 +1888,8 @@ class DataForSEOClient:
         prompt: str,
         max_tokens: int = 2000,
         temperature: float = 0.7,
-        tenant_id: str = "default"
+        tenant_id: str = "default",
+        word_count: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Generate text content using DataForSEO Content Generation API.
@@ -1903,27 +1904,66 @@ class DataForSEOClient:
             Dictionary with generated text and metadata
         """
         try:
+            # According to DataForSEO API documentation: https://docs.dataforseo.com/v3/content_generation-generate_text-live/
+            # The endpoint expects:
+            # - "topic" (not "text" or "prompt") - the topic/subject to write about
+            # - "word_count" (not "max_tokens") - target word count
+            # - "creativity_index" (not "temperature") - creativity level (0.0-1.0)
+            
+            # Calculate word_count from max_tokens if not provided (roughly 1 token = 0.75 words)
+            if word_count is None:
+                word_count = int(max_tokens * 0.75)
+            
+            # Map temperature to creativity_index (same scale)
+            creativity_index = temperature
+            
             payload = [{
-                "text": prompt,
-                "max_tokens": max_tokens,
-                "temperature": temperature
+                "topic": prompt,  # Use prompt as topic
+                "word_count": word_count,
+                "creativity_index": creativity_index
             }]
+            
+            logger.info(f"DataForSEO generate_text payload: topic_length={len(prompt)}, word_count={word_count}, creativity_index={creativity_index}, payload_keys={list(payload[0].keys())}")
             
             data = await self._make_request("content_generation/generate_text/live", payload, tenant_id)
             
-            # Process response
-            if data.get("tasks") and data["tasks"][0].get("result"):
-                result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+            # Debug: Log response structure
+            logger.info(f"DataForSEO generate_text response structure: data_keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
+            if isinstance(data, dict):
+                logger.info(f"DataForSEO response status: status_code={data.get('status_code')}, status_message={data.get('status_message')}")
+            if isinstance(data, dict) and data.get("tasks"):
+                first_task = data["tasks"][0]
+                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(first_task.keys())}, result_count={first_task.get('result_count', 0)}, task_status_code={first_task.get('status_code')}, task_status_message={first_task.get('status_message')}")
                 
-                generated_text = result_item.get("text", "")
-                tokens_used = result_item.get("tokens_used", 0)
+                # Check result field - it might be None, empty list, or have data
+                result_data = first_task.get("result")
+                logger.info(f"DataForSEO result field: type={type(result_data)}, value={result_data}, is_empty={not result_data if isinstance(result_data, list) else result_data is None}")
                 
-                return {
-                    "text": generated_text,
-                    "tokens_used": tokens_used,
-                    "metadata": result_item.get("metadata", {})
-                }
+                if result_data and isinstance(result_data, list) and len(result_data) > 0:
+                    result_item = result_data[0]
+                    logger.info(f"DataForSEO result structure: result_count={len(result_data)}, first_result_keys={list(result_item.keys()) if isinstance(result_item, dict) else 'not_dict'}")
+                    
+                    # API returns "generated_text" (not "text")
+                    generated_text = result_item.get("generated_text", "") if isinstance(result_item, dict) else ""
+                    # API returns "new_tokens" (not "tokens_used")
+                    tokens_used = result_item.get("new_tokens", 0) if isinstance(result_item, dict) else 0
+                    
+                    logger.info(f"DataForSEO generate_text parsed: text_length={len(generated_text)}, tokens_used={tokens_used}, result_item_keys={list(result_item.keys()) if isinstance(result_item, dict) else 'N/A'}")
+                    
+                    return {
+                        "text": generated_text,
+                        "tokens_used": tokens_used,
+                        "metadata": {
+                            "input_tokens": result_item.get("input_tokens", 0),
+                            "output_tokens": result_item.get("output_tokens", 0),
+                            "new_tokens": tokens_used
+                        } if isinstance(result_item, dict) else {}
+                    }
+                else:
+                    # Log the actual result value for debugging
+                    logger.warning(f"DataForSEO generate_text: result is empty or invalid. result={result_data}, result_type={type(result_data)}")
             
+            logger.warning(f"DataForSEO generate_text: No tasks or result found in response. Returning empty text.")
             return {"text": "", "tokens_used": 0, "metadata": {}}
             
         except Exception as e:
@@ -2077,34 +2117,52 @@ class DataForSEOClient:
             Dictionary with subtopics list and metadata
         """
         try:
+            # According to DataForSEO docs: https://docs.dataforseo.com/v3/content_generation-generate_sub_topics-live/
+            # The endpoint expects:
+            # - "topic" (not "text") - the topic to generate subtopics for
+            # - "creativity_index" (optional, 0.0-1.0) - creativity level
+            # Note: max_subtopics is not a supported parameter - API returns up to 10 subtopics by default
             payload = [{
-                "text": text,
-                "max_subtopics": max_subtopics,
-                "language": language
+                "topic": text,  # Use "topic" parameter as per API docs
+                "creativity_index": 0.7  # Optional, default creativity
             }]
             
             data = await self._make_request(
-                "content_generation/generate_subtopics/live",
+                "content_generation/generate_sub_topics/live",
                 payload,
                 tenant_id
             )
             
             # Process response
+            # Handle fallback data structure (from _fallback_data)
+            if data.get("status") == "error":
+                logger.warning(f"DataForSEO subtopic generation returned error status, returning empty subtopics")
+                return {"subtopics": [], "count": 0, "metadata": {}}
+            
             if data.get("tasks") and data["tasks"][0].get("result"):
                 result_item = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
-                subtopics = result_item.get("subtopics", [])
+                # API returns "sub_topics" (with underscore) according to docs
+                subtopics = result_item.get("sub_topics", [])
                 
                 return {
                     "subtopics": subtopics,
                     "count": len(subtopics),
-                    "metadata": result_item.get("metadata", {})
+                    "metadata": {
+                        "input_tokens": result_item.get("input_tokens", 0),
+                        "output_tokens": result_item.get("output_tokens", 0),
+                        "new_tokens": result_item.get("new_tokens", 0)
+                    }
                 }
             
+            # No tasks or empty result - return empty subtopics (not an error)
+            logger.info(f"DataForSEO subtopic generation returned no results, returning empty subtopics")
             return {"subtopics": [], "count": 0, "metadata": {}}
             
         except Exception as e:
-            logger.error(f"DataForSEO subtopic generation failed: {e}")
-            raise
+            # Log error but return empty subtopics instead of raising
+            # Subtopics are optional - content generation can continue without them
+            logger.warning(f"DataForSEO subtopic generation failed (returning empty subtopics): {e}")
+            return {"subtopics": [], "count": 0, "metadata": {}}
     
     @monitor_performance("dataforseo_get_backlinks")
     async def get_backlinks(
