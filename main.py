@@ -455,8 +455,9 @@ def load_env_from_secrets():
                                 skipped_count += 1
                                 continue
                             
-                            # For DATAFORSEO secrets, always use volume-mounted secrets (override individual secrets)
-                            if key in ['DATAFORSEO_API_KEY', 'DATAFORSEO_API_SECRET']:
+                            # For DATAFORSEO and Cloudinary secrets, always use volume-mounted secrets (override individual secrets)
+                            if key in ['DATAFORSEO_API_KEY', 'DATAFORSEO_API_SECRET', 
+                                      'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET', 'CLOUDINARY_FOLDER']:
                                 os.environ[key] = str_value
                                 loaded_count += 1
                             elif key not in os.environ:

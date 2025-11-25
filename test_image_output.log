@@ -1,0 +1,48 @@
+[0;34m============================================================[0m
+[0;34mImage Generation & Cloudinary Upload Test[0m
+[0;34mTarget Size: 240x350 pixels (using closest valid: 832x1216)[0m
+[0;34m============================================================[0m
+[0;34mTest Parameters:[0m
+[0;34mPrompt: A serene landscape with mountains and a lake at sunset[0m
+[0;34mDimensions: 832x1216 pixels[0m
+[0;34mQuality: draft[0m
+
+[0;34m============================================================[0m
+[0;34mSTEP 1: Generate Image (832x1216)[0m
+[0;34m============================================================[0m
+[0;34m📡 Requesting image generation...[0m
+[0;34mEndpoint: https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/images/generate[0m
+[0;32m✓ Image Generated Successfully![0m
+[0;34mGeneration Time: 5 seconds[0m
+
+[0;34mGenerated Image Details:[0m
+[0;34mImage ID: 67788940-9720-40b2-bc1e-6cc1250462ec[0m
+[0;34mDimensions: 832x1216 pixels[0m
+[0;34mFormat: png[0m
+[0;34mSize: 1449071 bytes (1415.10 KB)[0m
+[0;34mProvider: stability_ai[0m
+[0;34mModel: stable-diffusion-xl-1024-v1-0[0m
+[0;34mCost: $0.00193[0m
+[0;32m✓ Dimensions match target (832x1216)[0m
+[0;34mImage Data Length: 1932096 characters[0m
+
+[0;34m============================================================[0m
+[0;34mSTEP 2: Upload Image to Cloudinary[0m
+[0;34m============================================================[0m
+./test_image_generation_cloudinary.sh: line 148: /usr/bin/jq: Argument list too long
+[0;34m📡 Uploading to Cloudinary...[0m
+[0;34mFilename: test_image_832x1216_20251125_105405.png[0m
+[0;34mFolder: test-images[0m
+[0;34mEndpoint: https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/media/upload/cloudinary[0m
+[0;31m❌ Cloudinary upload failed![0m
+[1;33mError: [
+  {
+    "type": "missing",
+    "loc": [
+      "body"
+    ],
+    "msg": "Field required",
+    "input": null
+  }
+][0m
+[1;33mResponse: {"detail":[{"type":"missing","loc":["body"],"msg":"Field required","input":null}]}...[0m
