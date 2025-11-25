@@ -1888,7 +1888,8 @@ class DataForSEOClient:
         prompt: str,
         max_tokens: int = 2000,
         temperature: float = 0.7,
-        tenant_id: str = "default"
+        tenant_id: str = "default",
+        word_count: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Generate text content using DataForSEO Content Generation API.
@@ -1903,19 +1904,26 @@ class DataForSEOClient:
             Dictionary with generated text and metadata
         """
         try:
-            # According to DataForSEO API documentation, generate_text endpoint may require:
-            # - "text" or "prompt" for the input text
-            # - "max_tokens" for maximum tokens
-            # - "temperature" or "creativity_index" for creativity
-            # Error 40503 "POST Data Is Invalid" suggests wrong parameter name or format
-            # Try "text" parameter (similar to paraphrase and check_grammar endpoints)
+            # According to DataForSEO API documentation: https://docs.dataforseo.com/v3/content_generation-generate_text-live/
+            # The endpoint expects:
+            # - "topic" (not "text" or "prompt") - the topic/subject to write about
+            # - "word_count" (not "max_tokens") - target word count
+            # - "creativity_index" (not "temperature") - creativity level (0.0-1.0)
+            
+            # Calculate word_count from max_tokens if not provided (roughly 1 token = 0.75 words)
+            if word_count is None:
+                word_count = int(max_tokens * 0.75)
+            
+            # Map temperature to creativity_index (same scale)
+            creativity_index = temperature
+            
             payload = [{
-                "text": prompt,
-                "max_tokens": max_tokens,
-                "temperature": temperature
+                "topic": prompt,  # Use prompt as topic
+                "word_count": word_count,
+                "creativity_index": creativity_index
             }]
             
-            logger.info(f"DataForSEO generate_text payload: text_length={len(prompt)}, max_tokens={max_tokens}, temperature={temperature}, payload_keys={list(payload[0].keys())}")
+            logger.info(f"DataForSEO generate_text payload: topic_length={len(prompt)}, word_count={word_count}, creativity_index={creativity_index}, payload_keys={list(payload[0].keys())}")
             
             data = await self._make_request("content_generation/generate_text/live", payload, tenant_id)
             
@@ -1935,15 +1943,21 @@ class DataForSEOClient:
                     result_item = result_data[0]
                     logger.info(f"DataForSEO result structure: result_count={len(result_data)}, first_result_keys={list(result_item.keys()) if isinstance(result_item, dict) else 'not_dict'}")
                     
-                    generated_text = result_item.get("text", "") if isinstance(result_item, dict) else ""
-                    tokens_used = result_item.get("tokens_used", 0) if isinstance(result_item, dict) else 0
+                    # API returns "generated_text" (not "text")
+                    generated_text = result_item.get("generated_text", "") if isinstance(result_item, dict) else ""
+                    # API returns "new_tokens" (not "tokens_used")
+                    tokens_used = result_item.get("new_tokens", 0) if isinstance(result_item, dict) else 0
                     
                     logger.info(f"DataForSEO generate_text parsed: text_length={len(generated_text)}, tokens_used={tokens_used}, result_item_keys={list(result_item.keys()) if isinstance(result_item, dict) else 'N/A'}")
                     
                     return {
                         "text": generated_text,
                         "tokens_used": tokens_used,
-                        "metadata": result_item.get("metadata", {}) if isinstance(result_item, dict) else {}
+                        "metadata": {
+                            "input_tokens": result_item.get("input_tokens", 0),
+                            "output_tokens": result_item.get("output_tokens", 0),
+                            "new_tokens": tokens_used
+                        } if isinstance(result_item, dict) else {}
                     }
                 else:
                     # Log the actual result value for debugging
@@ -2104,11 +2118,13 @@ class DataForSEOClient:
         """
         try:
             # According to DataForSEO docs: https://docs.dataforseo.com/v3/content_generation-generate_sub_topics-live/
-            # The endpoint expects "topic" (not "text") and "creativity_index" (optional)
+            # The endpoint expects:
+            # - "topic" (not "text") - the topic to generate subtopics for
+            # - "creativity_index" (optional, 0.0-1.0) - creativity level
+            # Note: max_subtopics is not a supported parameter - API returns up to 10 subtopics by default
             payload = [{
                 "topic": text,  # Use "topic" parameter as per API docs
-                "creativity_index": 0.7,  # Optional, default creativity
-                "max_subtopics": max_subtopics  # Note: API docs show this may not be a parameter
+                "creativity_index": 0.7  # Optional, default creativity
             }]
             
             data = await self._make_request(

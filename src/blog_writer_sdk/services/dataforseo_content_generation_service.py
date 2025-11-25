@@ -396,7 +396,8 @@ class DataForSEOContentGenerationService:
         creativity_index: Optional[float] = None,
         tone: Optional[str] = None,
         language: str = "en",
-        tenant_id: str = "default"
+        tenant_id: str = "default",
+        word_count: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Generate text content using DataForSEO API.
@@ -420,11 +421,17 @@ class DataForSEOContentGenerationService:
             # Use creativity_index if provided, otherwise use temperature
             creativity = creativity_index if creativity_index is not None else temperature
             
+            # Calculate word_count from max_tokens if not provided (roughly 1 token = 0.75 words)
+            # The API expects word_count, not max_tokens
+            if word_count is None:
+                word_count = int(max_tokens * 0.75)
+            
             result = await self.client.generate_text(
                 prompt=prompt,
-                max_tokens=max_tokens,
+                max_tokens=max_tokens,  # Keep for backward compatibility
                 temperature=creativity,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
+                word_count=word_count  # Pass word_count to use correct API format
             )
             
             tokens_used = result.get("tokens_used", 0)
@@ -1187,9 +1194,10 @@ Write in a {tone} tone."""
             )
             
             # Step 2: Generate subtopics
+            # Use just the topic for subtopic generation (API expects simple topic string)
             logger.info(f"Generating subtopics for blog type: {blog_type.value}")
             subtopics_result = await self.generate_subtopics(
-                text=prompt,
+                text=topic,  # Use topic directly, not the detailed prompt
                 max_subtopics=10,
                 language=language,
                 tenant_id=tenant_id
@@ -1204,14 +1212,26 @@ Write in a {tone} tone."""
             estimated_tokens = int(max_words / 0.75)  # Use max for token estimation
             max_tokens = min(estimated_tokens + 500, 4000)  # Add buffer, cap at 4000
             
-            logger.info(f"Generating main content ({max_tokens} tokens max, target: {word_count} words, range: {min_words}-{max_words})")
+            logger.info(f"Generating main content (target: {word_count} words, range: {min_words}-{max_words})")
+            # The API uses word_count, not max_tokens - pass word_count directly
+            # For DataForSEO API, use topic + first subtopic if available, otherwise just topic
+            # The API expects a simple topic string, not a detailed prompt
+            content_topic = topic
+            if subtopics and len(subtopics) > 0:
+                # Use topic + first subtopic format (like our successful test)
+                content_topic = f"{topic}: {subtopics[0]}"
+                logger.info(f"Using topic + subtopic format: {content_topic}")
+            else:
+                logger.info(f"Using topic only: {content_topic}")
+            
             content_result = await self.generate_text(
-                prompt=prompt,
-                max_tokens=max_tokens,
+                prompt=content_topic,  # Use simplified topic instead of detailed prompt
+                max_tokens=max_tokens,  # Keep for backward compatibility
                 temperature=0.7,
                 tone=tone,
                 language=language,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
+                word_count=word_count  # Pass actual word_count target to API
             )
             generated_content = content_result.get("text", "")
             total_tokens += content_result.get("tokens_used", 0)
