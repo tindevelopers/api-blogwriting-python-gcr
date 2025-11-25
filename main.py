@@ -12,6 +12,7 @@ import asyncio
 import uuid
 import math
 import json
+import base64
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
