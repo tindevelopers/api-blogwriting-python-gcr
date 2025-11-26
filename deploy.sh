@@ -2,6 +2,10 @@
 
 # Google Cloud Run Deployment Script for BlogWriter SDK
 echo "☁️ Deploying BlogWriter SDK to Google Cloud Run..."
+echo "⚠️ Manual deployments via deploy.sh are disabled."
+echo "➡️  Push to the develop, staging, or main branches to trigger the managed Cloud Build deployment."
+echo "ℹ️  See CLOUD_RUN_REGION_POLICY.md for details."
+exit 1
 
 # Check if gcloud CLI is installed
 if ! command -v gcloud &> /dev/null; then

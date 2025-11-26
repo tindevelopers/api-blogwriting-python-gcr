@@ -134,6 +134,11 @@ class EnhancedBlogGenerationResponse(BaseModel):
     # Content
     title: str = Field(..., description="Blog post title")
     content: str = Field(..., description="Blog post content")
+    excerpt: Optional[str] = Field(
+        None,
+        max_length=300,
+        description="Short excerpt/summary for previews"
+    )
     meta_title: str = Field(..., description="SEO-optimized meta title")
     meta_description: str = Field(..., description="SEO-optimized meta description")
     

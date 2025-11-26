@@ -138,6 +138,7 @@ from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficult
 from src.blog_writer_sdk.services.quota_manager import QuotaManager
 from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
+from src.blog_writer_sdk.utils.text_utils import extract_excerpt
 
 
 # API Request/Response Models
@@ -1247,10 +1248,13 @@ async def generate_blog_enhanced(
                     
                     logger.info(f"Returning successful response: title={result.get('title', '')[:50]}, content_length={len(generated_content)}")
                     
+                    excerpt = extract_excerpt(generated_content, max_length=250)
+                    
                     # Build response
                     return EnhancedBlogGenerationResponse(
                         title=result.get("title", request.topic),
                         content=generated_content,
+                        excerpt=excerpt,
                         meta_title=result.get("meta_title", result.get("title", request.topic)),
                         meta_description=result.get("meta_description", ""),
                         readability_score=readability_score,
@@ -1504,6 +1508,7 @@ async def generate_blog_enhanced(
         
         # Extract content metadata for frontend processing (unified + remark + rehype support)
         content_metadata = extract_content_metadata(final_content)
+        excerpt = extract_excerpt(final_content, max_length=250)
         
         # Enhance SEO metadata with OG and Twitter tags
         enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1589,6 +1594,7 @@ async def generate_blog_enhanced(
         return EnhancedBlogGenerationResponse(
             title=pipeline_result.meta_title or request.topic,
             content=final_content,
+            excerpt=excerpt,
             meta_title=pipeline_result.meta_title,
             meta_description=pipeline_result.meta_description,
             readability_score=pipeline_result.readability_score,
@@ -1803,6 +1809,7 @@ async def blog_generation_worker(request: Dict[str, Any]):
             
             # Extract content metadata
             content_metadata = extract_content_metadata(final_content)
+            excerpt = extract_excerpt(final_content, max_length=250)
             
             # Enhance SEO metadata
             enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1871,6 +1878,7 @@ async def blog_generation_worker(request: Dict[str, Any]):
             response = EnhancedBlogGenerationResponse(
                 title=pipeline_result.meta_title or blog_request.topic,
                 content=final_content,
+                excerpt=excerpt,
                 meta_title=pipeline_result.meta_title,
                 meta_description=pipeline_result.meta_description,
                 readability_score=pipeline_result.readability_score,

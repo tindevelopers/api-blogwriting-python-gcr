@@ -504,16 +504,16 @@ CREATE TABLE generation_analytics (
 
 ### Google Cloud Run Deployment (Recommended)
 
-Deploy to Google Cloud Run for enterprise-grade scalability and reliability:
+Deploy to Google Cloud Run for enterprise-grade scalability and reliability.
+Deployments now run **only** through Cloud Build triggers:
 
-```bash
-# Quick deployment
-./scripts/setup-secrets.sh  # Setup secrets in Google Secret Manager
-./scripts/deploy.sh          # Deploy to Cloud Run
+- Push to `develop` → deploys `blog-writer-api-dev` to `europe-west9`
+- Push to `staging` → deploys `blog-writer-api-staging` to `europe-west9`
+- Push to `main` → deploys `blog-writer-api-prod` to `us-east1`
 
-# Your service will be available at:
-# https://blog-writer-sdk-xxx-uc.a.run.app
-```
+Manual scripts such as `deploy.sh`/`scripts/deploy.sh` are intentionally disabled.
+See [CLOUD_RUN_REGION_POLICY.md](CLOUD_RUN_REGION_POLICY.md) for details and
+instructions on manually retriggering a build if needed.
 
 **Benefits of Cloud Run:**
 - **Serverless & Auto-scaling**: Pay only when generating content

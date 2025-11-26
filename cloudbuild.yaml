@@ -26,6 +26,23 @@ steps:
         echo "✅ Build triggered via Cloud Build trigger"
         echo "✅ Deploying ${_SERVICE_NAME} to ${_REGION} (env: ${_ENV})"
   
+  # Prevent deployments to unsupported regions
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: validate-region
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        ALLOWED_REGIONS=("europe-west9" "us-east1")
+        if [[ " ${ALLOWED_REGIONS[*]} " != *" ${_REGION} "* ]]; then
+          echo "❌ ERROR: Region ${_REGION} is not allowed for Blog Writer deployments."
+          echo "Allowed regions: ${ALLOWED_REGIONS[*]}"
+          echo "Please deploy via the dev (develop), staging (staging), or prod (main) Cloud Build triggers."
+          exit 1
+        fi
+        echo "✅ Region ${_REGION} validated"
+  
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
     args: [

@@ -186,3 +186,4 @@ gcloud run services logs read blog-writer-api-dev --region=europe-west9 --limit=
 
 **ETA:** 10-15 minutes from queue deletion time
 
+

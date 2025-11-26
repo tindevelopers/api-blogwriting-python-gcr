@@ -12,6 +12,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+echo -e "${RED}Manual deployments are disabled.${NC}"
+echo -e "${YELLOW}Use the Cloud Build triggers (develop/staging/main) to deploy per environment.${NC}"
+echo -e "More info: CLOUD_RUN_REGION_POLICY.md"
+exit 1
+
 # Configuration
 PROJECT_ID="sdk-ai-blog-writer"
 REGION="us-central1"

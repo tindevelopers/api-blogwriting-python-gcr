@@ -21,7 +21,9 @@ on:
 
 env:
   PROJECT_ID: api-ai-blog-writer
-  REGION: us-central1
+  DEV_REGION: europe-west9
+  STAGING_REGION: europe-west9
+  PROD_REGION: us-east1
 
 jobs:
   # Determine which environments to deploy to
@@ -64,6 +66,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+
+    env:
+      REGION: ${{ matrix.environment == 'prod' && env.PROD_REGION || (matrix.environment == 'staging' && env.STAGING_REGION || env.DEV_REGION) }}
 
     steps:
     - name: Checkout code
