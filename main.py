@@ -101,6 +101,11 @@ from src.blog_writer_sdk.api.keyword_streaming import (
     create_stage_update,
     stream_stage_update
 )
+from src.blog_writer_sdk.api.blog_streaming import (
+    BlogGenerationStage,
+    create_blog_stage_update,
+    stream_blog_stage_update
+)
 from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
     EnhancedBlogGenerationResponse,
@@ -1069,7 +1074,7 @@ async def root():
 async def generate_blog_enhanced(
     request: EnhancedBlogGenerationRequest,
     background_tasks: BackgroundTasks,
-    async_mode: bool = Query(default=False, description="If true, creates async job via Cloud Tasks")
+    async_mode: bool = Query(default=True, description="If true, creates async job via Cloud Tasks (default: true, uses queue)")
 ):
     """
     Generate high-quality blog content using DataForSEO Content Generation API.
@@ -1084,13 +1089,15 @@ async def generate_blog_enhanced(
     - Custom: Custom content based on instructions
     
     Query Parameters:
-    - async_mode: If true, creates an async job via Cloud Tasks and returns job_id immediately
+    - async_mode: If true (default), creates an async job via Cloud Tasks and returns job_id immediately.
+                  If false, processes synchronously (for backward compatibility).
     
     Returns:
+    - If async_mode=true (default): CreateJobResponse with job_id (asynchronous, uses queue)
     - If async_mode=false: EnhancedBlogGenerationResponse (synchronous)
-    - If async_mode=true: CreateJobResponse with job_id (asynchronous)
     
     Use GET /api/v1/blog/jobs/{job_id} to check status and retrieve results.
+    For real-time streaming updates, use POST /api/v1/blog/generate-enhanced/stream
     """
     import time
     start_time = time.time()
@@ -1983,6 +1990,263 @@ async def get_job_status(job_id: str):
         result=job.result,
         error_message=job.error_message,
         estimated_time_remaining=estimated_time_remaining
+    )
+
+
+# Streaming version of enhanced blog generation
+@app.post("/api/v1/blog/generate-enhanced/stream")
+async def generate_blog_enhanced_stream(
+    request: EnhancedBlogGenerationRequest,
+    http_request: Request
+):
+    """
+    Streaming version of enhanced blog generation.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - queued: Job created and queued
+    - initialization: Setting up pipeline
+    - keyword_analysis: Analyzing keywords with DataForSEO
+    - competitor_analysis: Analyzing SERP competitors
+    - intent_analysis: Determining search intent
+    - length_optimization: Optimizing content length
+    - research_outline: Research & outline generation
+    - draft_generation: Initial draft creation
+    - enhancement: Content enhancement
+    - seo_polish: SEO optimization
+    - semantic_integration: Semantic keyword integration
+    - quality_scoring: Quality assessment
+    - citation_generation: Adding citations
+    - finalization: Final processing
+    - completed: Final results
+    
+    This endpoint always uses async mode (queue) and streams stage updates.
+    Frontend can listen to these events to show real-time progress.
+    
+    Example:
+    ```typescript
+    const response = await fetch('/api/v1/blog/generate-enhanced/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: 'Python', keywords: ['python'] })
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const update = JSON.parse(line.slice(6));
+          console.log(`Stage: ${update.stage}, Progress: ${update.progress}%`);
+        }
+      }
+    }
+    ```
+    """
+    async def generate_stream():
+        try:
+            global blog_generation_jobs
+            
+            # Stage 1: Create async job
+            job_id = str(uuid.uuid4())
+            
+            # Create job record
+            job = BlogGenerationJob(
+                job_id=job_id,
+                status=JobStatus.PENDING,
+                request=request.dict()
+            )
+            blog_generation_jobs[job_id] = job
+            
+            # Yield initial queued status
+            yield await stream_blog_stage_update(
+                BlogGenerationStage.QUEUED,
+                0.0,
+                message="Blog generation job created",
+                job_id=job_id,
+                status="queued"
+            )
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/blog/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_blog_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url
+                )
+                
+                # Update job
+                job.task_name = task_name
+                job.status = JobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                # Yield queued status
+                yield await stream_blog_stage_update(
+                    BlogGenerationStage.QUEUED,
+                    5.0,
+                    message="Job queued successfully",
+                    job_id=job_id,
+                    status="queued"
+                )
+                
+                # Poll job status and stream updates
+                last_stage = None
+                last_progress = 0.0
+                max_wait_time = 600  # 10 minutes max
+                start_time = time.time()
+                
+                while True:
+                    # Check timeout
+                    if time.time() - start_time > max_wait_time:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Timeout waiting for job completion"},
+                            message="Job timeout - took too long",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Get current job status
+                    if job_id not in blog_generation_jobs:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Job not found"},
+                            message="Job not found",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    job = blog_generation_jobs[job_id]
+                    
+                    # Map job status to stage
+                    if job.status == JobStatus.QUEUED:
+                        current_stage = BlogGenerationStage.QUEUED
+                    elif job.status == JobStatus.PROCESSING:
+                        current_stage = BlogGenerationStage.PROCESSING
+                        # Map current_stage string to BlogGenerationStage enum
+                        if job.current_stage:
+                            stage_mapping = {
+                                "initialization": BlogGenerationStage.INITIALIZATION,
+                                "keyword_analysis": BlogGenerationStage.KEYWORD_ANALYSIS,
+                                "competitor_analysis": BlogGenerationStage.COMPETITOR_ANALYSIS,
+                                "intent_analysis": BlogGenerationStage.INTENT_ANALYSIS,
+                                "length_optimization": BlogGenerationStage.LENGTH_OPTIMIZATION,
+                                "research_outline": BlogGenerationStage.RESEARCH_OUTLINE,
+                                "draft_generation": BlogGenerationStage.DRAFT_GENERATION,
+                                "enhancement": BlogGenerationStage.ENHANCEMENT,
+                                "seo_polish": BlogGenerationStage.SEO_POLISH,
+                                "semantic_integration": BlogGenerationStage.SEMANTIC_INTEGRATION,
+                                "quality_scoring": BlogGenerationStage.QUALITY_SCORING,
+                                "citation_generation": BlogGenerationStage.CITATION_GENERATION,
+                                "finalization": BlogGenerationStage.FINALIZATION,
+                            }
+                            current_stage = stage_mapping.get(job.current_stage, BlogGenerationStage.PROCESSING)
+                    elif job.status == JobStatus.COMPLETED:
+                        current_stage = BlogGenerationStage.COMPLETED
+                    elif job.status == JobStatus.FAILED:
+                        current_stage = BlogGenerationStage.ERROR
+                    else:
+                        current_stage = BlogGenerationStage.PROCESSING
+                    
+                    # Yield update if stage or progress changed
+                    if current_stage != last_stage or job.progress_percentage != last_progress:
+                        # Get latest progress update if available
+                        latest_update = None
+                        if job.progress_updates:
+                            latest_update = job.progress_updates[-1]
+                        
+                        yield await stream_blog_stage_update(
+                            current_stage,
+                            job.progress_percentage,
+                            data={
+                                "current_stage": job.current_stage,
+                                "progress_updates": job.progress_updates[-5:] if job.progress_updates else [],  # Last 5 updates
+                                "latest_update": latest_update
+                            },
+                            message=latest_update.get("status", job.current_stage or "Processing") if latest_update else (job.current_stage or "Processing"),
+                            job_id=job_id,
+                            status=job.status.value
+                        )
+                        
+                        last_stage = current_stage
+                        last_progress = job.progress_percentage
+                    
+                    # Check if completed
+                    if job.status == JobStatus.COMPLETED:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.COMPLETED,
+                            100.0,
+                            data={"result": job.result},
+                            message="Blog generation completed successfully",
+                            job_id=job_id,
+                            status="completed"
+                        )
+                        break
+                    
+                    # Check if failed
+                    if job.status == JobStatus.FAILED:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            job.progress_percentage,
+                            data={"error": job.error_message, "error_details": job.error_details},
+                            message=f"Blog generation failed: {job.error_message}",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Wait before next poll
+                    await asyncio.sleep(0.5)
+                    
+            except Exception as e:
+                logger.error(f"Failed to create or monitor blog generation job: {e}", exc_info=True)
+                yield await stream_blog_stage_update(
+                    BlogGenerationStage.ERROR,
+                    0.0,
+                    data={"error": str(e)},
+                    message=f"Failed to create job: {str(e)}",
+                    job_id=job_id,
+                    status="failed"
+                )
+                
+        except Exception as e:
+            logger.error(f"Blog generation stream error: {e}", exc_info=True)
+            yield await stream_blog_stage_update(
+                BlogGenerationStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"Stream error: {str(e)}",
+                status="failed"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
     )
 
 
