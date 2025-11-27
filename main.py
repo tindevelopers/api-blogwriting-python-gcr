@@ -1109,6 +1109,69 @@ async def generate_blog_enhanced(
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
         global blog_generation_jobs
         
+        # Handle async mode FIRST - if async_mode is True, create Cloud Task and return immediately
+        # This applies to both DataForSEO and pipeline paths
+        if async_mode:
+            job_id = str(uuid.uuid4())
+            
+            # Create job record
+            job = BlogGenerationJob(
+                job_id=job_id,
+                status=JobStatus.PENDING,
+                request=request.dict()
+            )
+            blog_generation_jobs[job_id] = job
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL (Cloud Run service URL)
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    # Fallback: Use the actual service URL (Cloud Run URLs have unique hashes)
+                    # Default to the known dev service URL
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/blog/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_blog_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url
+                )
+                
+                # Update job with task name
+                job.task_name = task_name
+                job.status = JobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
+                
+                # Estimate completion time (4 minutes average)
+                estimated_time = 240  # 4 minutes in seconds
+                
+                return CreateJobResponse(
+                    job_id=job_id,
+                    status=JobStatus.QUEUED,
+                    message="Blog generation job queued successfully",
+                    estimated_completion_time=estimated_time
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to create Cloud Task: {e}", exc_info=True)
+                # Update job status
+                job.status = JobStatus.FAILED
+                job.error_message = f"Failed to queue job: {str(e)}"
+                job.completed_at = datetime.utcnow()
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create async job: {str(e)}"
+                )
+        
         # Check if DataForSEO Content Generation should be used (default: True)
         # Request flag takes precedence over environment variable
         if hasattr(request, 'use_dataforseo_content_generation'):
@@ -1117,7 +1180,7 @@ async def generate_blog_enhanced(
             # Fall back to environment variable if request doesn't specify
             USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
         
-        # Use DataForSEO Content Generation Service
+        # Use DataForSEO Content Generation Service (only in sync mode now)
         if USE_DATAFORSEO:
             logger.info("🔷 Using DataForSEO Content Generation API for blog generation")
             
@@ -1291,6 +1354,7 @@ async def generate_blog_enhanced(
                     logger.warning(f"Falling back to pipeline due to DataForSEO error: {str(e)}")
         
         # Fallback to original pipeline if DataForSEO is disabled or not configured
+        # Note: async_mode is already handled above, so this is sync mode only
         logger.info("Using multi-stage pipeline for blog generation")
         
         # Check if AI generator is available
@@ -1299,68 +1363,6 @@ async def generate_blog_enhanced(
                 status_code=503,
                 detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
             )
-        
-        # Handle async mode - create Cloud Tasks job
-        if async_mode:
-            job_id = str(uuid.uuid4())
-            
-            # Create job record
-            job = BlogGenerationJob(
-                job_id=job_id,
-                status=JobStatus.PENDING,
-                request=request.dict()
-            )
-            blog_generation_jobs[job_id] = job
-            
-            try:
-                # Get Cloud Tasks service
-                cloud_tasks_service = get_cloud_tasks_service()
-                
-                # Get worker URL (Cloud Run service URL)
-                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
-                if not worker_url:
-                    # Fallback: Use the actual service URL (Cloud Run URLs have unique hashes)
-                    # Default to the known dev service URL
-                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
-                    worker_url = f"{service_base_url}/api/v1/blog/worker"
-                
-                # Create Cloud Task
-                task_name = cloud_tasks_service.create_blog_generation_task(
-                    request_data={
-                        "job_id": job_id,
-                        "request": request.dict()
-                    },
-                    worker_url=worker_url
-                )
-                
-                # Update job with task name
-                job.task_name = task_name
-                job.status = JobStatus.QUEUED
-                job.queued_at = datetime.utcnow()
-                
-                logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
-                
-                # Estimate completion time (4 minutes average)
-                estimated_time = 240  # 4 minutes in seconds
-                
-                return CreateJobResponse(
-                    job_id=job_id,
-                    status=JobStatus.QUEUED,
-                    message="Blog generation job queued successfully",
-                    estimated_completion_time=estimated_time
-                )
-                
-            except Exception as e:
-                logger.error(f"Failed to create Cloud Task: {e}", exc_info=True)
-                # Update job status
-                job.status = JobStatus.FAILED
-                job.error_message = f"Failed to queue job: {str(e)}"
-                job.completed_at = datetime.utcnow()
-                
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to create async job: {str(e)}"
-                )
         
         # Create progress callback for streaming updates
         progress_updates = []
