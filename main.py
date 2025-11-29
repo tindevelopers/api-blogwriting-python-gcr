@@ -96,6 +96,7 @@ from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
 from src.blog_writer_sdk.api.user_management import router as user_management_router
+from src.blog_writer_sdk.api.field_enhancement import router as field_enhancement_router
 from src.blog_writer_sdk.api.keyword_streaming import (
     KeywordSearchStage,
     create_stage_update,
@@ -791,14 +792,16 @@ app = FastAPI(
     - `POST /api/v1/generate` - Standard blog generation
     - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis with DataForSEO
     - `POST /api/v1/integrations/connect-and-recommend` - Backlink/interlink recommendations
+    - `POST /api/v1/content/enhance-fields` - Enhance mandatory CMS fields (SEO title, meta description, slug, alt text) using OpenAI
     
     ## Quick Start
     
     1. **Configure AI Providers**: Use `/api/v1/ai/providers/configure` to add your AI provider credentials
     2. **Generate Enhanced Content**: Use `/api/v1/blog/generate-enhanced` for high-quality blog posts
     3. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
-    4. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
-    5. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
+    4. **Enhance CMS Fields**: Use `/api/v1/content/enhance-fields` to optimize SEO title, meta description, slug, and alt text after image generation
+    5. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
+    6. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
     
     ## Documentation
     
@@ -840,6 +843,8 @@ app.include_router(image_generation_router)
 app.include_router(integrations_router)
 # Include user management router
 app.include_router(user_management_router)
+# Include field enhancement router
+app.include_router(field_enhancement_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
