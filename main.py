@@ -168,7 +168,7 @@ class BlogGenerationRequest(BaseModel):
     
     # Advanced Options
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
 
 
 class ContentAnalysisRequest(BaseModel):
@@ -352,7 +352,7 @@ class UnifiedBlogRequest(BaseModel):
     length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
     format: ContentFormat = Field(default=ContentFormat.MARKDOWN, description="Output format")
     target_audience: Optional[str] = Field(None, max_length=200, description="Target audience description")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
     
     # Standard & Enhanced fields
     include_introduction: bool = Field(default=True, description="Include introduction section (standard/enhanced)")
@@ -404,7 +404,7 @@ class LocalBusinessBlogRequest(BaseModel):
     include_business_details: bool = Field(default=True, description="Include business details (hours, contact, services)")
     include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis")
     use_google: bool = Field(default=True, description="Fetch reviews from Google Places")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
 
 
 class BusinessInfo(BaseModel):

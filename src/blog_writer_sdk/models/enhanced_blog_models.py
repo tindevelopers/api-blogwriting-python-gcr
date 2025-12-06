@@ -105,7 +105,7 @@ class EnhancedBlogGenerationRequest(BaseModel):
     
     # Additional context
     target_audience: Optional[str] = Field(None, description="Target audience")
-    custom_instructions: Optional[str] = Field(None, max_length=2000, description="Additional instructions for content generation")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions for content generation")
     template_type: Optional[str] = Field(None, description="Prompt template type (expert_authority, how_to_guide, etc.)")
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
     
