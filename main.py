@@ -652,12 +652,30 @@ async def lifespan(app: FastAPI):
     # Initialize Google Search Console client (Phase 2)
     global google_search_console_client
     gsc_site_url = os.getenv("GSC_SITE_URL")
-    if gsc_site_url:
-        google_search_console_client = GoogleSearchConsoleClient(site_url=gsc_site_url)
-        print("✅ Google Search Console client initialized.")
+    gsc_credentials_path = "/secrets/GSC_SERVICE_ACCOUNT_KEY"
+    
+    # Check if GSC credentials file exists
+    if os.path.exists(gsc_credentials_path):
+        try:
+            if gsc_site_url:
+                google_search_console_client = GoogleSearchConsoleClient(
+                    credentials_path=gsc_credentials_path,
+                    site_url=gsc_site_url
+                )
+            else:
+                google_search_console_client = GoogleSearchConsoleClient(
+                    credentials_path=gsc_credentials_path
+                )
+            print("✅ Google Search Console client initialized.")
+        except Exception as e:
+            google_search_console_client = None
+            print(f"⚠️ Google Search Console initialization failed: {e}")
     else:
         google_search_console_client = None
-        print("⚠️ Google Search Console not configured (GSC_SITE_URL)")
+        if gsc_site_url:
+            print(f"⚠️ Google Search Console not configured (GSC credentials file not found at {gsc_credentials_path})")
+        else:
+            print("⚠️ Google Search Console not configured (GSC_SITE_URL not set)")
     
     # Initialize multi-stage pipeline components
     global readability_analyzer, citation_generator, serp_analyzer
@@ -1426,10 +1444,21 @@ async def generate_blog_enhanced(
         
         # Handle Google Search Console client (multi-site support)
         gsc_client = None
+        gsc_credentials_path = "/secrets/GSC_SERVICE_ACCOUNT_KEY"
         if request.gsc_site_url:
             # Use site-specific Search Console client
             logger.info(f"Using site-specific Search Console: {request.gsc_site_url}")
-            gsc_client = GoogleSearchConsoleClient(site_url=request.gsc_site_url)
+            if os.path.exists(gsc_credentials_path):
+                try:
+                    gsc_client = GoogleSearchConsoleClient(
+                        credentials_path=gsc_credentials_path,
+                        site_url=request.gsc_site_url
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to initialize GSC client for {request.gsc_site_url}: {e}")
+                    gsc_client = None
+            else:
+                logger.warning(f"GSC credentials not found at {gsc_credentials_path}, skipping GSC")
         elif google_search_console_client:
             # Use default global Search Console client
             gsc_client = google_search_console_client
@@ -2044,10 +2073,21 @@ async def blog_generation_worker(request: Dict[str, Any]):
             
             # Handle Google Search Console client (multi-site support)
             gsc_client_worker = None
+            gsc_credentials_path = "/secrets/GSC_SERVICE_ACCOUNT_KEY"
             if hasattr(blog_request, 'gsc_site_url') and blog_request.gsc_site_url:
                 # Use site-specific Search Console client
                 logger.info(f"Worker: Using site-specific Search Console: {blog_request.gsc_site_url}")
-                gsc_client_worker = GoogleSearchConsoleClient(site_url=blog_request.gsc_site_url)
+                if os.path.exists(gsc_credentials_path):
+                    try:
+                        gsc_client_worker = GoogleSearchConsoleClient(
+                            credentials_path=gsc_credentials_path,
+                            site_url=blog_request.gsc_site_url
+                        )
+                    except Exception as e:
+                        logger.warning(f"Worker: Failed to initialize GSC client for {blog_request.gsc_site_url}: {e}")
+                        gsc_client_worker = None
+                else:
+                    logger.warning(f"Worker: GSC credentials not found at {gsc_credentials_path}, skipping GSC")
             elif google_search_console_client:
                 # Use default global Search Console client
                 gsc_client_worker = google_search_console_client
