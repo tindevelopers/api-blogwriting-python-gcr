@@ -1228,10 +1228,10 @@ async def generate_blog_enhanced(
             
         else:
             # Fallback: Check legacy flag for backward compatibility
-        if hasattr(request, 'use_dataforseo_content_generation'):
-            USE_DATAFORSEO = request.use_dataforseo_content_generation
-        else:
-            USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            if hasattr(request, 'use_dataforseo_content_generation'):
+                USE_DATAFORSEO = request.use_dataforseo_content_generation
+            else:
+                USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
             logger.info(f"Using legacy flag: USE_DATAFORSEO={USE_DATAFORSEO}")
         
         # Use DataForSEO Content Generation Service (only in sync mode now)
@@ -1549,9 +1549,9 @@ async def generate_blog_enhanced(
             else:
                 try:
                     logger.info(f"Generating citations for topic: {request.topic}")
-                citation_result = await citation_generator.generate_citations(
-                    final_content,
-                    request.topic,
+                    citation_result = await citation_generator.generate_citations(
+                        final_content,
+                        request.topic,
                         request.keywords,
                         num_citations=5  # Minimum 5 citations for authoritative content
                     )
@@ -1572,38 +1572,39 @@ async def generate_blog_enhanced(
                             logger.warning("No citations generated - continuing without citations")
                     else:
                         logger.info(f"Generated {citation_result.citation_count} citations")
-                citations = [
-                    {
-                        "text": c.text[:100],
-                        "url": c.source_url,
-                        "title": c.source_title
-                    }
-                    for c in citation_result.citations
-                ]
-                        
-                # Integrate citations into content
-                final_content = citation_generator.integrate_citations(
-                    final_content,
-                    citation_result.citations
-                )
-                        
-                # Add references section
-                if citation_result.sources_used:
-                    final_content += citation_generator.generate_references_section(
-                        citation_result.sources_used
+                    
+                    citations = [
+                        {
+                            "text": c.text[:100],
+                            "url": c.source_url,
+                            "title": c.source_title
+                        }
+                        for c in citation_result.citations
+                    ]
+                    
+                    # Integrate citations into content
+                    final_content = citation_generator.integrate_citations(
+                        final_content,
+                        citation_result.citations
                     )
-                        
-                        # Validate citations were integrated
-                        citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
-                        if len(citation_markers) == 0 and citation_result.citation_count > 0:
-                            logger.error("Citations generated but not integrated into content")
-                            # Retry integration or add citations manually
-                            logger.warning("Attempting to add citations manually...")
-                            # Citations will be in references section even if not integrated inline
+                    
+                    # Add references section
+                    if citation_result.sources_used:
+                        final_content += citation_generator.generate_references_section(
+                            citation_result.sources_used
+                        )
+                    
+                    # Validate citations were integrated
+                    citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                    if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                        logger.error("Citations generated but not integrated into content")
+                        # Retry integration or add citations manually
+                        logger.warning("Attempting to add citations manually...")
+                        # Citations will be in references section even if not integrated inline
                         
                 except HTTPException:
                     raise
-            except Exception as e:
+                except Exception as e:
                     error_msg = f"Citation generation failed: {str(e)}"
                     logger.error(f"Citation generation failed: {error_msg}", exc_info=True)
                     logger.error(f"API_ERROR: Citation generation exception. Error: {type(e).__name__}: {str(e)}")
@@ -2144,9 +2145,9 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 else:
                     try:
                         logger.info(f"Worker: Generating citations for topic: {blog_request.topic}")
-                    citation_result = await citation_generator.generate_citations(
-                        final_content,
-                        blog_request.topic,
+                        citation_result = await citation_generator.generate_citations(
+                            final_content,
+                            blog_request.topic,
                             blog_request.keywords,
                             num_citations=5  # Minimum 5 citations for authoritative content
                         )
@@ -2170,34 +2171,35 @@ async def blog_generation_worker(request: Dict[str, Any]):
                                 logger.warning("Worker: No citations generated - continuing without citations")
                         else:
                             logger.info(f"Worker: Generated {citation_result.citation_count} citations")
-                    citations = [
-                        {
-                            "text": c.text[:100],
-                            "url": c.source_url,
-                            "title": c.source_title
-                        }
-                        for c in citation_result.citations
-                    ]
-                            
-                            # Integrate citations into content
-                    final_content = citation_generator.integrate_citations(
-                        final_content,
-                        citation_result.citations
-                    )
-                            
-                            # Add references section
-                    if citation_result.sources_used:
-                        final_content += citation_generator.generate_references_section(
-                            citation_result.sources_used
+                        
+                        citations = [
+                            {
+                                "text": c.text[:100],
+                                "url": c.source_url,
+                                "title": c.source_title
+                            }
+                            for c in citation_result.citations
+                        ]
+                        
+                        # Integrate citations into content
+                        final_content = citation_generator.integrate_citations(
+                            final_content,
+                            citation_result.citations
                         )
+                        
+                        # Add references section
+                        if citation_result.sources_used:
+                            final_content += citation_generator.generate_references_section(
+                                citation_result.sources_used
+                            )
+                        
+                        # Validate citations were integrated
+                        citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                        if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                            logger.error("Worker: Citations generated but not integrated into content")
+                            # Citations will be in references section even if not integrated inline
                             
-                            # Validate citations were integrated
-                            citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
-                            if len(citation_markers) == 0 and citation_result.citation_count > 0:
-                                logger.error("Worker: Citations generated but not integrated into content")
-                                # Citations will be in references section even if not integrated inline
-                            
-                except Exception as e:
+                    except Exception as e:
                         error_msg = f"Citation generation failed: {str(e)}"
                         logger.error(f"Worker: Citation generation failed: {error_msg}", exc_info=True)
                         logger.error(f"API_ERROR: Worker citation generation exception. Error: {type(e).__name__}: {str(e)}")
