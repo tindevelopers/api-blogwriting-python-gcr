@@ -103,6 +103,7 @@ class MultiStageGenerationPipeline:
         length_optimizer: Optional[Any] = None,  # ContentLengthOptimizer
         use_consensus: bool = False,
         dataforseo_client: Optional[DataForSEOClient] = None,
+        search_console: Optional[Any] = None,  # GoogleSearchConsoleClient
         progress_callback: Optional[ProgressCallback] = None
     ):
         """
@@ -119,6 +120,8 @@ class MultiStageGenerationPipeline:
             few_shot_extractor: Few-shot learning extractor (optional)
             length_optimizer: Content length optimizer (optional)
             use_consensus: Whether to use consensus generation (Phase 3)
+            dataforseo_client: DataForSEO client (optional)
+            search_console: Google Search Console client (optional, for multi-site support)
         """
         self.ai_generator = ai_generator
         self.google_search = google_search
@@ -133,6 +136,7 @@ class MultiStageGenerationPipeline:
         self.consensus_generator = ConsensusGenerator(ai_generator) if use_consensus else None
         self.prompt_builder = EnhancedPromptBuilder()
         self.dataforseo_client = dataforseo_client
+        self.search_console = search_console
         self.progress_callback = progress_callback
     
     async def _emit_progress(
@@ -901,6 +905,35 @@ class MultiStageGenerationPipeline:
                 logger.warning(warning_msg)
                 api_warnings.append("AI citation optimization unavailable: DataForSEO client not configured.")
         
+        # Google Search Console: Content opportunities and gaps (if available)
+        gsc_opportunities = None
+        gsc_content_gaps = None
+        if self.search_console and keywords:
+            try:
+                logger.info(f"Analyzing Google Search Console data for keywords: {keywords[:3]}")
+                
+                # Get content opportunities (high impressions, low CTR)
+                opportunities = await self.search_console.identify_content_opportunities(
+                    min_impressions=50,
+                    max_position=20.0,
+                    min_ctr_threshold=0.02
+                )
+                if opportunities:
+                    gsc_opportunities = opportunities[:10]  # Top 10 opportunities
+                    logger.info(f"Found {len(gsc_opportunities)} content opportunities from Search Console")
+                
+                # Get content gaps for target keywords
+                gaps = await self.search_console.get_content_gaps(target_keywords=keywords)
+                if gaps and gaps.get("gaps"):
+                    gsc_content_gaps = gaps
+                    logger.info(f"Found {gaps.get('gaps_found', 0)} content gaps for target keywords")
+                
+            except Exception as e:
+                error_msg = f"Google Search Console API unavailable: {str(e)}"
+                logger.warning(f"GSC analysis failed: {error_msg}")
+                api_warnings.append(f"Search Console optimization unavailable: GSC API error. Content generated without site-specific performance data.")
+                logger.warning(f"API_UNAVAILABLE: Google Search Console API failed. Error: {type(e).__name__}: {str(e)}")
+        
         # Priority 3: Query LLM Responses for research
         llm_responses_data = None
         if self.dataforseo_client and self.dataforseo_client.is_configured:
@@ -953,6 +986,10 @@ class MultiStageGenerationPipeline:
             research_context["llm_mentions"] = llm_mentions_data
         if llm_responses_data:
             research_context["llm_responses"] = llm_responses_data
+        if gsc_opportunities:
+            research_context["gsc_opportunities"] = gsc_opportunities
+        if gsc_content_gaps:
+            research_context["gsc_content_gaps"] = gsc_content_gaps
         
         prompt = self.prompt_builder.build_research_prompt(
             topic, keywords, research_context

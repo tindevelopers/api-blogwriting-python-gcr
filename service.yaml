@@ -85,6 +85,16 @@ spec:
             secretKeyRef:
               name: blog-writer-env
               key: GOOGLE_CUSTOM_SEARCH_ENGINE_ID
+        - name: GOOGLE_KNOWLEDGE_GRAPH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: GOOGLE_KNOWLEDGE_GRAPH_API_KEY
+        - name: GSC_SITE_URL
+          valueFrom:
+            secretKeyRef:
+              name: blog-writer-env
+              key: GSC_SITE_URL
         resources:
           limits:
             cpu: "2000m"

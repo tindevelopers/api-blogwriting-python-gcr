@@ -1424,6 +1424,16 @@ async def generate_blog_enhanced(
             """Store progress updates for response."""
             progress_updates.append(update.dict())
         
+        # Handle Google Search Console client (multi-site support)
+        gsc_client = None
+        if request.gsc_site_url:
+            # Use site-specific Search Console client
+            logger.info(f"Using site-specific Search Console: {request.gsc_site_url}")
+            gsc_client = GoogleSearchConsoleClient(site_url=request.gsc_site_url)
+        elif google_search_console_client:
+            # Use default global Search Console client
+            gsc_client = google_search_console_client
+        
         # Initialize pipeline with Phase 3 components and additional enhancements
         pipeline = MultiStageGenerationPipeline(
             ai_generator=ai_generator,
@@ -1437,6 +1447,7 @@ async def generate_blog_enhanced(
             length_optimizer=length_optimizer if request.use_google_search else None,
             use_consensus=request.use_consensus_generation,
             dataforseo_client=dataforseo_client_global,  # Add DataForSEO Labs integration
+            search_console=gsc_client,  # Add Search Console client (site-specific or default)
             progress_callback=progress_callback  # Add progress callback
         )
         
@@ -2030,6 +2041,16 @@ async def blog_generation_worker(request: Dict[str, Any]):
                         content={"error": "AI Content Generator is not initialized"}
                     )
             
+            # Handle Google Search Console client (multi-site support)
+            gsc_client_worker = None
+            if hasattr(blog_request, 'gsc_site_url') and blog_request.gsc_site_url:
+                # Use site-specific Search Console client
+                logger.info(f"Worker: Using site-specific Search Console: {blog_request.gsc_site_url}")
+                gsc_client_worker = GoogleSearchConsoleClient(site_url=blog_request.gsc_site_url)
+            elif google_search_console_client:
+                # Use default global Search Console client
+                gsc_client_worker = google_search_console_client
+            
             # Initialize pipeline (same as synchronous endpoint)
             pipeline = MultiStageGenerationPipeline(
                 ai_generator=ai_generator,
@@ -2041,6 +2062,7 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 intent_analyzer=intent_analyzer,
                 few_shot_extractor=few_shot_extractor if blog_request.use_google_search else None,
                 length_optimizer=length_optimizer if blog_request.use_google_search else None,
+                search_console=gsc_client_worker,  # Add Search Console client (site-specific or default)
                 use_consensus=blog_request.use_consensus_generation,
                 dataforseo_client=dataforseo_client_global,
                 progress_callback=progress_callback

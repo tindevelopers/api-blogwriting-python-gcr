@@ -98,6 +98,29 @@ Focus on creating content that provides genuine value, unique insights, and acti
                 prompt += f"\nTARGET AUDIENCE: {context['target_audience']}"
             if context.get("competitor_analysis"):
                 prompt += f"\n\nCOMPETITOR INSIGHTS:\n{context['competitor_analysis']}"
+            if context.get("gsc_opportunities"):
+                opportunities = context['gsc_opportunities']
+                prompt += f"\n\nGOOGLE SEARCH CONSOLE - CONTENT OPPORTUNITIES:\n"
+                prompt += "These keywords have high impressions but low CTR (opportunity to improve):\n"
+                for opp in opportunities[:5]:
+                    keyword = opp.get('keyword', '')
+                    impressions = opp.get('impressions', 0)
+                    position = opp.get('position', 0)
+                    ctr = opp.get('ctr', 0)
+                    prompt += f"- '{keyword}': {impressions} impressions, position {position:.1f}, CTR {ctr:.2%}\n"
+                prompt += "\nConsider optimizing content to target these high-opportunity keywords."
+            if context.get("gsc_content_gaps"):
+                gaps = context['gsc_content_gaps']
+                gap_list = gaps.get('gaps', [])
+                if gap_list:
+                    prompt += f"\n\nGOOGLE SEARCH CONSOLE - CONTENT GAPS:\n"
+                    prompt += "These target keywords are not ranking or ranking low:\n"
+                    for gap in gap_list[:5]:
+                        keyword = gap.get('keyword', '')
+                        status = gap.get('status', '')
+                        recommendation = gap.get('recommendation', '')
+                        prompt += f"- '{keyword}': {status} - {recommendation}\n"
+                    prompt += "\nFocus on creating content that addresses these gaps."
             if context.get("brand_recommendations"):
                 brand_data = context['brand_recommendations']
                 brands_list = ", ".join(brand_data.get("brands", [])[:10])

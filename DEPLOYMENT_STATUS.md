@@ -1,90 +1,69 @@
-# Deployment Status and Monitoring
+# Deployment Status - Google Custom Search Configuration
 
-## Current Status
+## Latest Commit
 
-**Latest Commit:** `a4a88da664bf9ee7c62fb4ac9e57b21ef2fe70f2`  
+**Commit:** `f469b78`  
+**Message:** "chore: Update main.py and enhanced_prompts.py, add staging branch status"  
 **Branch:** `develop`  
-**Build Status:** ⏳ Waiting for trigger to fire
+**Status:** ✅ Pushed to GitHub
 
----
+## Deployment Status
 
-## Issue Identified
-
-The Cloud Build trigger `deploy-dev-on-develop` appears to be missing or misconfigured. 
-
-**Attempts Made:**
-1. ✅ Code pushed to `develop` branch successfully
-2. ✅ Manual build prevention safeguard added to `cloudbuild.yaml`
-3. ⚠️ Trigger not found or not accessible
-4. ⚠️ Trigger creation failed (likely connection configuration issue)
-
----
-
-## Current Cloud Run Service Status
+### Cloud Run Service
 
 **Service:** `blog-writer-api-dev`  
 **Region:** `europe-west9`  
-**Status:** ✅ Ready  
-**Latest Revision:** `blog-writer-api-dev-00130-crz`
+**Latest Revision:** `blog-writer-api-dev-00236-chr`  
+**URL:** https://blog-writer-api-dev-kq42l26tuq-od.a.run.app
 
-The service is currently running with a previous deployment.
+### Automatic Deployment
 
----
+✅ **Cloud Build Trigger:** Configured for `develop` branch  
+✅ **Deployment:** Automatic on push to `develop`  
+✅ **Status:** New revision created (`00236-chr`)
+
+## Google Custom Search Configuration
+
+✅ **API Key:** Configured in Secret Manager  
+✅ **Engine ID:** Configured (`d6eb6e81167e345b7`)  
+✅ **Secrets:** Created and accessible  
+✅ **Service Account:** Access granted  
+
+## Files Committed
+
+1. **main.py** - Code updates (indentation fixes)
+2. **src/blog_writer_sdk/ai/enhanced_prompts.py** - Enhanced prompts
+3. **STAGING_BRANCH_STATUS.md** - Staging branch documentation
+4. **Test scripts and documentation** - Euras Technology test files
+
+## Verification
+
+To verify deployment and Google Custom Search initialization:
+
+```bash
+# Check logs
+gcloud logging read \
+    "resource.type=cloud_run_revision AND resource.labels.service_name=blog-writer-api-dev AND textPayload=~'Google Custom Search'" \
+    --limit=5 \
+    --format="table(timestamp,textPayload)" \
+    --project=api-ai-blog-writer
+
+# Check service health
+curl https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/health
+```
 
 ## Next Steps
 
-### Option 1: Manual Trigger (Temporary)
-If the automatic trigger cannot be configured immediately, you can manually trigger a build:
+1. ✅ **Committed:** All changes committed
+2. ✅ **Pushed:** Changes pushed to `develop` branch
+3. ✅ **Deployed:** Cloud Run revision created
+4. ⏳ **Verification:** Wait for new revision to initialize and verify Google Custom Search
 
-```bash
-gcloud builds submit \
-  --config cloudbuild.yaml \
-  --substitutions _REGION=europe-west9,_ENV=dev,_SERVICE_NAME=blog-writer-api-dev \
-  --project=api-ai-blog-writer
-```
+## Summary
 
-**Note:** This will fail due to the safeguard we added. The safeguard checks for `BUILD_TRIGGER_ID` which manual builds don't have.
+✅ **Code:** Committed and pushed  
+✅ **Deployment:** Automatic deployment triggered  
+✅ **Configuration:** Google Custom Search API configured  
+✅ **Status:** Ready for testing  
 
-### Option 2: Fix Trigger Configuration
-The trigger needs to be configured via Cloud Console or with proper connection details:
-
-1. Go to Cloud Console → Cloud Build → Triggers
-2. Create trigger for `develop` branch
-3. Use `cloudbuild.yaml` as build config
-4. Set substitutions:
-   - `_REGION=europe-west9`
-   - `_ENV=dev`
-   - `_SERVICE_NAME=blog-writer-api-dev`
-
-### Option 3: Temporarily Disable Safeguard
-If you need to deploy immediately, you can temporarily comment out the safeguard check in `cloudbuild.yaml`, deploy, then re-enable it.
-
----
-
-## Safeguard Status
-
-✅ **Manual Build Prevention:** Active  
-The `cloudbuild.yaml` includes a check for `BUILD_TRIGGER_ID` to ensure only trigger-based builds proceed.
-
----
-
-## Monitoring Script
-
-A monitoring script has been created: `check_and_monitor.sh`
-
-Run it to monitor deployments:
-```bash
-./check_and_monitor.sh
-```
-
----
-
-## GitHub Status Update
-
-Once a successful build completes, the status will be saved to `deployment_status.json` with:
-- Build ID
-- Trigger ID (verification)
-- Service URL
-- Commit SHA
-- Build status
-
+The service should be ready with Google Custom Search API enabled for Multi-Phase mode!

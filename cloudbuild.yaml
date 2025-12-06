@@ -77,7 +77,7 @@ steps:
       '--timeout', '900',
       '--startup-probe', 'timeoutSeconds=3,periodSeconds=5,failureThreshold=60,httpGet.path=/health,httpGet.port=8000',
       '--set-env-vars', 'PYTHONUNBUFFERED=1',
-      '--update-secrets', '/secrets/env=blog-writer-env-${_ENV}:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,STABILITY_AI_API_KEY=STABILITY_AI_API_KEY:latest,GOOGLE_CUSTOM_SEARCH_API_KEY=GOOGLE_CUSTOM_SEARCH_API_KEY:latest,GOOGLE_CUSTOM_SEARCH_ENGINE_ID=GOOGLE_CUSTOM_SEARCH_ENGINE_ID:latest'
+      '--update-secrets', '/secrets/env=blog-writer-env-${_ENV}:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,STABILITY_AI_API_KEY=STABILITY_AI_API_KEY:latest,GOOGLE_CUSTOM_SEARCH_API_KEY=GOOGLE_CUSTOM_SEARCH_API_KEY:latest,GOOGLE_CUSTOM_SEARCH_ENGINE_ID=GOOGLE_CUSTOM_SEARCH_ENGINE_ID:latest,GOOGLE_KNOWLEDGE_GRAPH_API_KEY=GOOGLE_KNOWLEDGE_GRAPH_API_KEY:latest'
     ]
 
 # Store images in Container Registry

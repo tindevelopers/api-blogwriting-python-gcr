@@ -138,6 +138,12 @@ class EnhancedBlogGenerationRequest(BaseModel):
     
     # Research depth
     research_depth: Optional[str] = Field(default="standard", description="Research depth: 'basic', 'standard', or 'comprehensive'")
+    
+    # Google Search Console site URL (optional, for multi-site support)
+    gsc_site_url: Optional[str] = Field(
+        None,
+        description="Google Search Console site URL (optional). If not provided, uses default GSC_SITE_URL from environment. Format: 'https://example.com' or 'sc-domain:example.com'"
+    )
 
 
 class EnhancedBlogGenerationResponse(BaseModel):
