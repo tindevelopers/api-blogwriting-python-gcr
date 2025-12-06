@@ -50,6 +50,12 @@ This guide covers deploying the Blog Writer SDK to various platforms, with a foc
 
 ## ☁️ Step 2: Deploy to Google Cloud Run
 
+> **Important:** Deployments are now handled exclusively by Cloud Build triggers.
+> Push to `develop`, `staging`, or `main` to deploy to dev/staging/prod respectively.
+> Manual scripts (`deploy.sh`, `scripts/deploy.sh`, `scripts/deploy-env.sh`) are
+> intentionally disabled. See [CLOUD_RUN_REGION_POLICY.md](CLOUD_RUN_REGION_POLICY.md)
+> for the branch → region → service mapping.
+
 ### 2.1 Setup Google Cloud Project
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com)

@@ -44,7 +44,7 @@ The image generation endpoint (`/api/v1/images/generate`) has been successfully 
   "generation_time_seconds": 5.78,
   "cost": 0.0039,
   "images": [
-    {
+      {
       "image_id": "dc79004b-f0c0-407b-8486-4560e5861c28",
       "width": 1344,
       "height": 768,

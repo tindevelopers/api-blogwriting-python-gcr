@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/gene/Projects/api-blogwriting-python-gcr/test_custom_instructions_limit.py", line 7, in <module>
+    import requests
+ModuleNotFoundError: No module named 'requests'

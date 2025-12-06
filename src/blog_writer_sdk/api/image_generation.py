@@ -8,6 +8,8 @@ including text-to-image, image variations, upscaling, and editing.
 import os
 import time
 import logging
+import asyncio
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
@@ -37,6 +39,11 @@ from ..models.image_job_models import (
     BatchImageGenerationResponse
 )
 from ..services.cloud_tasks_service import get_cloud_tasks_service
+from .image_streaming import (
+    ImageGenerationStage,
+    create_image_stage_update,
+    stream_image_stage_update
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,39 +76,22 @@ def get_provider_class(provider_type: ImageProviderType):
     return provider_classes[provider_type]
 
 
-@router.post("/generate", response_model=ImageGenerationResponse)
+@router.post("/generate", response_model=CreateImageJobResponse)
 async def generate_image(
     request: ImageGenerationRequest,
-    background_tasks: BackgroundTasks
+    blog_id: Optional[str] = None,
+    blog_job_id: Optional[str] = None
 ):
     """
-    Generate an image from a text prompt.
+    Generate an image from a text prompt (async via Cloud Tasks queue).
     
-    This endpoint allows users to generate images using various AI providers
-    with customizable styles, aspect ratios, and quality settings.
+    This endpoint creates an async job via Cloud Tasks and returns immediately with job_id.
+    Use GET /api/v1/images/jobs/{job_id} to check status and retrieve results.
+    
+    This endpoint always uses async mode (queue) for better scalability.
     """
-    try:
-        # Check if provider is available
-        if not image_provider_manager.providers:
-            raise HTTPException(
-                status_code=503,
-                detail="No image providers configured. Please configure at least one provider."
-            )
-        
-        # Generate image using the provider manager
-        response = await image_provider_manager.generate_image(request)
-        
-        # Log generation for monitoring
-        logger.info(f"Image generated successfully using {response.provider}: {len(response.images)} images")
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Image generation failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Image generation failed: {str(e)}"
-        )
+    # Delegate to async endpoint
+    return await generate_image_async(request, blog_id, blog_job_id)
 
 
 @router.post("/variations", response_model=ImageGenerationResponse)
@@ -607,9 +597,9 @@ async def generate_image_async(
     - Automatic retries on failure
     - Progress tracking via job status endpoint
     
-    Use this for generating multiple images for blogs or batch operations.
+    Note: /generate endpoint now uses this same async logic by default.
+    Use this endpoint for backward compatibility or explicit async behavior.
     """
-    import uuid
     
     try:
         # Create job
@@ -670,6 +660,240 @@ async def generate_image_async(
             status_code=500,
             detail=f"Failed to create image generation job: {str(e)}"
         )
+
+
+@router.post("/generate/stream")
+async def generate_image_stream(
+    request: ImageGenerationRequest,
+    blog_id: Optional[str] = None,
+    blog_job_id: Optional[str] = None
+):
+    """
+    Streaming version of image generation.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - queued: Job created and queued
+    - processing: Starting generation
+    - generating: AI generating image
+    - uploading: Uploading to storage
+    - completed: Image ready
+    
+    This endpoint always uses async mode (queue) and streams stage updates.
+    Frontend can listen to these events to show real-time progress.
+    
+    Example:
+    ```typescript
+    const response = await fetch('/api/v1/images/generate/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: 'A sunset', quality: 'draft' })
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const update = JSON.parse(line.slice(6));
+          console.log(`Stage: ${update.stage}, Progress: ${update.progress}%`);
+        }
+      }
+    }
+    ```
+    """
+    async def generate_stream():
+        try:
+            global image_generation_jobs
+            
+            # Create async job
+            job_id = str(uuid.uuid4())
+            is_draft = request.quality.value == "draft"
+            
+            job = ImageGenerationJobStatus(
+                job_id=job_id,
+                status=ImageJobStatus.PENDING,
+                request=request.dict(),
+                blog_id=blog_id,
+                blog_job_id=blog_job_id,
+                is_draft=is_draft
+            )
+            
+            image_generation_jobs[job_id] = job
+            
+            # Yield initial queued status
+            yield await stream_image_stage_update(
+                ImageGenerationStage.QUEUED,
+                0.0,
+                message="Image generation job created",
+                job_id=job_id,
+                status="queued"
+            )
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/images/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_image_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url,
+                    queue_name=os.getenv("CLOUD_TASKS_IMAGE_QUEUE_NAME", "image-generation-queue")
+                )
+                
+                # Update job
+                job.task_name = task_name
+                job.status = ImageJobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                # Yield queued status
+                yield await stream_image_stage_update(
+                    ImageGenerationStage.QUEUED,
+                    10.0,
+                    message="Job queued successfully",
+                    job_id=job_id,
+                    status="queued"
+                )
+                
+                # Poll job status and stream updates
+                last_stage = None
+                last_progress = 0.0
+                max_wait_time = 300  # 5 minutes max
+                start_time = time.time()
+                
+                while True:
+                    # Check timeout
+                    if time.time() - start_time > max_wait_time:
+                        yield await stream_image_stage_update(
+                            ImageGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Timeout waiting for job completion"},
+                            message="Job timeout - took too long",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Get current job status
+                    if job_id not in image_generation_jobs:
+                        yield await stream_image_stage_update(
+                            ImageGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Job not found"},
+                            message="Job not found",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    job = image_generation_jobs[job_id]
+                    
+                    # Map job status to stage
+                    if job.status == ImageJobStatus.QUEUED:
+                        current_stage = ImageGenerationStage.QUEUED
+                        progress = 10.0
+                    elif job.status == ImageJobStatus.PROCESSING:
+                        current_stage = ImageGenerationStage.GENERATING
+                        progress = 30.0 + (job.progress_percentage * 0.5)  # 30-80% during generation
+                    elif job.status == ImageJobStatus.COMPLETED:
+                        current_stage = ImageGenerationStage.COMPLETED
+                        progress = 100.0
+                    elif job.status == ImageJobStatus.FAILED:
+                        current_stage = ImageGenerationStage.ERROR
+                        progress = job.progress_percentage
+                    else:
+                        current_stage = ImageGenerationStage.PROCESSING
+                        progress = 20.0
+                    
+                    # Yield update if stage or progress changed
+                    if current_stage != last_stage or progress != last_progress:
+                        yield await stream_image_stage_update(
+                            current_stage,
+                            progress,
+                            data={
+                                "is_draft": job.is_draft,
+                                "blog_id": job.blog_id,
+                                "blog_job_id": job.blog_job_id
+                            },
+                            message=f"Image generation: {current_stage.value}",
+                            job_id=job_id,
+                            status=job.status.value
+                        )
+                        
+                        last_stage = current_stage
+                        last_progress = progress
+                    
+                    # Check if completed
+                    if job.status == ImageJobStatus.COMPLETED:
+                        yield await stream_image_stage_update(
+                            ImageGenerationStage.COMPLETED,
+                            100.0,
+                            data={"result": job.result},
+                            message="Image generation completed successfully",
+                            job_id=job_id,
+                            status="completed"
+                        )
+                        break
+                    
+                    # Check if failed
+                    if job.status == ImageJobStatus.FAILED:
+                        yield await stream_image_stage_update(
+                            ImageGenerationStage.ERROR,
+                            progress,
+                            data={"error": job.error_message, "error_details": job.error_details},
+                            message=f"Image generation failed: {job.error_message}",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Wait before next poll
+                    await asyncio.sleep(0.3)
+                    
+            except Exception as e:
+                logger.error(f"Failed to create or monitor image generation job: {e}", exc_info=True)
+                yield await stream_image_stage_update(
+                    ImageGenerationStage.ERROR,
+                    0.0,
+                    data={"error": str(e)},
+                    message=f"Failed to create job: {str(e)}",
+                    job_id=job_id,
+                    status="failed"
+                )
+                
+        except Exception as e:
+            logger.error(f"Image generation stream error: {e}", exc_info=True)
+            yield await stream_image_stage_update(
+                ImageGenerationStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"Stream error: {str(e)}",
+                status="failed"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @router.post("/worker")

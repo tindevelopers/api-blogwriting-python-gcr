@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 from .blog_models import ContentTone, ContentLength
 
 
+class GenerationMode(str, Enum):
+    """Blog generation mode."""
+    QUICK_GENERATE = "quick_generate"  # Fast, DataForSEO only
+    MULTI_PHASE = "multi_phase"        # Comprehensive, Pipeline with enhancements
+
+
 class BlogContentType(str, Enum):
     """
     Blog content type enumeration - Top 80% of popular content formats.
@@ -56,6 +62,12 @@ class EnhancedBlogGenerationRequest(BaseModel):
     keywords: List[str] = Field(..., min_items=1, description="Target SEO keywords")
     tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
     length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
+    
+    # Generation mode: determines which workflow to use
+    mode: GenerationMode = Field(
+        default=GenerationMode.QUICK_GENERATE,
+        description="Generation mode: 'quick_generate' uses DataForSEO (fast, cost-effective), 'multi_phase' uses comprehensive pipeline (premium quality)"
+    )
     
     # Blog type for DataForSEO Content Generation
     blog_type: Optional[BlogContentType] = Field(
@@ -105,7 +117,7 @@ class EnhancedBlogGenerationRequest(BaseModel):
     
     # Additional context
     target_audience: Optional[str] = Field(None, description="Target audience")
-    custom_instructions: Optional[str] = Field(None, max_length=2000, description="Additional instructions for content generation")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions for content generation")
     template_type: Optional[str] = Field(None, description="Prompt template type (expert_authority, how_to_guide, etc.)")
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
     
@@ -134,6 +146,11 @@ class EnhancedBlogGenerationResponse(BaseModel):
     # Content
     title: str = Field(..., description="Blog post title")
     content: str = Field(..., description="Blog post content")
+    excerpt: Optional[str] = Field(
+        None,
+        max_length=300,
+        description="Short excerpt/summary for previews"
+    )
     meta_title: str = Field(..., description="SEO-optimized meta title")
     meta_description: str = Field(..., description="SEO-optimized meta description")
     

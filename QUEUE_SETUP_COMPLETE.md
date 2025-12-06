@@ -127,3 +127,4 @@ gcloud tasks list --queue=blog-queue-dev --location=europe-west1
 
 **Status:** ✅ Ready for testing (alternative queue available)
 
+

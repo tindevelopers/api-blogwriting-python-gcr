@@ -12,6 +12,12 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Enforce trigger-based deployments only
+echo -e "${RED}Manual deployments via scripts/deploy.sh are disabled.${NC}"
+echo -e "${YELLOW}Push to develop, staging, or main so the Cloud Build triggers handle deployment.${NC}"
+echo -e "See CLOUD_RUN_REGION_POLICY.md for the branch-to-region map."
+exit 1
+
 # Configuration
 PROJECT_ID=${GOOGLE_CLOUD_PROJECT:-""}
 REGION=${REGION:-"us-central1"}

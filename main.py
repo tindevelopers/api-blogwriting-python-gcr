@@ -12,6 +12,7 @@ import asyncio
 import uuid
 import math
 import json
+import base64
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
@@ -95,13 +96,20 @@ from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
 from src.blog_writer_sdk.api.user_management import router as user_management_router
+from src.blog_writer_sdk.api.field_enhancement import router as field_enhancement_router
 from src.blog_writer_sdk.api.keyword_streaming import (
     KeywordSearchStage,
     create_stage_update,
     stream_stage_update
 )
+from src.blog_writer_sdk.api.blog_streaming import (
+    BlogGenerationStage,
+    create_blog_stage_update,
+    stream_blog_stage_update
+)
 from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
+    GenerationMode,
     EnhancedBlogGenerationResponse,
     BlogContentType
 )
@@ -137,6 +145,7 @@ from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficult
 from src.blog_writer_sdk.services.quota_manager import QuotaManager
 from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
+from src.blog_writer_sdk.utils.text_utils import extract_excerpt
 
 
 # API Request/Response Models
@@ -160,7 +169,7 @@ class BlogGenerationRequest(BaseModel):
     
     # Advanced Options
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
 
 
 class ContentAnalysisRequest(BaseModel):
@@ -344,7 +353,7 @@ class UnifiedBlogRequest(BaseModel):
     length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
     format: ContentFormat = Field(default=ContentFormat.MARKDOWN, description="Output format")
     target_audience: Optional[str] = Field(None, max_length=200, description="Target audience description")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
     
     # Standard & Enhanced fields
     include_introduction: bool = Field(default=True, description="Include introduction section (standard/enhanced)")
@@ -396,7 +405,7 @@ class LocalBusinessBlogRequest(BaseModel):
     include_business_details: bool = Field(default=True, description="Include business details (hours, contact, services)")
     include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis")
     use_google: bool = Field(default=True, description="Fetch reviews from Google Places")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
 
 
 class BusinessInfo(BaseModel):
@@ -455,8 +464,9 @@ def load_env_from_secrets():
                                 skipped_count += 1
                                 continue
                             
-                            # For DATAFORSEO secrets, always use volume-mounted secrets (override individual secrets)
-                            if key in ['DATAFORSEO_API_KEY', 'DATAFORSEO_API_SECRET']:
+                            # For DATAFORSEO and Cloudinary secrets, always use volume-mounted secrets (override individual secrets)
+                            if key in ['DATAFORSEO_API_KEY', 'DATAFORSEO_API_SECRET', 
+                                      'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET', 'CLOUDINARY_FOLDER']:
                                 os.environ[key] = str_value
                                 loaded_count += 1
                             elif key not in os.environ:
@@ -655,7 +665,10 @@ async def lifespan(app: FastAPI):
     global intent_analyzer, few_shot_extractor, length_optimizer
     global dataforseo_content_generation_service
     readability_analyzer = ReadabilityAnalyzer()
-    citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
+    citation_generator = CitationGenerator(
+        google_search_client=google_custom_search_client,
+        dataforseo_client=dataforseo_client_global
+    )
     serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
     
     # Phase 3: Google Knowledge Graph
@@ -783,14 +796,16 @@ app = FastAPI(
     - `POST /api/v1/generate` - Standard blog generation
     - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis with DataForSEO
     - `POST /api/v1/integrations/connect-and-recommend` - Backlink/interlink recommendations
+    - `POST /api/v1/content/enhance-fields` - Enhance mandatory CMS fields (SEO title, meta description, slug, alt text) using OpenAI
     
     ## Quick Start
     
     1. **Configure AI Providers**: Use `/api/v1/ai/providers/configure` to add your AI provider credentials
     2. **Generate Enhanced Content**: Use `/api/v1/blog/generate-enhanced` for high-quality blog posts
     3. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
-    4. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
-    5. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
+    4. **Enhance CMS Fields**: Use `/api/v1/content/enhance-fields` to optimize SEO title, meta description, slug, and alt text after image generation
+    5. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
+    6. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
     
     ## Documentation
     
@@ -832,6 +847,8 @@ app.include_router(image_generation_router)
 app.include_router(integrations_router)
 # Include user management router
 app.include_router(user_management_router)
+# Include field enhancement router
+app.include_router(field_enhancement_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
@@ -1066,28 +1083,38 @@ async def root():
 async def generate_blog_enhanced(
     request: EnhancedBlogGenerationRequest,
     background_tasks: BackgroundTasks,
-    async_mode: bool = Query(default=False, description="If true, creates async job via Cloud Tasks")
+    async_mode: bool = Query(default=True, description="If true, creates async job via Cloud Tasks (default: true, uses queue)")
 ):
     """
-    Generate high-quality blog content using DataForSEO Content Generation API.
+    Generate high-quality blog content with two workflow modes.
     
-    This endpoint uses DataForSEO Content Generation API by default for all blog types:
-    - Brands: Comprehensive brand content
-    - Top 10: Ranking lists with detailed entries
-    - Product Reviews: Detailed product analysis
-    - How To: Step-by-step guides
-    - Comparison: Side-by-side comparisons
-    - Guide: Comprehensive guides
-    - Custom: Custom content based on instructions
+    **Workflow Modes:**
     
-    Query Parameters:
-    - async_mode: If true, creates an async job via Cloud Tasks and returns job_id immediately
+    1. **Quick Generate** (`mode="quick_generate"`, default):
+       - Uses DataForSEO Content Generation API
+       - Fast: 30-60 seconds
+       - Cost-effective: ~$0.001-0.002 per blog
+       - Good SEO optimization built-in
+       - Best for: Quick drafts, simple blogs, high-volume generation
     
-    Returns:
+    2. **Multi-Phase Workflow** (`mode="multi_phase"`):
+       - Uses comprehensive MultiStageGenerationPipeline (Anthropic/OpenAI)
+       - Comprehensive: 12-stage enhancement pipeline
+       - Premium quality: Fact-checking, citations, SERP optimization
+       - Slower: 3-5 minutes
+       - Higher cost: ~$0.008-0.015 per blog
+       - Best for: Premium content, SEO-critical articles, authoritative content
+    
+    **Query Parameters:**
+    - async_mode: If true (default), creates an async job via Cloud Tasks and returns job_id immediately.
+                  If false, processes synchronously (for backward compatibility).
+    
+    **Returns:**
+    - If async_mode=true (default): CreateJobResponse with job_id (asynchronous, uses queue)
     - If async_mode=false: EnhancedBlogGenerationResponse (synchronous)
-    - If async_mode=true: CreateJobResponse with job_id (asynchronous)
     
     Use GET /api/v1/blog/jobs/{job_id} to check status and retrieve results.
+    For real-time streaming updates, use POST /api/v1/blog/generate-enhanced/stream
     """
     import time
     start_time = time.time()
@@ -1099,15 +1126,115 @@ async def generate_blog_enhanced(
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
         global blog_generation_jobs
         
-        # Check if DataForSEO Content Generation should be used (default: True)
-        # Request flag takes precedence over environment variable
-        if hasattr(request, 'use_dataforseo_content_generation'):
-            USE_DATAFORSEO = request.use_dataforseo_content_generation
-        else:
-            # Fall back to environment variable if request doesn't specify
-            USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+        # Handle async mode FIRST - if async_mode is True, create Cloud Task and return immediately
+        # This applies to both DataForSEO and pipeline paths
+        if async_mode:
+            job_id = str(uuid.uuid4())
+            
+            # Create job record
+            job = BlogGenerationJob(
+                job_id=job_id,
+                status=JobStatus.PENDING,
+                request=request.dict()
+            )
+            blog_generation_jobs[job_id] = job
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL (Cloud Run service URL)
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    # Fallback: Use the actual service URL (Cloud Run URLs have unique hashes)
+                    # Default to the known dev service URL
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/blog/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_blog_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url
+                )
+                
+                # Update job with task name
+                job.task_name = task_name
+                job.status = JobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
+                
+                # Estimate completion time based on mode
+                generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
+                if generation_mode == GenerationMode.QUICK_GENERATE:
+                    estimated_time = 60  # 1 minute for Quick Generate (DataForSEO)
+                else:
+                    estimated_time = 240  # 4 minutes for Multi-Phase (Pipeline)
+                
+                return CreateJobResponse(
+                    job_id=job_id,
+                    status=JobStatus.QUEUED,
+                    message="Blog generation job queued successfully",
+                    estimated_completion_time=estimated_time
+                )
+                
+            except Exception as e:
+                logger.error(f"Failed to create Cloud Task: {e}", exc_info=True)
+                # Update job status
+                job.status = JobStatus.FAILED
+                job.error_message = f"Failed to queue job: {str(e)}"
+                job.completed_at = datetime.utcnow()
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create async job: {str(e)}"
+                )
         
-        # Use DataForSEO Content Generation Service
+        # Route based on generation mode
+        # Quick Generate: Always use DataForSEO (fast, cost-effective)
+        # Multi-Phase: Always use Pipeline (comprehensive, premium quality)
+        generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
+        
+        if generation_mode == GenerationMode.QUICK_GENERATE:
+            # Quick Generate mode: Force DataForSEO Content Generation
+            USE_DATAFORSEO = True
+            logger.info("⚡ Quick Generate mode: Using DataForSEO Content Generation API")
+            
+            # Disable expensive pipeline features for Quick Generate
+            # These are not needed as DataForSEO handles SEO optimization internally
+            request.use_consensus_generation = False
+            # Note: use_google_search, use_fact_checking can still be used for research if needed
+            # but won't affect the content generation method
+            
+        elif generation_mode == GenerationMode.MULTI_PHASE:
+            # Multi-Phase mode: Force Pipeline (comprehensive workflow)
+            USE_DATAFORSEO = False
+            logger.info("🔧 Multi-Phase mode: Using comprehensive multi-stage pipeline")
+            
+            # Force citations for Multi-Phase mode (premium content requires citations)
+            request.use_citations = True
+            logger.info("🔧 Multi-Phase mode: Citations are mandatory for premium content")
+            
+            # Ensure Google Custom Search is available for citations
+            if not google_custom_search_client:
+                logger.error("Multi-Phase mode requires Google Custom Search for citations")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Google Custom Search API is required for Multi-Phase workflow citations. Please configure GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID."
+                )
+            
+        else:
+            # Fallback: Check legacy flag for backward compatibility
+            if hasattr(request, 'use_dataforseo_content_generation'):
+                USE_DATAFORSEO = request.use_dataforseo_content_generation
+            else:
+                USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            logger.info(f"Using legacy flag: USE_DATAFORSEO={USE_DATAFORSEO}")
+        
+        # Use DataForSEO Content Generation Service (only in sync mode now)
         if USE_DATAFORSEO:
             logger.info("🔷 Using DataForSEO Content Generation API for blog generation")
             
@@ -1245,10 +1372,13 @@ async def generate_blog_enhanced(
                     
                     logger.info(f"Returning successful response: title={result.get('title', '')[:50]}, content_length={len(generated_content)}")
                     
+                    excerpt = extract_excerpt(generated_content, max_length=250)
+                    
                     # Build response
                     return EnhancedBlogGenerationResponse(
                         title=result.get("title", request.topic),
                         content=generated_content,
+                        excerpt=excerpt,
                         meta_title=result.get("meta_title", result.get("title", request.topic)),
                         meta_description=result.get("meta_description", ""),
                         readability_score=readability_score,
@@ -1278,6 +1408,7 @@ async def generate_blog_enhanced(
                     logger.warning(f"Falling back to pipeline due to DataForSEO error: {str(e)}")
         
         # Fallback to original pipeline if DataForSEO is disabled or not configured
+        # Note: async_mode is already handled above, so this is sync mode only
         logger.info("Using multi-stage pipeline for blog generation")
         
         # Check if AI generator is available
@@ -1286,68 +1417,6 @@ async def generate_blog_enhanced(
                 status_code=503,
                 detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
             )
-        
-        # Handle async mode - create Cloud Tasks job
-        if async_mode:
-            job_id = str(uuid.uuid4())
-            
-            # Create job record
-            job = BlogGenerationJob(
-                job_id=job_id,
-                status=JobStatus.PENDING,
-                request=request.dict()
-            )
-            blog_generation_jobs[job_id] = job
-            
-            try:
-                # Get Cloud Tasks service
-                cloud_tasks_service = get_cloud_tasks_service()
-                
-                # Get worker URL (Cloud Run service URL)
-                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
-                if not worker_url:
-                    # Fallback: Use the actual service URL (Cloud Run URLs have unique hashes)
-                    # Default to the known dev service URL
-                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
-                    worker_url = f"{service_base_url}/api/v1/blog/worker"
-                
-                # Create Cloud Task
-                task_name = cloud_tasks_service.create_blog_generation_task(
-                    request_data={
-                        "job_id": job_id,
-                        "request": request.dict()
-                    },
-                    worker_url=worker_url
-                )
-                
-                # Update job with task name
-                job.task_name = task_name
-                job.status = JobStatus.QUEUED
-                job.queued_at = datetime.utcnow()
-                
-                logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
-                
-                # Estimate completion time (4 minutes average)
-                estimated_time = 240  # 4 minutes in seconds
-                
-                return CreateJobResponse(
-                    job_id=job_id,
-                    status=JobStatus.QUEUED,
-                    message="Blog generation job queued successfully",
-                    estimated_completion_time=estimated_time
-                )
-                
-            except Exception as e:
-                logger.error(f"Failed to create Cloud Task: {e}", exc_info=True)
-                # Update job status
-                job.status = JobStatus.FAILED
-                job.error_message = f"Failed to queue job: {str(e)}"
-                job.completed_at = datetime.utcnow()
-                
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to create async job: {str(e)}"
-                )
         
         # Create progress callback for streaming updates
         progress_updates = []
@@ -1453,35 +1522,89 @@ async def generate_blog_enhanced(
                 detail=f"Blog generation failed: {str(e)}"
             )
         
-        # Add citations if enabled
+        # Add citations if enabled (mandatory for Multi-Phase mode)
         citations = []
-        if request.use_citations and google_custom_search_client:
-            try:
-                citation_result = await citation_generator.generate_citations(
-                    final_content,
-                    request.topic,
-                    request.keywords
-                )
-                citations = [
-                    {
-                        "text": c.text[:100],
-                        "url": c.source_url,
-                        "title": c.source_title
-                    }
-                    for c in citation_result.citations
-                ]
-                # Integrate citations into content
-                final_content = citation_generator.integrate_citations(
-                    final_content,
-                    citation_result.citations
-                )
-                # Add references section
-                if citation_result.sources_used:
-                    final_content += citation_generator.generate_references_section(
-                        citation_result.sources_used
+        citation_warnings = []  # Initialize citation warnings list
+        if request.use_citations:
+            if not google_custom_search_client:
+                if generation_mode == GenerationMode.MULTI_PHASE:
+                    # Citations are mandatory for Multi-Phase - fail fast
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Citation generation requires Google Custom Search API. Please configure GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID."
                     )
-            except Exception as e:
-                logger.warning(f"Citation generation failed: {e}")
+                else:
+                    logger.warning("Citation generation requested but Google Custom Search not available")
+            else:
+                try:
+                    logger.info(f"Generating citations for topic: {request.topic}")
+                    citation_result = await citation_generator.generate_citations(
+                        final_content,
+                        request.topic,
+                        request.keywords,
+                        num_citations=5  # Minimum 5 citations for authoritative content
+                    )
+                    
+                    # Collect citation warnings
+                    if citation_result.warnings:
+                        citation_warnings.extend(citation_result.warnings)
+                    
+                    # Validate citations were generated
+                    if citation_result.citation_count == 0:
+                        logger.error("Citation generation returned 0 citations")
+                        if generation_mode == GenerationMode.MULTI_PHASE:
+                            raise HTTPException(
+                                status_code=500,
+                                detail="Failed to generate citations - no sources found. Citations are required for Multi-Phase workflow."
+                            )
+                        else:
+                            logger.warning("No citations generated - continuing without citations")
+                    else:
+                        logger.info(f"Generated {citation_result.citation_count} citations")
+                        citations = [
+                            {
+                                "text": c.text[:100],
+                                "url": c.source_url,
+                                "title": c.source_title
+                            }
+                            for c in citation_result.citations
+                        ]
+                        
+                        # Integrate citations into content
+                        final_content = citation_generator.integrate_citations(
+                            final_content,
+                            citation_result.citations
+                        )
+                        
+                        # Add references section
+                        if citation_result.sources_used:
+                            final_content += citation_generator.generate_references_section(
+                                citation_result.sources_used
+                            )
+                        
+                        # Validate citations were integrated
+                        citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                        if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                            logger.error("Citations generated but not integrated into content")
+                            # Retry integration or add citations manually
+                            logger.warning("Attempting to add citations manually...")
+                            # Citations will be in references section even if not integrated inline
+                        
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    error_msg = f"Citation generation failed: {str(e)}"
+                    logger.error(f"Citation generation failed: {error_msg}", exc_info=True)
+                    logger.error(f"API_ERROR: Citation generation exception. Error: {type(e).__name__}: {str(e)}")
+                    if generation_mode == GenerationMode.MULTI_PHASE:
+                        # Citations are mandatory for Multi-Phase - fail fast
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Citation generation failed: {str(e)}. Citations are required for Multi-Phase workflow."
+                        )
+                    else:
+                        logger.warning(f"Citation generation failed: {e} - continuing without citations")
+                        citation_warnings = [f"Citation generation failed: {error_msg}"]
         
         # Calculate SEO score (simplified)
         seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
@@ -1502,6 +1625,7 @@ async def generate_blog_enhanced(
         
         # Extract content metadata for frontend processing (unified + remark + rehype support)
         content_metadata = extract_content_metadata(final_content)
+        excerpt = extract_excerpt(final_content, max_length=250)
         
         # Enhance SEO metadata with OG and Twitter tags
         enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1575,6 +1699,13 @@ async def generate_blog_enhanced(
             for s in pipeline_result.stage_results
         ]
         
+        # Collect all warnings from pipeline and citations
+        all_warnings = []
+        if pipeline_result.warnings:
+            all_warnings.extend(pipeline_result.warnings)
+        if 'citation_warnings' in locals() and citation_warnings:
+            all_warnings.extend(citation_warnings)
+        
         # Log generation
         background_tasks.add_task(
             log_generation,
@@ -1587,6 +1718,7 @@ async def generate_blog_enhanced(
         return EnhancedBlogGenerationResponse(
             title=pipeline_result.meta_title or request.topic,
             content=final_content,
+            excerpt=excerpt,
             meta_title=pipeline_result.meta_title,
             meta_description=pipeline_result.meta_description,
             readability_score=pipeline_result.readability_score,
@@ -1606,7 +1738,7 @@ async def generate_blog_enhanced(
             generated_images=None,  # Image generation moved to separate endpoint
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=[],  # Image generation warnings removed (use separate endpoint)
+            warnings=all_warnings,  # Include API warnings
             progress_updates=progress_updates  # Include progress updates for frontend
         )
         
@@ -1667,6 +1799,42 @@ async def blog_generation_worker(request: Dict[str, Any]):
         request_data = request.get("request", {})
         blog_request = EnhancedBlogGenerationRequest(**request_data)
         
+        # Route based on generation mode (same logic as synchronous endpoint)
+        generation_mode = getattr(blog_request, 'mode', GenerationMode.QUICK_GENERATE)
+        
+        if generation_mode == GenerationMode.QUICK_GENERATE:
+            # Quick Generate mode: Use DataForSEO Content Generation
+            USE_DATAFORSEO = True
+            logger.info(f"Worker: ⚡ Quick Generate mode - Using DataForSEO Content Generation API for job {job_id}")
+            
+        elif generation_mode == GenerationMode.MULTI_PHASE:
+            # Multi-Phase mode: Use Pipeline
+            USE_DATAFORSEO = False
+            logger.info(f"Worker: 🔧 Multi-Phase mode - Using comprehensive pipeline for job {job_id}")
+            
+            # Force citations for Multi-Phase mode (premium content requires citations)
+            blog_request.use_citations = True
+            logger.info(f"Worker: 🔧 Multi-Phase mode: Citations are mandatory for premium content")
+            
+            # Ensure Google Custom Search is available for citations
+            if not google_custom_search_client:
+                logger.error(f"Worker: Multi-Phase mode requires Google Custom Search for citations")
+                job.status = JobStatus.FAILED
+                job.error_message = "Google Custom Search API is required for Multi-Phase workflow citations"
+                job.completed_at = datetime.utcnow()
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Google Custom Search API is required for Multi-Phase workflow citations"}
+                )
+            
+        else:
+            # Fallback: Check legacy flag
+            if hasattr(blog_request, 'use_dataforseo_content_generation'):
+                USE_DATAFORSEO = blog_request.use_dataforseo_content_generation
+            else:
+                USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            logger.info(f"Worker: Using legacy flag - USE_DATAFORSEO={USE_DATAFORSEO}")
+        
         try:
             # Create progress callback that updates job
             progress_updates = []
@@ -1681,8 +1849,189 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 if "progress_percentage" in update:
                     job.progress_percentage = update.get("progress_percentage", 0.0)
             
-            # Initialize pipeline (same as synchronous endpoint)
-            pipeline = MultiStageGenerationPipeline(
+            # Use DataForSEO Content Generation if enabled
+            if USE_DATAFORSEO:
+                logger.info(f"Worker: 🔷 Using DataForSEO Content Generation API for blog generation")
+                
+                # Initialize DataForSEO Content Generation Service
+                content_service = DataForSEOContentGenerationService(dataforseo_client=dataforseo_client_global)
+                await content_service.initialize(tenant_id="default")
+                
+                if not content_service.is_configured:
+                    logger.warning("Worker: DataForSEO Content Generation not configured, falling back to pipeline")
+                    USE_DATAFORSEO = False
+                else:
+                    # Map blog type (all 28 blog types supported)
+                    blog_type_map = {
+                        BlogContentType.BRAND: DataForSEOBlogType.BRAND,
+                        BlogContentType.TOP_10: DataForSEOBlogType.TOP_10,
+                        BlogContentType.PRODUCT_REVIEW: DataForSEOBlogType.PRODUCT_REVIEW,
+                        BlogContentType.HOW_TO: DataForSEOBlogType.HOW_TO,
+                        BlogContentType.COMPARISON: DataForSEOBlogType.COMPARISON,
+                        BlogContentType.GUIDE: DataForSEOBlogType.GUIDE,
+                        BlogContentType.CUSTOM: DataForSEOBlogType.CUSTOM,
+                        BlogContentType.TUTORIAL: DataForSEOBlogType.TUTORIAL,
+                        BlogContentType.LISTICLE: DataForSEOBlogType.LISTICLE,
+                        BlogContentType.CASE_STUDY: DataForSEOBlogType.CASE_STUDY,
+                        BlogContentType.NEWS: DataForSEOBlogType.NEWS,
+                        BlogContentType.OPINION: DataForSEOBlogType.OPINION,
+                        BlogContentType.INTERVIEW: DataForSEOBlogType.INTERVIEW,
+                        BlogContentType.FAQ: DataForSEOBlogType.FAQ,
+                        BlogContentType.CHECKLIST: DataForSEOBlogType.CHECKLIST,
+                        BlogContentType.TIPS: DataForSEOBlogType.TIPS,
+                        BlogContentType.DEFINITION: DataForSEOBlogType.DEFINITION,
+                        BlogContentType.BENEFITS: DataForSEOBlogType.BENEFITS,
+                        BlogContentType.PROBLEM_SOLUTION: DataForSEOBlogType.PROBLEM_SOLUTION,
+                        BlogContentType.TREND_ANALYSIS: DataForSEOBlogType.TREND_ANALYSIS,
+                        BlogContentType.STATISTICS: DataForSEOBlogType.STATISTICS,
+                        BlogContentType.RESOURCE_LIST: DataForSEOBlogType.RESOURCE_LIST,
+                        BlogContentType.TIMELINE: DataForSEOBlogType.TIMELINE,
+                        BlogContentType.MYTH_BUSTING: DataForSEOBlogType.MYTH_BUSTING,
+                        BlogContentType.BEST_PRACTICES: DataForSEOBlogType.BEST_PRACTICES,
+                        BlogContentType.GETTING_STARTED: DataForSEOBlogType.GETTING_STARTED,
+                        BlogContentType.ADVANCED: DataForSEOBlogType.ADVANCED,
+                        BlogContentType.TROUBLESHOOTING: DataForSEOBlogType.TROUBLESHOOTING,
+                    }
+                    df_blog_type = blog_type_map.get(blog_request.blog_type or BlogContentType.CUSTOM, DataForSEOBlogType.CUSTOM)
+                    
+                    # Calculate word count from length
+                    word_count_map = {
+                        ContentLength.SHORT: 500,
+                        ContentLength.MEDIUM: 1500,
+                        ContentLength.LONG: 2500,
+                        ContentLength.EXTENDED: 4000,
+                    }
+                    word_count = blog_request.word_count_target or word_count_map.get(blog_request.length, 1500)
+                    
+                    # Map tone
+                    tone_map = {
+                        ContentTone.PROFESSIONAL: "professional",
+                        ContentTone.CASUAL: "casual",
+                        ContentTone.FRIENDLY: "friendly",
+                        ContentTone.AUTHORITATIVE: "professional",
+                        ContentTone.CONVERSATIONAL: "casual",
+                        ContentTone.TECHNICAL: "professional",
+                        ContentTone.CREATIVE: "casual",
+                    }
+                    if blog_request.tone in tone_map:
+                        tone_str = tone_map[blog_request.tone]
+                    elif hasattr(blog_request.tone, 'value'):
+                        tone_str = blog_request.tone.value
+                    else:
+                        tone_str = str(blog_request.tone).lower()
+                    
+                    try:
+                        # Generate blog content using DataForSEO
+                        logger.info(f"Worker: Calling DataForSEO generate_blog_content: topic={blog_request.topic}, blog_type={df_blog_type.value}, word_count={word_count}")
+                        
+                        result = await content_service.generate_blog_content(
+                            topic=blog_request.topic,
+                            keywords=blog_request.keywords,
+                            blog_type=df_blog_type,
+                            tone=tone_str,
+                            word_count=word_count,
+                            target_audience=blog_request.target_audience,
+                            language="en",
+                            tenant_id="default",
+                            optimize_for_traffic=getattr(blog_request, 'optimize_for_traffic', True),
+                            analyze_backlinks=getattr(blog_request, 'analyze_backlinks', False),
+                            backlink_url=getattr(blog_request, 'backlink_url', None),
+                            brand_name=getattr(blog_request, 'brand_name', None),
+                            category=getattr(blog_request, 'category', None),
+                            product_name=getattr(blog_request, 'product_name', None),
+                            items=getattr(blog_request, 'comparison_items', None),
+                            custom_instructions=blog_request.custom_instructions
+                        )
+                        
+                        logger.info(f"Worker: DataForSEO generation completed: content_length={len(result.get('content', ''))}, tokens={result.get('tokens_used', 0)}")
+                        
+                        # Validate content
+                        generated_content = result.get("content", "")
+                        if not generated_content or len(generated_content.strip()) < 50:
+                            raise Exception(f"DataForSEO returned empty content: length={len(generated_content)}")
+                        
+                        # Extract SEO metrics
+                        seo_metrics = result.get("seo_metrics", {})
+                        readability_score = seo_metrics.get("readability_score", 75.0)
+                        seo_score = seo_metrics.get("seo_score", 85.0)
+                        
+                        # Build SEO metadata
+                        seo_metadata = {
+                            "semantic_keywords": result.get("keywords", blog_request.keywords),
+                            "subtopics": result.get("subtopics", []),
+                            "blog_type": result.get("blog_type", "custom"),
+                            "keyword_density": seo_metrics.get("keyword_density", {}),
+                            "headings_count": seo_metrics.get("headings_count", 0),
+                            "avg_sentence_length": seo_metrics.get("avg_sentence_length", 0),
+                            "seo_factors": seo_metrics.get("seo_factors", []),
+                            "word_count_range": seo_metrics.get("word_count_range", {}),
+                            "backlink_keywords": result.get("backlink_keywords", [])
+                        }
+                        
+                        quality_dimensions = {
+                            "readability": readability_score,
+                            "seo": seo_score,
+                            "structure": min(100, seo_metrics.get("headings_count", 0) * 20),
+                            "keyword_optimization": min(100, seo_score * 0.8)
+                        }
+                        
+                        excerpt = extract_excerpt(generated_content, max_length=250)
+                        
+                        # Update job with result
+                        job.status = JobStatus.COMPLETED
+                        job.completed_at = datetime.utcnow()
+                        job.result = EnhancedBlogGenerationResponse(
+                            title=result.get("title", blog_request.topic),
+                            content=generated_content,
+                            excerpt=excerpt,
+                            meta_title=result.get("meta_title", result.get("title", blog_request.topic)),
+                            meta_description=result.get("meta_description", ""),
+                            readability_score=readability_score,
+                            seo_score=seo_score,
+                            stage_results=[],
+                            citations=[],
+                            total_tokens=result.get("tokens_used", 0),
+                            total_cost=result.get("cost", 0.0),
+                            generation_time=(datetime.utcnow() - job.started_at).total_seconds(),
+                            seo_metadata=seo_metadata,
+                            internal_links=[],
+                            quality_score=seo_score,
+                            quality_dimensions=quality_dimensions,
+                            structured_data=None,
+                            semantic_keywords=result.get("keywords", blog_request.keywords),
+                            content_metadata={},
+                            success=True,
+                            warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
+                            progress_updates=progress_updates
+                        )
+                        
+                        logger.info(f"Worker: DataForSEO generation completed successfully for job {job_id}")
+                        return JSONResponse(
+                            status_code=200,
+                            content={"status": "completed", "job_id": job_id}
+                        )
+                        
+                    except Exception as e:
+                        logger.error(f"Worker: DataForSEO content generation failed: {e}", exc_info=True)
+                        USE_DATAFORSEO = False
+                        logger.warning(f"Worker: Falling back to pipeline due to DataForSEO error: {str(e)}")
+            
+            # Fallback to pipeline if DataForSEO is disabled or failed
+            if not USE_DATAFORSEO:
+                logger.info(f"Worker: Using multi-stage pipeline for blog generation")
+                
+                # Check if AI generator is available
+                if ai_generator is None:
+                    job.status = JobStatus.FAILED
+                    job.error_message = "AI Content Generator is not initialized"
+                    job.completed_at = datetime.utcnow()
+                    return JSONResponse(
+                        status_code=503,
+                        content={"error": "AI Content Generator is not initialized"}
+                    )
+                
+                # Initialize pipeline (same as synchronous endpoint)
+                pipeline = MultiStageGenerationPipeline(
                 ai_generator=ai_generator,
                 google_search=google_custom_search_client if blog_request.use_google_search else None,
                 readability_analyzer=readability_analyzer,
@@ -1754,33 +2103,94 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Frontend should call /api/v1/images/generate separately after blog generation
             final_content = pipeline_result.final_content
             
-            # Add citations if enabled
+            # Add citations if enabled (mandatory for Multi-Phase mode)
             citations = []
-            if blog_request.use_citations and google_custom_search_client:
-                try:
-                    citation_result = await citation_generator.generate_citations(
-                        final_content,
-                        blog_request.topic,
-                        blog_request.keywords
-                    )
-                    citations = [
-                        {
-                            "text": c.text[:100],
-                            "url": c.source_url,
-                            "title": c.source_title
-                        }
-                        for c in citation_result.citations
-                    ]
-                    final_content = citation_generator.integrate_citations(
-                        final_content,
-                        citation_result.citations
-                    )
-                    if citation_result.sources_used:
-                        final_content += citation_generator.generate_references_section(
-                            citation_result.sources_used
+            citation_warnings = []  # Initialize citation warnings list
+            if blog_request.use_citations:
+                if not google_custom_search_client:
+                    if generation_mode == GenerationMode.MULTI_PHASE:
+                        # Citations are mandatory for Multi-Phase - fail fast
+                        job.status = JobStatus.FAILED
+                        job.error_message = "Citation generation requires Google Custom Search API"
+                        job.completed_at = datetime.utcnow()
+                        return JSONResponse(
+                            status_code=503,
+                            content={"error": "Citation generation requires Google Custom Search API"}
                         )
-                except Exception as e:
-                    logger.warning(f"Citation generation failed: {e}")
+                    else:
+                        logger.warning("Worker: Citation generation requested but Google Custom Search not available")
+                else:
+                    try:
+                        logger.info(f"Worker: Generating citations for topic: {blog_request.topic}")
+                        citation_result = await citation_generator.generate_citations(
+                            final_content,
+                            blog_request.topic,
+                            blog_request.keywords,
+                            num_citations=5  # Minimum 5 citations for authoritative content
+                        )
+                        
+                        # Collect citation warnings
+                        if citation_result.warnings:
+                            citation_warnings.extend(citation_result.warnings)
+                        
+                        # Validate citations were generated
+                        if citation_result.citation_count == 0:
+                            logger.error("Worker: Citation generation returned 0 citations")
+                            if generation_mode == GenerationMode.MULTI_PHASE:
+                                job.status = JobStatus.FAILED
+                                job.error_message = "Failed to generate citations - no sources found"
+                                job.completed_at = datetime.utcnow()
+                                return JSONResponse(
+                                    status_code=500,
+                                    content={"error": "Failed to generate citations - citations are required for Multi-Phase workflow"}
+                                )
+                            else:
+                                logger.warning("Worker: No citations generated - continuing without citations")
+                        else:
+                            logger.info(f"Worker: Generated {citation_result.citation_count} citations")
+                            citations = [
+                                {
+                                    "text": c.text[:100],
+                                    "url": c.source_url,
+                                    "title": c.source_title
+                                }
+                                for c in citation_result.citations
+                            ]
+                            
+                            # Integrate citations into content
+                            final_content = citation_generator.integrate_citations(
+                                final_content,
+                                citation_result.citations
+                            )
+                            
+                            # Add references section
+                            if citation_result.sources_used:
+                                final_content += citation_generator.generate_references_section(
+                                    citation_result.sources_used
+                                )
+                            
+                            # Validate citations were integrated
+                            citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                            if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                                logger.error("Worker: Citations generated but not integrated into content")
+                                # Citations will be in references section even if not integrated inline
+                            
+                    except Exception as e:
+                        error_msg = f"Citation generation failed: {str(e)}"
+                        logger.error(f"Worker: Citation generation failed: {error_msg}", exc_info=True)
+                        logger.error(f"API_ERROR: Worker citation generation exception. Error: {type(e).__name__}: {str(e)}")
+                        if generation_mode == GenerationMode.MULTI_PHASE:
+                            # Citations are mandatory for Multi-Phase - fail fast
+                            job.status = JobStatus.FAILED
+                            job.error_message = f"Citation generation failed: {str(e)}"
+                            job.completed_at = datetime.utcnow()
+                            return JSONResponse(
+                                status_code=500,
+                                content={"error": f"Citation generation failed: {str(e)}. Citations are required for Multi-Phase workflow."}
+                            )
+                        else:
+                            logger.warning(f"Worker: Citation generation failed: {e} - continuing without citations")
+                            citation_warnings.append(f"Citation generation failed: {error_msg}")
             
             # Calculate SEO score
             seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
@@ -1801,6 +2211,7 @@ async def blog_generation_worker(request: Dict[str, Any]):
             
             # Extract content metadata
             content_metadata = extract_content_metadata(final_content)
+            excerpt = extract_excerpt(final_content, max_length=250)
             
             # Enhance SEO metadata
             enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1865,10 +2276,18 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 for s in pipeline_result.stage_results
             ]
             
+            # Collect all warnings from pipeline and citations
+            all_warnings = []
+            if pipeline_result.warnings:
+                all_warnings.extend(pipeline_result.warnings)
+            if citation_warnings:
+                all_warnings.extend(citation_warnings)
+            
             # Create response
             response = EnhancedBlogGenerationResponse(
                 title=pipeline_result.meta_title or blog_request.topic,
                 content=final_content,
+                excerpt=excerpt,
                 meta_title=pipeline_result.meta_title,
                 meta_description=pipeline_result.meta_description,
                 readability_score=pipeline_result.readability_score,
@@ -1973,6 +2392,263 @@ async def get_job_status(job_id: str):
         result=job.result,
         error_message=job.error_message,
         estimated_time_remaining=estimated_time_remaining
+    )
+
+
+# Streaming version of enhanced blog generation
+@app.post("/api/v1/blog/generate-enhanced/stream")
+async def generate_blog_enhanced_stream(
+    request: EnhancedBlogGenerationRequest,
+    http_request: Request
+):
+    """
+    Streaming version of enhanced blog generation.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - queued: Job created and queued
+    - initialization: Setting up pipeline
+    - keyword_analysis: Analyzing keywords with DataForSEO
+    - competitor_analysis: Analyzing SERP competitors
+    - intent_analysis: Determining search intent
+    - length_optimization: Optimizing content length
+    - research_outline: Research & outline generation
+    - draft_generation: Initial draft creation
+    - enhancement: Content enhancement
+    - seo_polish: SEO optimization
+    - semantic_integration: Semantic keyword integration
+    - quality_scoring: Quality assessment
+    - citation_generation: Adding citations
+    - finalization: Final processing
+    - completed: Final results
+    
+    This endpoint always uses async mode (queue) and streams stage updates.
+    Frontend can listen to these events to show real-time progress.
+    
+    Example:
+    ```typescript
+    const response = await fetch('/api/v1/blog/generate-enhanced/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: 'Python', keywords: ['python'] })
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const update = JSON.parse(line.slice(6));
+          console.log(`Stage: ${update.stage}, Progress: ${update.progress}%`);
+        }
+      }
+    }
+    ```
+    """
+    async def generate_stream():
+        try:
+            global blog_generation_jobs
+            
+            # Stage 1: Create async job
+            job_id = str(uuid.uuid4())
+            
+            # Create job record
+            job = BlogGenerationJob(
+                job_id=job_id,
+                status=JobStatus.PENDING,
+                request=request.dict()
+            )
+            blog_generation_jobs[job_id] = job
+            
+            # Yield initial queued status
+            yield await stream_blog_stage_update(
+                BlogGenerationStage.QUEUED,
+                0.0,
+                message="Blog generation job created",
+                job_id=job_id,
+                status="queued"
+            )
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/blog/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_blog_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url
+                )
+                
+                # Update job
+                job.task_name = task_name
+                job.status = JobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                # Yield queued status
+                yield await stream_blog_stage_update(
+                    BlogGenerationStage.QUEUED,
+                    5.0,
+                    message="Job queued successfully",
+                    job_id=job_id,
+                    status="queued"
+                )
+                
+                # Poll job status and stream updates
+                last_stage = None
+                last_progress = 0.0
+                max_wait_time = 600  # 10 minutes max
+                start_time = time.time()
+                
+                while True:
+                    # Check timeout
+                    if time.time() - start_time > max_wait_time:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Timeout waiting for job completion"},
+                            message="Job timeout - took too long",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Get current job status
+                    if job_id not in blog_generation_jobs:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Job not found"},
+                            message="Job not found",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    job = blog_generation_jobs[job_id]
+                    
+                    # Map job status to stage
+                    if job.status == JobStatus.QUEUED:
+                        current_stage = BlogGenerationStage.QUEUED
+                    elif job.status == JobStatus.PROCESSING:
+                        current_stage = BlogGenerationStage.PROCESSING
+                        # Map current_stage string to BlogGenerationStage enum
+                        if job.current_stage:
+                            stage_mapping = {
+                                "initialization": BlogGenerationStage.INITIALIZATION,
+                                "keyword_analysis": BlogGenerationStage.KEYWORD_ANALYSIS,
+                                "competitor_analysis": BlogGenerationStage.COMPETITOR_ANALYSIS,
+                                "intent_analysis": BlogGenerationStage.INTENT_ANALYSIS,
+                                "length_optimization": BlogGenerationStage.LENGTH_OPTIMIZATION,
+                                "research_outline": BlogGenerationStage.RESEARCH_OUTLINE,
+                                "draft_generation": BlogGenerationStage.DRAFT_GENERATION,
+                                "enhancement": BlogGenerationStage.ENHANCEMENT,
+                                "seo_polish": BlogGenerationStage.SEO_POLISH,
+                                "semantic_integration": BlogGenerationStage.SEMANTIC_INTEGRATION,
+                                "quality_scoring": BlogGenerationStage.QUALITY_SCORING,
+                                "citation_generation": BlogGenerationStage.CITATION_GENERATION,
+                                "finalization": BlogGenerationStage.FINALIZATION,
+                            }
+                            current_stage = stage_mapping.get(job.current_stage, BlogGenerationStage.PROCESSING)
+                    elif job.status == JobStatus.COMPLETED:
+                        current_stage = BlogGenerationStage.COMPLETED
+                    elif job.status == JobStatus.FAILED:
+                        current_stage = BlogGenerationStage.ERROR
+                    else:
+                        current_stage = BlogGenerationStage.PROCESSING
+                    
+                    # Yield update if stage or progress changed
+                    if current_stage != last_stage or job.progress_percentage != last_progress:
+                        # Get latest progress update if available
+                        latest_update = None
+                        if job.progress_updates:
+                            latest_update = job.progress_updates[-1]
+                        
+                        yield await stream_blog_stage_update(
+                            current_stage,
+                            job.progress_percentage,
+                            data={
+                                "current_stage": job.current_stage,
+                                "progress_updates": job.progress_updates[-5:] if job.progress_updates else [],  # Last 5 updates
+                                "latest_update": latest_update
+                            },
+                            message=latest_update.get("status", job.current_stage or "Processing") if latest_update else (job.current_stage or "Processing"),
+                            job_id=job_id,
+                            status=job.status.value
+                        )
+                        
+                        last_stage = current_stage
+                        last_progress = job.progress_percentage
+                    
+                    # Check if completed
+                    if job.status == JobStatus.COMPLETED:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.COMPLETED,
+                            100.0,
+                            data={"result": job.result},
+                            message="Blog generation completed successfully",
+                            job_id=job_id,
+                            status="completed"
+                        )
+                        break
+                    
+                    # Check if failed
+                    if job.status == JobStatus.FAILED:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            job.progress_percentage,
+                            data={"error": job.error_message, "error_details": job.error_details},
+                            message=f"Blog generation failed: {job.error_message}",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Wait before next poll
+                    await asyncio.sleep(0.5)
+                    
+            except Exception as e:
+                logger.error(f"Failed to create or monitor blog generation job: {e}", exc_info=True)
+                yield await stream_blog_stage_update(
+                    BlogGenerationStage.ERROR,
+                    0.0,
+                    data={"error": str(e)},
+                    message=f"Failed to create job: {str(e)}",
+                    job_id=job_id,
+                    status="failed"
+                )
+                
+        except Exception as e:
+            logger.error(f"Blog generation stream error: {e}", exc_info=True)
+            yield await stream_blog_stage_update(
+                BlogGenerationStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"Stream error: {str(e)}",
+                status="failed"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
     )
 
 

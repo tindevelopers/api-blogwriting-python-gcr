@@ -107,7 +107,7 @@ interface EnhancedBlogRequest {
   
   // Optional - Additional Context
   target_audience?: string;        // Target audience description
-  custom_instructions?: string;     // Max 2000 characters
+  custom_instructions?: string;     // Max 5000 characters
   
   // Optional - Product Research (for product reviews/comparisons)
   include_product_research?: boolean;
@@ -612,8 +612,8 @@ function validateBlogRequest(request: EnhancedBlogRequest): string[] {
     errors.push('At least one keyword is required');
   }
   
-  if (request.custom_instructions && request.custom_instructions.length > 2000) {
-    errors.push('Custom instructions must be 2000 characters or less');
+  if (request.custom_instructions && request.custom_instructions.length > 5000) {
+    errors.push('Custom instructions must be 5000 characters or less');
   }
   
   return errors;

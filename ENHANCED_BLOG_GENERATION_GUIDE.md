@@ -46,7 +46,7 @@ POST /api/v1/blog/generate-enhanced
   
   // Optional - Additional Context
   target_audience?: string;         // Target audience description
-  custom_instructions?: string;      // Additional instructions (max 1000 chars)
+  custom_instructions?: string;      // Additional instructions (max 5000 chars)
 }
 ```
 

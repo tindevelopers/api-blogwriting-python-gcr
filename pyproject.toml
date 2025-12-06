@@ -66,6 +66,10 @@ dependencies = [
     "google-cloud-tasks>=2.16.0",
     # Date parsing for interlinking analyzer
     "python-dateutil>=2.8.0",
+    # Integration dependencies
+    "cloudinary>=1.40.0",
+    "boto3>=1.34.0",
+    "botocore>=1.34.0",
 ]
 
 [project.optional-dependencies]
