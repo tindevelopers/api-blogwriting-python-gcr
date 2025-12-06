@@ -70,7 +70,7 @@ class BlogRequest(BaseModel):
     # Advanced Options
     readability_target: Optional[str] = Field(default="general", description="Target readability level")
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
 
     @field_validator('keywords')
     @classmethod

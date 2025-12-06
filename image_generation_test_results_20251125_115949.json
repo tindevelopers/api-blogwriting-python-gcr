@@ -1,0 +1,24 @@
+{
+  "generation": {
+    "success": true,
+    "image_id": "5c945af2-3d0c-472f-a90f-fb8050300986",
+    "dimensions": "832x1216",
+    "format": "png",
+    "size_bytes": 1507064,
+    "generation_time_seconds": 6,
+    "cost": 0.0019296875,
+    "provider": "stability_ai",
+    "model": "stable-diffusion-xl-1024-v1-0"
+  },
+  "cloudinary": {
+    "success": true,
+    "public_id": "test-images/test_image_832x1216_20251125_115949_20251125_105950",
+    "url": "https://res.cloudinary.com/dmc71ibxs/image/upload/v1764068390/test-images/test_image_832x1216_20251125_115949_20251125_105950.jpg",
+    "folder": "test-images",
+    "dimensions": "832x1216",
+    "format": "jpg",
+    "size_bytes": 63816,
+    "upload_time_seconds": 3,
+    "transformation_url": "https://res.cloudinary.com/dmc71ibxs/image/upload/w_auto,h_auto,c_fill,q_auto,f_auto/test-images/test_image_832x1216_20251125_115949_20251125_105950"
+  }
+}

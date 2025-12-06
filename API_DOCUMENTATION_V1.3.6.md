@@ -133,7 +133,7 @@ Generate high-quality blog content using DataForSEO Content Generation API with 
   "backlink_url": "string (optional, required if analyze_backlinks=true)",
   "use_dataforseo_content_generation": "boolean (optional, default: true)",
   "target_audience": "string (optional)",
-  "custom_instructions": "string (optional, max 2000 chars)",
+  "custom_instructions": "string (optional, max 5000 chars)",
   "brand_name": "string (optional, for 'brand' type)",
   "category": "string (optional, for 'top_10' or 'listicle' type)",
   "product_name": "string (optional, for 'product_review' type)",

@@ -102,6 +102,51 @@ Focus on creating content that provides genuine value, unique insights, and acti
                 brand_data = context['brand_recommendations']
                 brands_list = ", ".join(brand_data.get("brands", [])[:10])
                 prompt += f"\n\nPRODUCT BRAND RECOMMENDATIONS:\nThe following brands/models are frequently mentioned in top-ranking content:\n{brands_list}\n\nIMPORTANT: Include specific brand recommendations and comparisons in your outline. Create sections that compare different brands, highlight top-rated products, and provide detailed brand-specific information. Include pros/cons for each major brand."
+            
+            # Priority 1: AI Citation Pattern Optimization
+            if context.get("citation_patterns"):
+                citation_patterns = context['citation_patterns']
+                prompt += "\n\nAI CITATION PATTERN ANALYSIS (CRITICAL FOR AI SEARCH OPTIMIZATION):"
+                prompt += "\nThe following content structures are frequently cited by AI agents (ChatGPT, Claude, Gemini, Perplexity):"
+                
+                top_pages = citation_patterns.get("top_cited_pages", [])
+                if top_pages:
+                    prompt += f"\n\nTop-Cited Pages (Study these patterns):"
+                    for i, page in enumerate(top_pages[:5], 1):
+                        title = page.get("title", "")
+                        domain = page.get("domain", "")
+                        mentions = page.get("mentions", 0)
+                        prompt += f"\n{i}. {title} ({domain}) - Cited {mentions} times by AI agents"
+                
+                common_domains = citation_patterns.get("common_domains", [])
+                if common_domains:
+                    prompt += f"\n\nMost-Cited Domains (Prioritize similar structure):"
+                    for domain, count in common_domains[:5]:
+                        prompt += f"\n- {domain} (cited {count} times)"
+                
+                structure_insights = citation_patterns.get("content_structure_insights", [])
+                if structure_insights:
+                    prompt += f"\n\nContent Structure Patterns Found in Top-Cited Pages:"
+                    for insight in structure_insights:
+                        prompt += f"\n- {insight}"
+                
+                prompt += "\n\nCRITICAL INSTRUCTIONS:"
+                prompt += "\n1. Match the content structure of top-cited pages"
+                prompt += "\n2. Use question-based headings if top-cited pages use them"
+                prompt += "\n3. Add concise summaries after each section (AI agents cite summaries)"
+                prompt += "\n4. Use modular, scannable format (easy for AI to extract)"
+                prompt += "\n5. Include structured data elements (FAQ, HowTo schemas)"
+            
+            # Priority 3: LLM Response Insights
+            if context.get("llm_responses"):
+                llm_responses = context['llm_responses']
+                extracted_points = llm_responses.get("extracted_key_points", [])
+                if extracted_points:
+                    prompt += "\n\nAI AGENT RESEARCH INSIGHTS (From ChatGPT & Claude):"
+                    prompt += "\nThe following key points were identified by querying AI agents about this topic:"
+                    for point in extracted_points[:10]:
+                        prompt += f"\n- {point}"
+                    prompt += "\n\nIMPORTANT: Incorporate these insights into your outline. Match how AI agents structure their responses to this topic."
         
         return prompt
     
@@ -166,6 +211,39 @@ WRITING REQUIREMENTS:
 8. Use bullet points and numbered lists where appropriate
 9. Include natural transitions between sections
 10. End each section with a clear takeaway or summary point
+
+READABILITY REQUIREMENTS (CRITICAL):
+- Target Flesch Reading Ease: 60-70 (8th-9th grade level)
+- Use short sentences (average 15-20 words per sentence)
+- Replace complex words with simpler alternatives when possible
+- Break up long paragraphs (3-4 sentences maximum)
+- Use active voice instead of passive voice
+- Avoid jargon unless necessary - explain technical terms
+- Keep sentences clear and direct
+
+READABILITY EXAMPLES:
+❌ Complex: "The implementation of comprehensive optimization strategies necessitates..."
+✅ Simple: "We optimize content using proven strategies that..."
+
+❌ Complex: "It is imperative that one considers the multifaceted aspects..."
+✅ Simple: "You should consider these important factors..."
+
+❌ Complex: "The utilization of advanced methodologies enables..."
+✅ Simple: "Using advanced methods helps..."
+
+E-E-A-T REQUIREMENTS (CRITICAL):
+- Add first-hand experience indicators where appropriate (2-3 per 1000 words)
+- Use phrases like "In my experience...", "I've found that...", "Based on my work..."
+- Include personal anecdotes or case studies when relevant
+- Balance first-person experience with third-person authority
+- Don't overuse - keep it natural and authentic
+
+EXPERIENCE INDICATOR EXAMPLES:
+✅ Good: "In my experience running a dog grooming business, I've found that..."
+✅ Good: "Based on my research, I've noticed that..."
+✅ Good: "When I started my business, I learned that..."
+✅ Good: "I've worked with many clients who..."
+✅ Good: "From my own experience, I can say that..."
 
 CONTENT QUALITY STANDARDS:
 - Provide unique insights, not just rehashed information
@@ -262,6 +340,32 @@ Generate comprehensive, well-researched content that readers will find valuable 
                     prompt += f"\n\nPRODUCT BRAND RECOMMENDATIONS:\nInclude detailed information about these brands/models: {', '.join(brands_list[:10])}\n\nFor each brand, include:\n- Key features and specifications\n- Pros and cons\n- Best use cases\n- Price range (if available)\n- User ratings/reviews summary\n- Where to buy\n\nCreate a dedicated comparison section or integrate brand recommendations throughout relevant sections."
             if context.get("custom_instructions"):
                 prompt += f"\n\nADDITIONAL INSTRUCTIONS:\n{context['custom_instructions']}"
+            
+            # Priority 1: Apply citation patterns to draft generation
+            if context.get("citation_patterns"):
+                citation_patterns = context['citation_patterns']
+                structure_insights = citation_patterns.get("content_structure_insights", [])
+                if structure_insights:
+                    prompt += "\n\nAI OPTIMIZATION REQUIREMENTS (Based on Top-Cited Pages):"
+                    if "Question-based headings" in structure_insights:
+                        prompt += "\n- Use question-based H2 headings (e.g., 'How to Start a Dog Grooming Business?')"
+                    if "Concise titles" in structure_insights:
+                        prompt += "\n- Keep headings concise (under 10 words)"
+                    prompt += "\n- Add 2-3 sentence summaries after each H2 section (AI agents cite summaries)"
+                    prompt += "\n- Use modular format with clear section boundaries"
+                    prompt += "\n- Make content easy for AI agents to extract and cite"
+            
+            # Priority 3: Apply LLM response patterns
+            if context.get("llm_responses"):
+                llm_responses = context['llm_responses']
+                extracted_points = llm_responses.get("extracted_key_points", [])
+                if extracted_points:
+                    prompt += "\n\nMATCH AI RESPONSE PATTERNS:"
+                    prompt += "\nStructure your content similar to how AI agents answer questions about this topic."
+                    prompt += "\n- Answer questions directly in the first paragraph"
+                    prompt += "\n- Use clear, conversational language"
+                    prompt += "\n- Include key points early in each section"
+            
             if context.get("product_research_requirements"):
                 req = context['product_research_requirements']
                 prompt += f"\n\nPRODUCT RESEARCH REQUIREMENTS:\n"
@@ -321,6 +425,44 @@ ENHANCEMENT TASKS:
 9. Optimize for featured snippets - ensure key sections can serve as featured snippet answers
 10. Improve conclusion - make it more actionable and memorable
 
+READABILITY REQUIREMENTS (CRITICAL - MUST TARGET 60-70):
+- Target Flesch Reading Ease: 60-70 (8th-9th grade level) - THIS IS MANDATORY
+- Simplify complex sentences - break long sentences into shorter ones (15-20 words average)
+- Replace complex words with simpler alternatives:
+  * "utilize" → "use"
+  * "facilitate" → "help"
+  * "implement" → "do" or "use"
+  * "necessitate" → "need"
+  * "comprehensive" → "complete" or "thorough"
+- Use active voice instead of passive voice
+- Keep paragraphs short (3-4 sentences maximum)
+- Avoid jargon - explain technical terms in simple language
+- Make sentences clear and direct
+
+READABILITY EXAMPLES:
+❌ Complex: "The implementation of comprehensive optimization strategies necessitates careful consideration..."
+✅ Simple: "We optimize content using proven strategies. This requires careful planning..."
+
+❌ Complex: "It is imperative that one considers the multifaceted aspects of the situation..."
+✅ Simple: "You should consider these important factors..."
+
+❌ Complex: "The utilization of advanced methodologies enables organizations to achieve..."
+✅ Simple: "Using advanced methods helps businesses achieve..."
+
+E-E-A-T REQUIREMENTS (CRITICAL):
+- Add first-hand experience indicators where appropriate (2-3 per 1000 words)
+- Use natural first-person phrases: "In my experience...", "I've found that...", "Based on my work..."
+- Include personal anecdotes or case studies when relevant
+- Balance first-person experience with third-person authority
+- Don't overuse - keep it natural and authentic (not every paragraph needs first-person)
+
+EXPERIENCE INDICATOR EXAMPLES:
+✅ Good: "In my experience running a dog grooming business, I've found that..."
+✅ Good: "Based on my research, I've noticed that..."
+✅ Good: "When I started my business, I learned that..."
+✅ Good: "I've worked with many clients who..."
+✅ Good: "From my own experience, I can say that..."
+
 OUTPUT REQUIREMENTS:
 - Return the enhanced version of the content
 - Maintain the original structure and length
@@ -328,8 +470,10 @@ OUTPUT REQUIREMENTS:
 - Improve without changing the core message
 - Add citations or source references where appropriate
 - Ensure the content reads naturally and flows well
+- CRITICAL: Reading ease MUST be 60-70 after enhancement
+- CRITICAL: Include 2-3 first-hand experience indicators per 1000 words
 
-Focus on making the content more authoritative, engaging, and valuable while maintaining accuracy and readability."""
+Focus on making the content more authoritative, engaging, and valuable while maintaining accuracy and readability. Prioritize readability improvements - content must be easy to read (60-70 reading ease)."""
         
         if context:
             if context.get("readability_issues"):

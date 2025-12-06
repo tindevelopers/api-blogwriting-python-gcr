@@ -19,6 +19,9 @@ RUN apt-get update \
         jq \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy cache buster first to force fresh builds
+COPY .cache-buster* ./
+
 # Copy requirements and README first for better caching
 COPY pyproject.toml README.md ./
 

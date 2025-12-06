@@ -87,7 +87,7 @@ interface EnhancedBlogGenerationRequest {
   
   // Additional Options
   target_audience?: string;          // Target audience description
-  custom_instructions?: string;      // Additional instructions (max 2000 chars)
+  custom_instructions?: string;      // Additional instructions (max 5000 chars)
   
   // Blog Type-Specific Fields
   brand_name?: string;               // For 'brand' type

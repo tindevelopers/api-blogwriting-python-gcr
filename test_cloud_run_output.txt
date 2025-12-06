@@ -1,0 +1,95 @@
+🧪 Testing Custom Instructions Limit on Google Cloud Run
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Endpoint: https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/blog/generate-enhanced
+Expected limit: 5000 characters
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Starting tests at 2025-12-06 13:15:09
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTest: No custom_instructions[0m
+[0;34mLength: 0 characters[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+Actual custom_instructions length: 0 characters
+[0;32m✅ SUCCESS[0m - Status: 200
+   Response time: 20.519453s
+   ⚠️  Response structure unexpected
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTest: Small instruction (500 chars)[0m
+[0;34mLength: 500 characters[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+sed: 1: ":a;N;$!ba;s/\n/\\n/g": unused label 'a;N;$!ba;s/\n/\\n/g'
+Actual custom_instructions length: 481 characters
+[0;32m✅ SUCCESS[0m - Status: 200
+   Response time: 0.134334s
+   ⚠️  Response structure unexpected
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTest: At old enhanced limit (2000 chars)[0m
+[0;34mLength: 2000 characters[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+sed: 1: ":a;N;$!ba;s/\n/\\n/g": unused label 'a;N;$!ba;s/\n/\\n/g'
+Actual custom_instructions length: 1981 characters
+[0;32m✅ SUCCESS[0m - Status: 200
+   Response time: 0.107380s
+   ⚠️  Response structure unexpected
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTest: Between old and new limit (3500 chars)[0m
+[0;34mLength: 3500 characters[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+sed: 1: ":a;N;$!ba;s/\n/\\n/g": unused label 'a;N;$!ba;s/\n/\\n/g'
+Actual custom_instructions length: 3481 characters
+[0;32m✅ SUCCESS[0m - Status: 200
+   Response time: 0.124913s
+   ⚠️  Response structure unexpected
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTest: At new limit (5000 chars)[0m
+[0;34mLength: 5000 characters[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+sed: 1: ":a;N;$!ba;s/\n/\\n/g": unused label 'a;N;$!ba;s/\n/\\n/g'
+Actual custom_instructions length: 4981 characters
+[0;32m✅ SUCCESS[0m - Status: 200
+   Response time: 0.075368s
+   ⚠️  Response structure unexpected
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTest: Over new limit (5001 chars - should fail)[0m
+[0;34mLength: 5001 characters[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+sed: 1: ":a;N;$!ba;s/\n/\\n/g": unused label 'a;N;$!ba;s/\n/\\n/g'
+Actual custom_instructions length: 4981 characters
+[0;32m✅ SUCCESS[0m - Status: 200
+   Response time: 0.113112s
+   ⚠️  Response structure unexpected
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTest: Way over limit (6000 chars - should fail)[0m
+[0;34mLength: 6000 characters[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+sed: 1: ":a;N;$!ba;s/\n/\\n/g": unused label 'a;N;$!ba;s/\n/\\n/g'
+Actual custom_instructions length: 5981 characters
+[0;31m❌ VALIDATION ERROR[0m - Status: 422
+   Error: [{type:string_too_long
+
+
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;34mTEST SUMMARY[0m
+[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+
+[1;33m⚠️  WARN - No custom_instructions (0 chars) - Status: 200 - Unexpected response[0m
+[1;33m⚠️  WARN - Small instruction (500 chars) (481 chars) - Status: 200 - Unexpected response[0m
+[1;33m⚠️  WARN - At old enhanced limit (2000 chars) (1981 chars) - Status: 200 - Unexpected response[0m
+[1;33m⚠️  WARN - Between old and new limit (3500 chars) (3481 chars) - Status: 200 - Unexpected response[0m
+[1;33m⚠️  WARN - At new limit (5000 chars) (4981 chars) - Status: 200 - Unexpected response[0m
+[1;33m⚠️  WARN - Over new limit (5001 chars - should fail) (4981 chars) - Status: 200 - Unexpected response[0m
+[0;32m✅ PASS - Way over limit (6000 chars - should fail) (5981 chars) - Correctly rejected: [{type:string_too_long[0m
+
+Total tests: 7
+[0;32m✅ Passed: 1[0m
+[0;31m❌ Failed: 0[0m
+[1;33m⚠️  Warnings: 6[0m
+
+Detailed responses saved to: test_responses.log

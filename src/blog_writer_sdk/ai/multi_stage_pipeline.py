@@ -79,6 +79,12 @@ class PipelineResult:
     generation_time: float
     quality_score: Optional[float] = None
     structured_data: Optional[Dict[str, Any]] = None
+    warnings: List[str] = None  # API warnings and notices
+    
+    def __post_init__(self):
+        """Initialize warnings list if None."""
+        if self.warnings is None:
+            self.warnings = []
 
 
 class MultiStageGenerationPipeline:
@@ -462,6 +468,18 @@ class MultiStageGenerationPipeline:
             f"Generating initial draft content based on outline"
         )
         logger.info("Stage 2: Draft Generation")
+        
+        # Extract citation patterns and LLM responses from research stage metadata
+        if outline_result.metadata:
+            if outline_result.metadata.get("citation_patterns"):
+                if additional_context is None:
+                    additional_context = {}
+                additional_context["citation_patterns"] = outline_result.metadata["citation_patterns"]
+            if outline_result.metadata.get("llm_responses"):
+                if additional_context is None:
+                    additional_context = {}
+                additional_context["llm_responses"] = outline_result.metadata["llm_responses"]
+        
         if self.use_consensus and self.consensus_generator:
             # Use consensus generation (Phase 3)
             logger.info("Using consensus generation for Stage 2")
@@ -746,6 +764,12 @@ class MultiStageGenerationPipeline:
         total_cost = sum(s.cost for s in stage_results)
         generation_time = time.time() - start_time
         
+        # Collect API warnings from all stages
+        all_warnings = []
+        for stage_result in stage_results:
+            if stage_result.metadata and stage_result.metadata.get("api_warnings"):
+                all_warnings.extend(stage_result.metadata["api_warnings"])
+        
         return PipelineResult(
             final_content=enhanced_content,
             meta_title=meta_title,
@@ -758,7 +782,8 @@ class MultiStageGenerationPipeline:
             total_cost=total_cost,
             generation_time=generation_time,
             quality_score=quality_report.overall_score if quality_report else None,
-            structured_data=structured_data
+            structured_data=structured_data,
+            warnings=all_warnings
         )
     
     async def _stage1_research_outline(
@@ -805,12 +830,129 @@ class MultiStageGenerationPipeline:
             except Exception as e:
                 logger.warning(f"Brand extraction failed: {e}")
         
+        # Priority 1: Analyze LLM Mentions for citation patterns
+        llm_mentions_data = None
+        citation_patterns = None
+        api_warnings = []  # Collect API warnings
+        
+        if self.dataforseo_client and self.dataforseo_client.is_configured and keywords:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                location = context.get("location", "United States") if context else "United States"
+                language = context.get("language", "en") if context else "en"
+                
+                logger.info(f"Analyzing LLM mentions for keyword: {keywords[0]}")
+                # Get LLM mentions for primary keyword
+                mentions = await self.dataforseo_client.get_llm_mentions_search(
+                    target=keywords[0],
+                    target_type="keyword",
+                    location_name=location,
+                    language_code=language,
+                    tenant_id=tenant_id,
+                    platform="auto",  # Auto tries chat_gpt first, then google
+                    limit=20
+                )
+                
+                if mentions and mentions.get("top_pages"):
+                    llm_mentions_data = mentions
+                    top_pages = mentions.get("top_pages", [])[:10]
+                    
+                    # Analyze citation patterns
+                    citation_patterns = {
+                        "top_cited_pages": top_pages[:5],
+                        "common_domains": [],
+                        "avg_mentions": 0,
+                        "content_structure_insights": []
+                    }
+                    
+                    # Extract common domains
+                    domains = {}
+                    for page in top_pages:
+                        domain = page.get("domain", "")
+                        if domain:
+                            domains[domain] = domains.get(domain, 0) + 1
+                    citation_patterns["common_domains"] = sorted(domains.items(), key=lambda x: x[1], reverse=True)[:5]
+                    
+                    # Calculate average mentions
+                    total_mentions = sum(page.get("mentions", 0) for page in top_pages)
+                    citation_patterns["avg_mentions"] = total_mentions / len(top_pages) if top_pages else 0
+                    
+                    # Extract content structure insights from top-cited pages
+                    structure_insights = []
+                    for page in top_pages[:5]:
+                        title = page.get("title", "")
+                        if title:
+                            # Analyze heading patterns (question-based, etc.)
+                            if "?" in title:
+                                structure_insights.append("Question-based headings")
+                            if len(title.split()) <= 10:
+                                structure_insights.append("Concise titles")
+                    citation_patterns["content_structure_insights"] = list(set(structure_insights))
+                    
+                    logger.info(f"Found {len(top_pages)} top-cited pages with citation patterns")
+            except Exception as e:
+                error_msg = f"DataForSEO LLM Mentions API unavailable: {str(e)}"
+                logger.error(f"LLM mentions analysis failed: {error_msg}", exc_info=True)
+                api_warnings.append(f"AI citation optimization unavailable: LLM Mentions API error. Content generated without AI citation pattern analysis.")
+                logger.warning(f"API_UNAVAILABLE: DataForSEO LLM Mentions API failed for keyword '{keywords[0]}'. Error: {type(e).__name__}: {str(e)}")
+        else:
+            if not self.dataforseo_client or not self.dataforseo_client.is_configured:
+                warning_msg = "DataForSEO client not configured - LLM Mentions analysis skipped"
+                logger.warning(warning_msg)
+                api_warnings.append("AI citation optimization unavailable: DataForSEO client not configured.")
+        
+        # Priority 3: Query LLM Responses for research
+        llm_responses_data = None
+        if self.dataforseo_client and self.dataforseo_client.is_configured:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                
+                # Query multiple LLMs about the topic
+                research_prompt = f"What are the key points, questions, and important aspects to cover when writing about '{topic}'? Focus on what readers need to know and what makes content authoritative on this topic."
+                
+                logger.info(f"Querying LLMs for research: {topic}")
+                llm_responses = await self.dataforseo_client.get_llm_responses(
+                    prompt=research_prompt,
+                    llms=["chatgpt", "claude"],  # Query ChatGPT and Claude
+                    max_tokens=500,
+                    tenant_id=tenant_id
+                )
+                
+                if llm_responses and llm_responses.get("responses"):
+                    llm_responses_data = llm_responses
+                    
+                    # Extract key points from responses
+                    key_points = []
+                    for llm_name, response_data in llm_responses.get("responses", {}).items():
+                        text = response_data.get("text", "")
+                        if text:
+                            # Extract bullet points or key sentences
+                            lines = text.split('\n')
+                            for line in lines[:10]:  # Top 10 lines
+                                line = line.strip()
+                                if line and (line.startswith('-') or line.startswith('•') or len(line) > 50):
+                                    key_points.append(f"{llm_name.upper()}: {line}")
+                    
+                    if key_points:
+                        llm_responses_data["extracted_key_points"] = key_points[:10]
+                        logger.info(f"Extracted {len(key_points)} key points from LLM responses")
+            except Exception as e:
+                error_msg = f"DataForSEO LLM Responses API unavailable: {str(e)}"
+                logger.error(f"LLM responses research failed: {error_msg}", exc_info=True)
+                api_warnings.append(f"AI research optimization unavailable: LLM Responses API error. Content generated without AI agent research insights.")
+                logger.warning(f"API_UNAVAILABLE: DataForSEO LLM Responses API failed for topic '{topic}'. Error: {type(e).__name__}: {str(e)}")
+        
         # Build research prompt
         research_context = context or {}
         if competitor_analysis:
             research_context["competitor_analysis"] = competitor_analysis
         if brand_recommendations:
             research_context["brand_recommendations"] = brand_recommendations
+        if citation_patterns:
+            research_context["citation_patterns"] = citation_patterns
+            research_context["llm_mentions"] = llm_mentions_data
+        if llm_responses_data:
+            research_context["llm_responses"] = llm_responses_data
         
         prompt = self.prompt_builder.build_research_prompt(
             topic, keywords, research_context
@@ -831,9 +973,16 @@ class MultiStageGenerationPipeline:
             preferred_provider="anthropic"
         )
         
+        # Store citation patterns and LLM responses in metadata for use in draft stage
+        metadata = {"stage": "research_outline", "keywords": keywords, "api_warnings": api_warnings}
+        if citation_patterns:
+            metadata["citation_patterns"] = citation_patterns
+        if llm_responses_data:
+            metadata["llm_responses"] = llm_responses_data
+        
         return PipelineStageResult(
             content=response.content,
-            metadata={"stage": "research_outline", "keywords": keywords},
+            metadata=metadata,
             stage="research_outline",
             provider_used=response.provider,
             tokens_used=response.tokens_used,

@@ -601,7 +601,108 @@ blogPost.internal_links.forEach(link => {
 
 ---
 
-## 8. Testing Mode
+## 8. Field Enhancement Endpoint
+
+### POST `/api/v1/content/enhance-fields`
+
+Enhance mandatory CMS fields (SEO title, meta description, slug, featured image alt text) using OpenAI after image generation.
+
+**Use Case:** After generating images for a blog post, enhance the mandatory fields to optimize for search engines.
+
+**Request:**
+```json
+{
+  "title": "Explore Content Marketing Jobs: Your Guide to Success",
+  "content": "Content marketing is a rapidly growing field...",
+  "featured_image_url": "https://example.com/image.jpg",
+  "enhance_seo_title": true,
+  "enhance_meta_description": true,
+  "enhance_slug": true,
+  "enhance_image_alt": true,
+  "keywords": ["content marketing", "jobs", "career"],
+  "target_audience": "Marketing professionals"
+}
+```
+
+**Response:**
+```json
+{
+  "enhanced_fields": {
+    "seo_title": "Content Marketing Jobs: Complete Career Guide 2024",
+    "meta_description": "Discover top content marketing jobs and career opportunities. Learn skills, salaries, and how to land your dream role in content marketing.",
+    "slug": "content-marketing-jobs-career-guide-2024",
+    "featured_image_alt": "Content marketing professional working on strategy and campaign planning"
+  },
+  "original_fields": {
+    "title": "Explore Content Marketing Jobs: Your Guide to Success",
+    "content": "Content marketing is a rapidly growing field...",
+    "featured_image_url": "https://example.com/image.jpg"
+  },
+  "enhanced_at": "2025-01-15T10:30:00.000Z",
+  "provider": "openai",
+  "model": "gpt-4o-mini"
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST https://blog-writer-api-dev-613248238610.europe-west9.run.app/api/v1/content/enhance-fields \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Explore Content Marketing Jobs",
+    "content": "Content marketing is growing...",
+    "featured_image_url": "https://example.com/image.jpg",
+    "enhance_seo_title": true,
+    "enhance_meta_description": true,
+    "enhance_slug": true,
+    "enhance_image_alt": true,
+    "keywords": ["content marketing", "jobs"]
+  }'
+```
+
+**JavaScript Example:**
+```javascript
+const response = await fetch('https://blog-writer-api-dev-613248238610.europe-west9.run.app/api/v1/content/enhance-fields', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    title: "Explore Content Marketing Jobs: Your Guide to Success",
+    content: "Content marketing is a rapidly growing field...",
+    featured_image_url: "https://example.com/image.jpg",
+    enhance_seo_title: true,
+    enhance_meta_description: true,
+    enhance_slug: true,
+    enhance_image_alt: true,
+    keywords: ["content marketing", "jobs", "career"],
+    target_audience: "Marketing professionals"
+  })
+});
+
+const result = await response.json();
+console.log(result.enhanced_fields);
+// Use enhanced_fields.seo_title, enhanced_fields.meta_description, etc.
+```
+
+**Field Options:**
+- `enhance_seo_title` (default: `true`) - Generate SEO-optimized title (50-60 chars)
+- `enhance_meta_description` (default: `true`) - Generate meta description (150-160 chars)
+- `enhance_slug` (default: `true`) - Generate SEO-friendly URL slug
+- `enhance_image_alt` (default: `true`) - Generate alt text for featured image (requires `featured_image_url`)
+
+**Requirements:**
+- OpenAI API key must be configured in Google Cloud Run secrets (`OPENAI_API_KEY`)
+- At least one field must be requested for enhancement
+- `featured_image_url` is required when `enhance_image_alt` is `true`
+
+**Error Responses:**
+- `503` - OpenAI API key not configured
+- `400` - Invalid request (no fields requested, missing image URL for alt text)
+
+---
+
+## 9. Testing Mode
 
 When `TESTING_MODE=true` is enabled, the API applies data limits:
 
@@ -619,7 +720,7 @@ Response includes `"testing_mode": true/false`.
 
 ---
 
-## 9. Complete Frontend Example
+## 10. Complete Frontend Example
 
 ```javascript
 class BlogWriterAPI {
@@ -676,6 +777,21 @@ class BlogWriterAPI {
     const response = await fetch(`${this.baseUrl}/health`);
     return await response.json();
   }
+
+  async enhanceFields(requestData) {
+    const response = await fetch(`${this.baseUrl}/api/v1/content/enhance-fields`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  }
 }
 
 // Usage
@@ -703,7 +819,7 @@ const status = await api.checkJobStatus(job.job_id);
 
 ---
 
-## 10. Quick Test Checklist
+## 11. Quick Test Checklist
 
 - [ ] Health check endpoint returns `{"status": "healthy"}`
 - [ ] Root endpoint returns API information
