@@ -2258,6 +2258,57 @@ class DataForSEOClient:
                 "error": str(e)
             }
     
+    @monitor_performance("dataforseo_get_domain_ranks")
+    async def get_domain_ranks(
+        self,
+        domains: List[str],
+        tenant_id: str = "default",
+        rank_scale: str = "one_thousand"
+    ) -> Dict[str, int]:
+        """
+        Get domain rank scores for multiple domains using DataForSEO Backlinks API.
+        
+        Domain rank is similar to Google PageRank (0-1000 scale).
+        Higher rank = more authoritative domain.
+        
+        Args:
+            domains: List of domains to check (without http:// or www.)
+            tenant_id: Tenant ID
+            rank_scale: "one_hundred" (0-100) or "one_thousand" (0-1000, default)
+            
+        Returns:
+            Dictionary mapping domain to rank score (0-1000)
+        """
+        try:
+            if not domains:
+                return {}
+            
+            # DataForSEO Backlinks API bulk_ranks endpoint
+            payload = [{
+                "targets": domains,
+                "rank_scale": rank_scale
+            }]
+            
+            data = await self._make_request("backlinks/bulk_ranks/live", payload, tenant_id)
+            
+            result = {}
+            
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                task_result = data["tasks"][0]["result"][0] if data["tasks"][0]["result"] else {}
+                
+                if "items" in task_result:
+                    for item in task_result["items"]:
+                        domain = item.get("target", "")
+                        rank = item.get("rank", 0) or 0
+                        if domain:
+                            result[domain] = int(rank)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"DataForSEO domain rank retrieval failed: {e}")
+            return {}
+    
     @monitor_performance("dataforseo_content_analysis_search")
     async def analyze_content_search(
         self,

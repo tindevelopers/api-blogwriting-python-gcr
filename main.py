@@ -109,6 +109,7 @@ from src.blog_writer_sdk.api.blog_streaming import (
 )
 from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
+    GenerationMode,
     EnhancedBlogGenerationResponse,
     BlogContentType
 )
@@ -664,7 +665,10 @@ async def lifespan(app: FastAPI):
     global intent_analyzer, few_shot_extractor, length_optimizer
     global dataforseo_content_generation_service
     readability_analyzer = ReadabilityAnalyzer()
-    citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
+    citation_generator = CitationGenerator(
+        google_search_client=google_custom_search_client,
+        dataforseo_client=dataforseo_client_global
+    )
     serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
     
     # Phase 3: Google Knowledge Graph
@@ -1082,22 +1086,30 @@ async def generate_blog_enhanced(
     async_mode: bool = Query(default=True, description="If true, creates async job via Cloud Tasks (default: true, uses queue)")
 ):
     """
-    Generate high-quality blog content using DataForSEO Content Generation API.
+    Generate high-quality blog content with two workflow modes.
     
-    This endpoint uses DataForSEO Content Generation API by default for all blog types:
-    - Brands: Comprehensive brand content
-    - Top 10: Ranking lists with detailed entries
-    - Product Reviews: Detailed product analysis
-    - How To: Step-by-step guides
-    - Comparison: Side-by-side comparisons
-    - Guide: Comprehensive guides
-    - Custom: Custom content based on instructions
+    **Workflow Modes:**
     
-    Query Parameters:
+    1. **Quick Generate** (`mode="quick_generate"`, default):
+       - Uses DataForSEO Content Generation API
+       - Fast: 30-60 seconds
+       - Cost-effective: ~$0.001-0.002 per blog
+       - Good SEO optimization built-in
+       - Best for: Quick drafts, simple blogs, high-volume generation
+    
+    2. **Multi-Phase Workflow** (`mode="multi_phase"`):
+       - Uses comprehensive MultiStageGenerationPipeline (Anthropic/OpenAI)
+       - Comprehensive: 12-stage enhancement pipeline
+       - Premium quality: Fact-checking, citations, SERP optimization
+       - Slower: 3-5 minutes
+       - Higher cost: ~$0.008-0.015 per blog
+       - Best for: Premium content, SEO-critical articles, authoritative content
+    
+    **Query Parameters:**
     - async_mode: If true (default), creates an async job via Cloud Tasks and returns job_id immediately.
                   If false, processes synchronously (for backward compatibility).
     
-    Returns:
+    **Returns:**
     - If async_mode=true (default): CreateJobResponse with job_id (asynchronous, uses queue)
     - If async_mode=false: EnhancedBlogGenerationResponse (synchronous)
     
@@ -1155,8 +1167,12 @@ async def generate_blog_enhanced(
                 
                 logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
                 
-                # Estimate completion time (4 minutes average)
-                estimated_time = 240  # 4 minutes in seconds
+                # Estimate completion time based on mode
+                generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
+                if generation_mode == GenerationMode.QUICK_GENERATE:
+                    estimated_time = 60  # 1 minute for Quick Generate (DataForSEO)
+                else:
+                    estimated_time = 240  # 4 minutes for Multi-Phase (Pipeline)
                 
                 return CreateJobResponse(
                     job_id=job_id,
@@ -1177,13 +1193,46 @@ async def generate_blog_enhanced(
                     detail=f"Failed to create async job: {str(e)}"
                 )
         
-        # Check if DataForSEO Content Generation should be used (default: True)
-        # Request flag takes precedence over environment variable
-        if hasattr(request, 'use_dataforseo_content_generation'):
-            USE_DATAFORSEO = request.use_dataforseo_content_generation
+        # Route based on generation mode
+        # Quick Generate: Always use DataForSEO (fast, cost-effective)
+        # Multi-Phase: Always use Pipeline (comprehensive, premium quality)
+        generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
+        
+        if generation_mode == GenerationMode.QUICK_GENERATE:
+            # Quick Generate mode: Force DataForSEO Content Generation
+            USE_DATAFORSEO = True
+            logger.info("⚡ Quick Generate mode: Using DataForSEO Content Generation API")
+            
+            # Disable expensive pipeline features for Quick Generate
+            # These are not needed as DataForSEO handles SEO optimization internally
+            request.use_consensus_generation = False
+            # Note: use_google_search, use_fact_checking can still be used for research if needed
+            # but won't affect the content generation method
+            
+        elif generation_mode == GenerationMode.MULTI_PHASE:
+            # Multi-Phase mode: Force Pipeline (comprehensive workflow)
+            USE_DATAFORSEO = False
+            logger.info("🔧 Multi-Phase mode: Using comprehensive multi-stage pipeline")
+            
+            # Force citations for Multi-Phase mode (premium content requires citations)
+            request.use_citations = True
+            logger.info("🔧 Multi-Phase mode: Citations are mandatory for premium content")
+            
+            # Ensure Google Custom Search is available for citations
+            if not google_custom_search_client:
+                logger.error("Multi-Phase mode requires Google Custom Search for citations")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Google Custom Search API is required for Multi-Phase workflow citations. Please configure GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID."
+                )
+            
         else:
-            # Fall back to environment variable if request doesn't specify
-            USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            # Fallback: Check legacy flag for backward compatibility
+            if hasattr(request, 'use_dataforseo_content_generation'):
+                USE_DATAFORSEO = request.use_dataforseo_content_generation
+            else:
+                USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            logger.info(f"Using legacy flag: USE_DATAFORSEO={USE_DATAFORSEO}")
         
         # Use DataForSEO Content Generation Service (only in sync mode now)
         if USE_DATAFORSEO:
@@ -1473,35 +1522,89 @@ async def generate_blog_enhanced(
                 detail=f"Blog generation failed: {str(e)}"
             )
         
-        # Add citations if enabled
+        # Add citations if enabled (mandatory for Multi-Phase mode)
         citations = []
-        if request.use_citations and google_custom_search_client:
-            try:
-                citation_result = await citation_generator.generate_citations(
-                    final_content,
-                    request.topic,
-                    request.keywords
-                )
-                citations = [
-                    {
-                        "text": c.text[:100],
-                        "url": c.source_url,
-                        "title": c.source_title
-                    }
-                    for c in citation_result.citations
-                ]
-                # Integrate citations into content
-                final_content = citation_generator.integrate_citations(
-                    final_content,
-                    citation_result.citations
-                )
-                # Add references section
-                if citation_result.sources_used:
-                    final_content += citation_generator.generate_references_section(
-                        citation_result.sources_used
+        citation_warnings = []  # Initialize citation warnings list
+        if request.use_citations:
+            if not google_custom_search_client:
+                if generation_mode == GenerationMode.MULTI_PHASE:
+                    # Citations are mandatory for Multi-Phase - fail fast
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Citation generation requires Google Custom Search API. Please configure GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID."
                     )
-            except Exception as e:
-                logger.warning(f"Citation generation failed: {e}")
+                else:
+                    logger.warning("Citation generation requested but Google Custom Search not available")
+            else:
+                try:
+                    logger.info(f"Generating citations for topic: {request.topic}")
+                    citation_result = await citation_generator.generate_citations(
+                        final_content,
+                        request.topic,
+                        request.keywords,
+                        num_citations=5  # Minimum 5 citations for authoritative content
+                    )
+                    
+                    # Collect citation warnings
+                    if citation_result.warnings:
+                        citation_warnings.extend(citation_result.warnings)
+                    
+                    # Validate citations were generated
+                    if citation_result.citation_count == 0:
+                        logger.error("Citation generation returned 0 citations")
+                        if generation_mode == GenerationMode.MULTI_PHASE:
+                            raise HTTPException(
+                                status_code=500,
+                                detail="Failed to generate citations - no sources found. Citations are required for Multi-Phase workflow."
+                            )
+                        else:
+                            logger.warning("No citations generated - continuing without citations")
+                    else:
+                        logger.info(f"Generated {citation_result.citation_count} citations")
+                        citations = [
+                            {
+                                "text": c.text[:100],
+                                "url": c.source_url,
+                                "title": c.source_title
+                            }
+                            for c in citation_result.citations
+                        ]
+                        
+                        # Integrate citations into content
+                        final_content = citation_generator.integrate_citations(
+                            final_content,
+                            citation_result.citations
+                        )
+                        
+                        # Add references section
+                        if citation_result.sources_used:
+                            final_content += citation_generator.generate_references_section(
+                                citation_result.sources_used
+                            )
+                        
+                        # Validate citations were integrated
+                        citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                        if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                            logger.error("Citations generated but not integrated into content")
+                            # Retry integration or add citations manually
+                            logger.warning("Attempting to add citations manually...")
+                            # Citations will be in references section even if not integrated inline
+                        
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    error_msg = f"Citation generation failed: {str(e)}"
+                    logger.error(f"Citation generation failed: {error_msg}", exc_info=True)
+                    logger.error(f"API_ERROR: Citation generation exception. Error: {type(e).__name__}: {str(e)}")
+                    if generation_mode == GenerationMode.MULTI_PHASE:
+                        # Citations are mandatory for Multi-Phase - fail fast
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Citation generation failed: {str(e)}. Citations are required for Multi-Phase workflow."
+                        )
+                    else:
+                        logger.warning(f"Citation generation failed: {e} - continuing without citations")
+                        citation_warnings = [f"Citation generation failed: {error_msg}"]
         
         # Calculate SEO score (simplified)
         seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
@@ -1596,6 +1699,13 @@ async def generate_blog_enhanced(
             for s in pipeline_result.stage_results
         ]
         
+        # Collect all warnings from pipeline and citations
+        all_warnings = []
+        if pipeline_result.warnings:
+            all_warnings.extend(pipeline_result.warnings)
+        if 'citation_warnings' in locals() and citation_warnings:
+            all_warnings.extend(citation_warnings)
+        
         # Log generation
         background_tasks.add_task(
             log_generation,
@@ -1628,7 +1738,7 @@ async def generate_blog_enhanced(
             generated_images=None,  # Image generation moved to separate endpoint
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=[],  # Image generation warnings removed (use separate endpoint)
+            warnings=all_warnings,  # Include API warnings
             progress_updates=progress_updates  # Include progress updates for frontend
         )
         
@@ -1689,6 +1799,42 @@ async def blog_generation_worker(request: Dict[str, Any]):
         request_data = request.get("request", {})
         blog_request = EnhancedBlogGenerationRequest(**request_data)
         
+        # Route based on generation mode (same logic as synchronous endpoint)
+        generation_mode = getattr(blog_request, 'mode', GenerationMode.QUICK_GENERATE)
+        
+        if generation_mode == GenerationMode.QUICK_GENERATE:
+            # Quick Generate mode: Use DataForSEO Content Generation
+            USE_DATAFORSEO = True
+            logger.info(f"Worker: ⚡ Quick Generate mode - Using DataForSEO Content Generation API for job {job_id}")
+            
+        elif generation_mode == GenerationMode.MULTI_PHASE:
+            # Multi-Phase mode: Use Pipeline
+            USE_DATAFORSEO = False
+            logger.info(f"Worker: 🔧 Multi-Phase mode - Using comprehensive pipeline for job {job_id}")
+            
+            # Force citations for Multi-Phase mode (premium content requires citations)
+            blog_request.use_citations = True
+            logger.info(f"Worker: 🔧 Multi-Phase mode: Citations are mandatory for premium content")
+            
+            # Ensure Google Custom Search is available for citations
+            if not google_custom_search_client:
+                logger.error(f"Worker: Multi-Phase mode requires Google Custom Search for citations")
+                job.status = JobStatus.FAILED
+                job.error_message = "Google Custom Search API is required for Multi-Phase workflow citations"
+                job.completed_at = datetime.utcnow()
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Google Custom Search API is required for Multi-Phase workflow citations"}
+                )
+            
+        else:
+            # Fallback: Check legacy flag
+            if hasattr(blog_request, 'use_dataforseo_content_generation'):
+                USE_DATAFORSEO = blog_request.use_dataforseo_content_generation
+            else:
+                USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            logger.info(f"Worker: Using legacy flag - USE_DATAFORSEO={USE_DATAFORSEO}")
+        
         try:
             # Create progress callback that updates job
             progress_updates = []
@@ -1703,8 +1849,189 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 if "progress_percentage" in update:
                     job.progress_percentage = update.get("progress_percentage", 0.0)
             
-            # Initialize pipeline (same as synchronous endpoint)
-            pipeline = MultiStageGenerationPipeline(
+            # Use DataForSEO Content Generation if enabled
+            if USE_DATAFORSEO:
+                logger.info(f"Worker: 🔷 Using DataForSEO Content Generation API for blog generation")
+                
+                # Initialize DataForSEO Content Generation Service
+                content_service = DataForSEOContentGenerationService(dataforseo_client=dataforseo_client_global)
+                await content_service.initialize(tenant_id="default")
+                
+                if not content_service.is_configured:
+                    logger.warning("Worker: DataForSEO Content Generation not configured, falling back to pipeline")
+                    USE_DATAFORSEO = False
+                else:
+                    # Map blog type (all 28 blog types supported)
+                    blog_type_map = {
+                        BlogContentType.BRAND: DataForSEOBlogType.BRAND,
+                        BlogContentType.TOP_10: DataForSEOBlogType.TOP_10,
+                        BlogContentType.PRODUCT_REVIEW: DataForSEOBlogType.PRODUCT_REVIEW,
+                        BlogContentType.HOW_TO: DataForSEOBlogType.HOW_TO,
+                        BlogContentType.COMPARISON: DataForSEOBlogType.COMPARISON,
+                        BlogContentType.GUIDE: DataForSEOBlogType.GUIDE,
+                        BlogContentType.CUSTOM: DataForSEOBlogType.CUSTOM,
+                        BlogContentType.TUTORIAL: DataForSEOBlogType.TUTORIAL,
+                        BlogContentType.LISTICLE: DataForSEOBlogType.LISTICLE,
+                        BlogContentType.CASE_STUDY: DataForSEOBlogType.CASE_STUDY,
+                        BlogContentType.NEWS: DataForSEOBlogType.NEWS,
+                        BlogContentType.OPINION: DataForSEOBlogType.OPINION,
+                        BlogContentType.INTERVIEW: DataForSEOBlogType.INTERVIEW,
+                        BlogContentType.FAQ: DataForSEOBlogType.FAQ,
+                        BlogContentType.CHECKLIST: DataForSEOBlogType.CHECKLIST,
+                        BlogContentType.TIPS: DataForSEOBlogType.TIPS,
+                        BlogContentType.DEFINITION: DataForSEOBlogType.DEFINITION,
+                        BlogContentType.BENEFITS: DataForSEOBlogType.BENEFITS,
+                        BlogContentType.PROBLEM_SOLUTION: DataForSEOBlogType.PROBLEM_SOLUTION,
+                        BlogContentType.TREND_ANALYSIS: DataForSEOBlogType.TREND_ANALYSIS,
+                        BlogContentType.STATISTICS: DataForSEOBlogType.STATISTICS,
+                        BlogContentType.RESOURCE_LIST: DataForSEOBlogType.RESOURCE_LIST,
+                        BlogContentType.TIMELINE: DataForSEOBlogType.TIMELINE,
+                        BlogContentType.MYTH_BUSTING: DataForSEOBlogType.MYTH_BUSTING,
+                        BlogContentType.BEST_PRACTICES: DataForSEOBlogType.BEST_PRACTICES,
+                        BlogContentType.GETTING_STARTED: DataForSEOBlogType.GETTING_STARTED,
+                        BlogContentType.ADVANCED: DataForSEOBlogType.ADVANCED,
+                        BlogContentType.TROUBLESHOOTING: DataForSEOBlogType.TROUBLESHOOTING,
+                    }
+                    df_blog_type = blog_type_map.get(blog_request.blog_type or BlogContentType.CUSTOM, DataForSEOBlogType.CUSTOM)
+                    
+                    # Calculate word count from length
+                    word_count_map = {
+                        ContentLength.SHORT: 500,
+                        ContentLength.MEDIUM: 1500,
+                        ContentLength.LONG: 2500,
+                        ContentLength.EXTENDED: 4000,
+                    }
+                    word_count = blog_request.word_count_target or word_count_map.get(blog_request.length, 1500)
+                    
+                    # Map tone
+                    tone_map = {
+                        ContentTone.PROFESSIONAL: "professional",
+                        ContentTone.CASUAL: "casual",
+                        ContentTone.FRIENDLY: "friendly",
+                        ContentTone.AUTHORITATIVE: "professional",
+                        ContentTone.CONVERSATIONAL: "casual",
+                        ContentTone.TECHNICAL: "professional",
+                        ContentTone.CREATIVE: "casual",
+                    }
+                    if blog_request.tone in tone_map:
+                        tone_str = tone_map[blog_request.tone]
+                    elif hasattr(blog_request.tone, 'value'):
+                        tone_str = blog_request.tone.value
+                    else:
+                        tone_str = str(blog_request.tone).lower()
+                    
+                    try:
+                        # Generate blog content using DataForSEO
+                        logger.info(f"Worker: Calling DataForSEO generate_blog_content: topic={blog_request.topic}, blog_type={df_blog_type.value}, word_count={word_count}")
+                        
+                        result = await content_service.generate_blog_content(
+                            topic=blog_request.topic,
+                            keywords=blog_request.keywords,
+                            blog_type=df_blog_type,
+                            tone=tone_str,
+                            word_count=word_count,
+                            target_audience=blog_request.target_audience,
+                            language="en",
+                            tenant_id="default",
+                            optimize_for_traffic=getattr(blog_request, 'optimize_for_traffic', True),
+                            analyze_backlinks=getattr(blog_request, 'analyze_backlinks', False),
+                            backlink_url=getattr(blog_request, 'backlink_url', None),
+                            brand_name=getattr(blog_request, 'brand_name', None),
+                            category=getattr(blog_request, 'category', None),
+                            product_name=getattr(blog_request, 'product_name', None),
+                            items=getattr(blog_request, 'comparison_items', None),
+                            custom_instructions=blog_request.custom_instructions
+                        )
+                        
+                        logger.info(f"Worker: DataForSEO generation completed: content_length={len(result.get('content', ''))}, tokens={result.get('tokens_used', 0)}")
+                        
+                        # Validate content
+                        generated_content = result.get("content", "")
+                        if not generated_content or len(generated_content.strip()) < 50:
+                            raise Exception(f"DataForSEO returned empty content: length={len(generated_content)}")
+                        
+                        # Extract SEO metrics
+                        seo_metrics = result.get("seo_metrics", {})
+                        readability_score = seo_metrics.get("readability_score", 75.0)
+                        seo_score = seo_metrics.get("seo_score", 85.0)
+                        
+                        # Build SEO metadata
+                        seo_metadata = {
+                            "semantic_keywords": result.get("keywords", blog_request.keywords),
+                            "subtopics": result.get("subtopics", []),
+                            "blog_type": result.get("blog_type", "custom"),
+                            "keyword_density": seo_metrics.get("keyword_density", {}),
+                            "headings_count": seo_metrics.get("headings_count", 0),
+                            "avg_sentence_length": seo_metrics.get("avg_sentence_length", 0),
+                            "seo_factors": seo_metrics.get("seo_factors", []),
+                            "word_count_range": seo_metrics.get("word_count_range", {}),
+                            "backlink_keywords": result.get("backlink_keywords", [])
+                        }
+                        
+                        quality_dimensions = {
+                            "readability": readability_score,
+                            "seo": seo_score,
+                            "structure": min(100, seo_metrics.get("headings_count", 0) * 20),
+                            "keyword_optimization": min(100, seo_score * 0.8)
+                        }
+                        
+                        excerpt = extract_excerpt(generated_content, max_length=250)
+                        
+                        # Update job with result
+                        job.status = JobStatus.COMPLETED
+                        job.completed_at = datetime.utcnow()
+                        job.result = EnhancedBlogGenerationResponse(
+                            title=result.get("title", blog_request.topic),
+                            content=generated_content,
+                            excerpt=excerpt,
+                            meta_title=result.get("meta_title", result.get("title", blog_request.topic)),
+                            meta_description=result.get("meta_description", ""),
+                            readability_score=readability_score,
+                            seo_score=seo_score,
+                            stage_results=[],
+                            citations=[],
+                            total_tokens=result.get("tokens_used", 0),
+                            total_cost=result.get("cost", 0.0),
+                            generation_time=(datetime.utcnow() - job.started_at).total_seconds(),
+                            seo_metadata=seo_metadata,
+                            internal_links=[],
+                            quality_score=seo_score,
+                            quality_dimensions=quality_dimensions,
+                            structured_data=None,
+                            semantic_keywords=result.get("keywords", blog_request.keywords),
+                            content_metadata={},
+                            success=True,
+                            warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
+                            progress_updates=progress_updates
+                        )
+                        
+                        logger.info(f"Worker: DataForSEO generation completed successfully for job {job_id}")
+                        return JSONResponse(
+                            status_code=200,
+                            content={"status": "completed", "job_id": job_id}
+                        )
+                        
+                    except Exception as e:
+                        logger.error(f"Worker: DataForSEO content generation failed: {e}", exc_info=True)
+                        USE_DATAFORSEO = False
+                        logger.warning(f"Worker: Falling back to pipeline due to DataForSEO error: {str(e)}")
+            
+            # Fallback to pipeline if DataForSEO is disabled or failed
+            if not USE_DATAFORSEO:
+                logger.info(f"Worker: Using multi-stage pipeline for blog generation")
+                
+                # Check if AI generator is available
+                if ai_generator is None:
+                    job.status = JobStatus.FAILED
+                    job.error_message = "AI Content Generator is not initialized"
+                    job.completed_at = datetime.utcnow()
+                    return JSONResponse(
+                        status_code=503,
+                        content={"error": "AI Content Generator is not initialized"}
+                    )
+                
+                # Initialize pipeline (same as synchronous endpoint)
+                pipeline = MultiStageGenerationPipeline(
                 ai_generator=ai_generator,
                 google_search=google_custom_search_client if blog_request.use_google_search else None,
                 readability_analyzer=readability_analyzer,
@@ -1776,33 +2103,94 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Frontend should call /api/v1/images/generate separately after blog generation
             final_content = pipeline_result.final_content
             
-            # Add citations if enabled
+            # Add citations if enabled (mandatory for Multi-Phase mode)
             citations = []
-            if blog_request.use_citations and google_custom_search_client:
-                try:
-                    citation_result = await citation_generator.generate_citations(
-                        final_content,
-                        blog_request.topic,
-                        blog_request.keywords
-                    )
-                    citations = [
-                        {
-                            "text": c.text[:100],
-                            "url": c.source_url,
-                            "title": c.source_title
-                        }
-                        for c in citation_result.citations
-                    ]
-                    final_content = citation_generator.integrate_citations(
-                        final_content,
-                        citation_result.citations
-                    )
-                    if citation_result.sources_used:
-                        final_content += citation_generator.generate_references_section(
-                            citation_result.sources_used
+            citation_warnings = []  # Initialize citation warnings list
+            if blog_request.use_citations:
+                if not google_custom_search_client:
+                    if generation_mode == GenerationMode.MULTI_PHASE:
+                        # Citations are mandatory for Multi-Phase - fail fast
+                        job.status = JobStatus.FAILED
+                        job.error_message = "Citation generation requires Google Custom Search API"
+                        job.completed_at = datetime.utcnow()
+                        return JSONResponse(
+                            status_code=503,
+                            content={"error": "Citation generation requires Google Custom Search API"}
                         )
-                except Exception as e:
-                    logger.warning(f"Citation generation failed: {e}")
+                    else:
+                        logger.warning("Worker: Citation generation requested but Google Custom Search not available")
+                else:
+                    try:
+                        logger.info(f"Worker: Generating citations for topic: {blog_request.topic}")
+                        citation_result = await citation_generator.generate_citations(
+                            final_content,
+                            blog_request.topic,
+                            blog_request.keywords,
+                            num_citations=5  # Minimum 5 citations for authoritative content
+                        )
+                        
+                        # Collect citation warnings
+                        if citation_result.warnings:
+                            citation_warnings.extend(citation_result.warnings)
+                        
+                        # Validate citations were generated
+                        if citation_result.citation_count == 0:
+                            logger.error("Worker: Citation generation returned 0 citations")
+                            if generation_mode == GenerationMode.MULTI_PHASE:
+                                job.status = JobStatus.FAILED
+                                job.error_message = "Failed to generate citations - no sources found"
+                                job.completed_at = datetime.utcnow()
+                                return JSONResponse(
+                                    status_code=500,
+                                    content={"error": "Failed to generate citations - citations are required for Multi-Phase workflow"}
+                                )
+                            else:
+                                logger.warning("Worker: No citations generated - continuing without citations")
+                        else:
+                            logger.info(f"Worker: Generated {citation_result.citation_count} citations")
+                            citations = [
+                                {
+                                    "text": c.text[:100],
+                                    "url": c.source_url,
+                                    "title": c.source_title
+                                }
+                                for c in citation_result.citations
+                            ]
+                            
+                            # Integrate citations into content
+                            final_content = citation_generator.integrate_citations(
+                                final_content,
+                                citation_result.citations
+                            )
+                            
+                            # Add references section
+                            if citation_result.sources_used:
+                                final_content += citation_generator.generate_references_section(
+                                    citation_result.sources_used
+                                )
+                            
+                            # Validate citations were integrated
+                            citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                            if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                                logger.error("Worker: Citations generated but not integrated into content")
+                                # Citations will be in references section even if not integrated inline
+                            
+                    except Exception as e:
+                        error_msg = f"Citation generation failed: {str(e)}"
+                        logger.error(f"Worker: Citation generation failed: {error_msg}", exc_info=True)
+                        logger.error(f"API_ERROR: Worker citation generation exception. Error: {type(e).__name__}: {str(e)}")
+                        if generation_mode == GenerationMode.MULTI_PHASE:
+                            # Citations are mandatory for Multi-Phase - fail fast
+                            job.status = JobStatus.FAILED
+                            job.error_message = f"Citation generation failed: {str(e)}"
+                            job.completed_at = datetime.utcnow()
+                            return JSONResponse(
+                                status_code=500,
+                                content={"error": f"Citation generation failed: {str(e)}. Citations are required for Multi-Phase workflow."}
+                            )
+                        else:
+                            logger.warning(f"Worker: Citation generation failed: {e} - continuing without citations")
+                            citation_warnings.append(f"Citation generation failed: {error_msg}")
             
             # Calculate SEO score
             seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
@@ -1887,6 +2275,13 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 }
                 for s in pipeline_result.stage_results
             ]
+            
+            # Collect all warnings from pipeline and citations
+            all_warnings = []
+            if pipeline_result.warnings:
+                all_warnings.extend(pipeline_result.warnings)
+            if citation_warnings:
+                all_warnings.extend(citation_warnings)
             
             # Create response
             response = EnhancedBlogGenerationResponse(

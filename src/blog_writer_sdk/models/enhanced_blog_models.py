@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 from .blog_models import ContentTone, ContentLength
 
 
+class GenerationMode(str, Enum):
+    """Blog generation mode."""
+    QUICK_GENERATE = "quick_generate"  # Fast, DataForSEO only
+    MULTI_PHASE = "multi_phase"        # Comprehensive, Pipeline with enhancements
+
+
 class BlogContentType(str, Enum):
     """
     Blog content type enumeration - Top 80% of popular content formats.
@@ -56,6 +62,12 @@ class EnhancedBlogGenerationRequest(BaseModel):
     keywords: List[str] = Field(..., min_items=1, description="Target SEO keywords")
     tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
     length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
+    
+    # Generation mode: determines which workflow to use
+    mode: GenerationMode = Field(
+        default=GenerationMode.QUICK_GENERATE,
+        description="Generation mode: 'quick_generate' uses DataForSEO (fast, cost-effective), 'multi_phase' uses comprehensive pipeline (premium quality)"
+    )
     
     # Blog type for DataForSEO Content Generation
     blog_type: Optional[BlogContentType] = Field(
