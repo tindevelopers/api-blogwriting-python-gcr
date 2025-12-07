@@ -1939,7 +1939,20 @@ class DataForSEOClient:
                 logger.info(f"DataForSEO response status: status_code={data.get('status_code')}, status_message={data.get('status_message')}")
             if isinstance(data, dict) and data.get("tasks"):
                 first_task = data["tasks"][0]
-                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(first_task.keys())}, result_count={first_task.get('result_count', 0)}, task_status_code={first_task.get('status_code')}, task_status_message={first_task.get('status_message')}")
+                task_status = first_task.get("status_code")
+                task_message = first_task.get("status_message", "")
+                logger.info(f"DataForSEO tasks structure: tasks_count={len(data['tasks'])}, first_task_keys={list(first_task.keys())}, result_count={first_task.get('result_count', 0)}, task_status_code={task_status}, task_status_message={task_message}")
+                
+                # Check task status code first - 20000 = success
+                if task_status != 20000:
+                    error_msg = f"DataForSEO generate_text failed: status_code={task_status}, message={task_message}"
+                    logger.error(error_msg)
+                    # Check for common error codes
+                    if task_status == 40204:
+                        error_msg += " (Subscription required - check DataForSEO plan includes Content Generation API)"
+                    elif task_status == 40501:
+                        error_msg += " (Invalid field - API format may have changed)"
+                    raise ValueError(error_msg)
                 
                 # Check result field - it might be None, empty list, or have data
                 result_data = first_task.get("result")
