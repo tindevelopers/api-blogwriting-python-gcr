@@ -16,6 +16,7 @@ from .ai_content_generator import AIContentGenerator
 from .enhanced_prompts import EnhancedPromptBuilder, PromptTemplate
 from .base_provider import AIRequest, AIGenerationConfig, ContentType
 from .consensus_generator import ConsensusGenerator
+from .content_enhancement import ContentEnhancer
 from ..models.blog_models import ContentTone, ContentLength
 from ..models.progress_models import ProgressUpdate, ProgressCallback, PipelineStage
 from ..integrations.google_custom_search import GoogleCustomSearchClient
@@ -583,13 +584,64 @@ class MultiStageGenerationPipeline:
         readability_metrics = self.readability_analyzer.analyze(enhanced_content)
         readability_score = readability_metrics.flesch_reading_ease
         
-        # Optimize readability if needed
+        # Phase 2: AI-powered readability optimization (if below target)
         if readability_score < 60:
-            logger.info("Optimizing readability")
-            optimized_content, _ = self.readability_analyzer.optimize_content(
-                enhanced_content
+            logger.info(f"Reading ease ({readability_score:.1f}) below target (60), applying AI-powered simplification")
+            await self._emit_progress(
+                PipelineStage.ENHANCEMENT,
+                current_stage,
+                total_stages,
+                "AI Readability Optimization",
+                f"Simplifying content to improve reading ease from {readability_score:.1f} to 60-70"
             )
-            enhanced_content = optimized_content
+            
+            # Use AI-powered readability enhancement
+            content_enhancer = ContentEnhancer(ai_generator=self.ai_generator)
+            readability_result = await content_enhancer.enhance_readability_with_ai(
+                content=enhanced_content,
+                target_reading_ease=65.0,
+                current_reading_ease=readability_score
+            )
+            
+            if readability_result.changes_made:
+                enhanced_content = readability_result.content
+                logger.info(f"AI readability enhancement applied: {', '.join(readability_result.changes_made)}")
+            else:
+                # Fallback to simple optimization
+                logger.info("Falling back to simple readability optimization")
+                optimized_content, _ = self.readability_analyzer.optimize_content(
+                    enhanced_content
+                )
+                enhanced_content = optimized_content
+        
+        # Phase 2: Engagement element injection
+        logger.info("Injecting engagement elements")
+        content_enhancer = ContentEnhancer(ai_generator=self.ai_generator)
+        
+        # Calculate word count for engagement targets
+        word_count = len(enhanced_content.split())
+        engagement_result = content_enhancer.inject_engagement_elements(
+            content=enhanced_content,
+            target_questions=max(3, int(word_count / 500)),  # ~1 question per 500 words
+            target_examples=max(5, int(word_count / 200)),  # ~1 example per 200 words
+            target_ctas=max(2, int(word_count / 1000))  # ~1 CTA per 1000 words
+        )
+        
+        if engagement_result.changes_made:
+            enhanced_content = engagement_result.content
+            logger.info(f"Engagement elements injected: {', '.join(engagement_result.changes_made)}")
+        
+        # Phase 2: Experience indicator injection
+        logger.info("Injecting experience indicators")
+        experience_result = content_enhancer.inject_experience_indicators(
+            content=enhanced_content,
+            target_count=3,  # 3 per 1000 words
+            word_count=word_count
+        )
+        
+        if experience_result.changes_made:
+            enhanced_content = experience_result.content
+            logger.info(f"Experience indicators injected: {', '.join(experience_result.changes_made)}")
         
         # Extract SEO metadata from stage 4
         seo_metadata = seo_result.metadata.get("seo_metadata", {})

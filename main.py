@@ -1474,7 +1474,7 @@ async def generate_blog_enhanced(
             intent_analyzer=intent_analyzer,  # Always enabled for better content
             few_shot_extractor=few_shot_extractor if request.use_google_search else None,
             length_optimizer=length_optimizer if request.use_google_search else None,
-            use_consensus=request.use_consensus_generation,
+            use_consensus=request.use_consensus_generation if hasattr(request, 'use_consensus_generation') and request.use_consensus_generation else (generation_mode == GenerationMode.MULTI_PHASE),  # Enable by default for Multi-Phase
             dataforseo_client=dataforseo_client_global,  # Add DataForSEO Labs integration
             search_console=gsc_client,  # Add Search Console client (site-specific or default)
             progress_callback=progress_callback  # Add progress callback

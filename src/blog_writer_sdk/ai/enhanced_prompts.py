@@ -235,6 +235,31 @@ WRITING REQUIREMENTS:
 9. Include natural transitions between sections
 10. End each section with a clear takeaway or summary point
 
+ENGAGEMENT REQUIREMENTS (CRITICAL):
+- Include 3-5 rhetorical questions throughout the content to engage readers
+- Add compelling call-to-action phrases: "Learn more", "Get started", "Discover", "Try this", "Explore"
+- Include 5+ examples using "for example", "such as", "like", "for instance"
+- Use storytelling elements and personal anecdotes where appropriate
+- Add interactive elements: "Try this", "Consider this", "Imagine", "Think about"
+- Include thought-provoking statements that encourage reader engagement
+- End sections with questions or prompts that encourage reflection
+
+ENGAGEMENT EXAMPLES:
+✅ Good: "Have you ever wondered why Python is so popular among developers?"
+✅ Good: "Try this simple exercise to see the difference..."
+✅ Good: "For example, when building a web application, Python's simplicity..."
+✅ Good: "Consider this: What if you could automate your entire workflow?"
+✅ Good: "Imagine being able to build complex applications in just a few lines..."
+
+ACCESSIBILITY REQUIREMENTS (CRITICAL):
+- Use proper heading hierarchy: H1 (title only), H2 (main sections), H3 (subsections)
+- Ensure no skipped heading levels (H1 → H2 → H3, not H1 → H3)
+- For content over 1500 words, include a table of contents section
+- Use descriptive link text (not "click here" or "read more")
+- When mentioning images, include descriptive alt text suggestions
+- Use lists (bulleted or numbered) for scannability (at least one per H2 section)
+- Ensure sufficient white space between sections
+
 READABILITY REQUIREMENTS (CRITICAL):
 - Target Flesch Reading Ease: 60-70 (8th-9th grade level)
 - Use short sentences (average 15-20 words per sentence)
@@ -447,6 +472,32 @@ ENHANCEMENT TASKS:
 8. Enhance engagement - add rhetorical questions, compelling statements, or thought-provoking points
 9. Optimize for featured snippets - ensure key sections can serve as featured snippet answers
 10. Improve conclusion - make it more actionable and memorable
+
+ENGAGEMENT REQUIREMENTS (CRITICAL):
+- Ensure content includes 3-5 rhetorical questions throughout to engage readers
+- Add compelling call-to-action phrases: "Learn more", "Get started", "Discover", "Try this", "Explore"
+- Include 5+ examples using "for example", "such as", "like", "for instance"
+- Use storytelling elements and personal anecdotes where appropriate
+- Add interactive elements: "Try this", "Consider this", "Imagine", "Think about"
+- Include thought-provoking statements that encourage reader engagement
+- End sections with questions or prompts that encourage reflection
+
+ENGAGEMENT EXAMPLES:
+✅ Good: "Have you ever wondered why Python is so popular among developers?"
+✅ Good: "Try this simple exercise to see the difference..."
+✅ Good: "For example, when building a web application, Python's simplicity..."
+✅ Good: "Consider this: What if you could automate your entire workflow?"
+✅ Good: "Imagine being able to build complex applications in just a few lines..."
+
+ACCESSIBILITY REQUIREMENTS (CRITICAL):
+- Verify proper heading hierarchy: H1 (title only), H2 (main sections), H3 (subsections)
+- Ensure no skipped heading levels (H1 → H2 → H3, not H1 → H3)
+- For content over 1500 words, add a table of contents section at the beginning
+- Use descriptive link text (not "click here" or "read more")
+- When mentioning images, include descriptive alt text suggestions
+- Use lists (bulleted or numbered) for scannability (at least one per H2 section)
+- Ensure sufficient white space between sections
+- Check that all images have descriptive alt text placeholders
 
 READABILITY REQUIREMENTS (CRITICAL - MUST TARGET 60-70):
 - Target Flesch Reading Ease: 60-70 (8th-9th grade level) - THIS IS MANDATORY

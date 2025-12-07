@@ -44,6 +44,13 @@ from .image_streaming import (
     create_image_stage_update,
     stream_image_stage_update
 )
+from .image_prompt_generator import (
+    ImagePromptGenerator,
+    ImageType,
+    ImageStyle,
+    ImagePrompt,
+    ImagePlacementSuggestion
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1097,6 +1104,168 @@ async def initialize_image_providers_from_env():
         
     except Exception as e:
         logger.error(f"Failed to initialize image providers from environment: {e}", exc_info=True)
+
+
+@router.post("/suggestions", response_model=Dict[str, Any])
+async def get_image_suggestions(
+    content: str,
+    topic: str,
+    keywords: List[str],
+    tone: str = "professional"
+):
+    """
+    Analyze blog content and suggest image placements with prompts.
+    
+    This endpoint analyzes blog content and returns:
+    - Image placement suggestions
+    - Generated prompts for each image
+    - Style recommendations
+    - Alt text suggestions
+    
+    Use this before generating images to get smart suggestions.
+    """
+    try:
+        prompt_generator = ImagePromptGenerator()
+        
+        suggestions = prompt_generator.analyze_content_for_images(
+            content=content,
+            topic=topic,
+            keywords=keywords,
+            tone=tone
+        )
+        
+        # Convert to response format
+        response_suggestions = []
+        for suggestion in suggestions:
+            # Generate full prompt details
+            if suggestion.image_type == ImageType.FEATURED:
+                prompt_details = prompt_generator.generate_featured_image_prompt(
+                    topic, keywords, tone
+                )
+            else:
+                # Extract section content for section images
+                sections = prompt_generator._extract_sections(content)
+                section = sections[suggestion.position // 1000] if sections else None
+                if section:
+                    prompt_details = prompt_generator.generate_prompt_from_section(
+                        section["content"],
+                        section["title"],
+                        topic,
+                        keywords,
+                        suggestion.image_type,
+                        tone
+                    )
+                else:
+                    continue
+            
+            response_suggestions.append({
+                "image_type": suggestion.image_type.value,
+                "style": suggestion.style.value,
+                "aspect_ratio": suggestion.aspect_ratio,
+                "prompt": prompt_details.prompt,
+                "prompt_variations": prompt_details.variations,
+                "alt_text": prompt_details.alt_text_suggestion,
+                "placement": {
+                    "position": suggestion.position,
+                    "section": suggestion.section_title,
+                    "priority": suggestion.priority
+                }
+            })
+        
+        return {
+            "suggestions": response_suggestions,
+            "total_suggestions": len(response_suggestions),
+            "recommended_count": len([s for s in response_suggestions if s["placement"]["priority"] >= 4])
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to generate image suggestions: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate image suggestions: {str(e)}"
+        )
+
+
+@router.post("/generate-from-content", response_model=CreateImageJobResponse)
+async def generate_image_from_content(
+    content: str,
+    topic: str,
+    keywords: List[str],
+    image_type: str = "featured",
+    tone: str = "professional",
+    section_title: Optional[str] = None
+):
+    """
+    Generate image prompt from blog content and create generation job.
+    
+    This endpoint:
+    1. Analyzes blog content
+    2. Generates content-aware prompt
+    3. Creates image generation job
+    
+    Use this for automatic prompt generation from content.
+    """
+    try:
+        prompt_generator = ImagePromptGenerator()
+        
+        # Generate prompt based on image type
+        image_type_enum = ImageType(image_type)
+        
+        if image_type_enum == ImageType.FEATURED:
+            prompt_details = prompt_generator.generate_featured_image_prompt(
+                topic, keywords, tone
+            )
+        else:
+            # Extract section for section images
+            sections = prompt_generator._extract_sections(content)
+            section = None
+            if section_title:
+                section = next((s for s in sections if s["title"] == section_title), None)
+            elif sections:
+                section = sections[0]
+            
+            if not section:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Section '{section_title}' not found in content"
+                )
+            
+            prompt_details = prompt_generator.generate_prompt_from_section(
+                section["content"],
+                section["title"],
+                topic,
+                keywords,
+                image_type_enum,
+                tone
+            )
+        
+        # Create image generation request
+        from ..models.image_models import ImageGenerationRequest, ImageQuality
+        
+        image_request = ImageGenerationRequest(
+            prompt=prompt_details.prompt,
+            provider=ImageProviderType.STABILITY_AI,
+            style=prompt_details.style.value,
+            aspect_ratio=prompt_details.aspect_ratio,
+            quality=ImageQuality.HIGH,
+            width=1920 if prompt_details.aspect_ratio == "16:9" else 1200,
+            height=1080 if prompt_details.aspect_ratio == "16:9" else 900
+        )
+        
+        # Create async job
+        return await generate_image_async(image_request)
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid image type: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate image from content: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate image from content: {str(e)}"
+        )
 
 
 # Export the router and manager for use in main.py
