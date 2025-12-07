@@ -1906,24 +1906,30 @@ class DataForSEOClient:
         try:
             # According to DataForSEO API documentation: https://docs.dataforseo.com/v3/content_generation-generate_text-live/
             # The endpoint expects:
-            # - "topic" (not "text" or "prompt") - the topic/subject to write about
-            # - "word_count" (not "max_tokens") - target word count
-            # - "creativity_index" (not "temperature") - creativity level (0.0-1.0)
+            # - "text" - the input text/prompt to generate from
+            # - "max_new_tokens" - maximum number of tokens to generate (not "word_count")
+            # - "creativity_index" (optional) - creativity level (0.0-1.0)
+            # Note: API changed - "word_count" field is invalid (error 40501), use "max_new_tokens" instead
             
-            # Calculate word_count from max_tokens if not provided (roughly 1 token = 0.75 words)
-            if word_count is None:
-                word_count = int(max_tokens * 0.75)
+            # Calculate max_new_tokens from word_count or max_tokens
+            # Roughly 1 token = 0.75 words, so for word_count we multiply by 1.33
+            if word_count is not None:
+                # Convert word_count to tokens (roughly 1 word = 1.33 tokens)
+                max_new_tokens = int(word_count * 1.33)
+            else:
+                # Use max_tokens directly
+                max_new_tokens = max_tokens
             
             # Map temperature to creativity_index (same scale)
             creativity_index = temperature
             
             payload = [{
-                "topic": prompt,  # Use prompt as topic
-                "word_count": word_count,
+                "text": prompt,  # Use "text" parameter as per updated API
+                "max_new_tokens": max_new_tokens,  # Use "max_new_tokens" instead of "word_count"
                 "creativity_index": creativity_index
             }]
             
-            logger.info(f"DataForSEO generate_text payload: topic_length={len(prompt)}, word_count={word_count}, creativity_index={creativity_index}, payload_keys={list(payload[0].keys())}")
+            logger.info(f"DataForSEO generate_text payload: text_length={len(prompt)}, max_new_tokens={max_new_tokens}, creativity_index={creativity_index}, payload_keys={list(payload[0].keys())}")
             
             data = await self._make_request("content_generation/generate_text/live", payload, tenant_id)
             
