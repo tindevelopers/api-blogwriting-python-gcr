@@ -57,7 +57,9 @@ from src.blog_writer_sdk.ai import (
     ContentStrategy,
     ContentQuality
 )
-# LiteLLM router removed - using direct AI provider integrations
+# AI Gateway and Usage Logger for centralized AI operations
+from src.blog_writer_sdk.services.ai_gateway import get_ai_gateway, initialize_ai_gateway
+from src.blog_writer_sdk.services.usage_logger import get_usage_logger, initialize_usage_logger
 from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
@@ -97,6 +99,8 @@ from src.blog_writer_sdk.api.image_generation import router as image_generation_
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
 from src.blog_writer_sdk.api.user_management import router as user_management_router
 from src.blog_writer_sdk.api.field_enhancement import router as field_enhancement_router
+from src.blog_writer_sdk.api.publishing_management import router as publishing_router
+from src.blog_writer_sdk.api.admin_management import router as admin_router
 from src.blog_writer_sdk.api.keyword_streaming import (
     KeywordSearchStage,
     create_stage_update,
@@ -867,6 +871,10 @@ app.include_router(integrations_router)
 app.include_router(user_management_router)
 # Include field enhancement router
 app.include_router(field_enhancement_router)
+# Include publishing management router
+app.include_router(publishing_router)
+# Include admin management router (secrets, logs, usage, jobs)
+app.include_router(admin_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
@@ -1070,7 +1078,8 @@ async def root():
         "ready": "/ready",
         "live": "/live",
         "endpoints": {
-            "generate": "/api/v1/blog/generate",
+            "generate": "/api/v1/blog/generate-enhanced",
+            "generate_gateway": "/api/v1/blog/generate-gateway",
             "analyze": "/api/v1/analyze",
             "keywords": "/api/v1/keywords",
             "batch": "/api/v1/batch",
@@ -1083,6 +1092,19 @@ async def root():
             "media": {
                 "cloudinary": "/api/v1/media/upload/cloudinary",
                 "cloudflare": "/api/v1/media/upload/cloudflare"
+            },
+            "ai_gateway": {
+                "generate": "/api/v1/blog/generate-gateway",
+                "polish": "/api/v1/blog/polish",
+                "quality_check": "/api/v1/blog/quality-check",
+                "meta_tags": "/api/v1/blog/meta-tags"
+            },
+            "admin": {
+                "secrets": "/api/v1/admin/secrets",
+                "env_vars": "/api/v1/admin/env-vars",
+                "logs": "/api/v1/admin/logs",
+                "ai_usage": "/api/v1/admin/ai/usage",
+                "jobs": "/api/v1/admin/jobs"
             }
         }
     }
@@ -1094,6 +1116,160 @@ async def root():
 # - POST /api/v1/generate (deprecated - only supports CUSTOM type)
 # - POST /api/v1/blog/generate (deprecated - only supports CUSTOM type)
 # Use POST /api/v1/blog/generate-enhanced for all blog generation with 28 blog types
+
+
+# ============================================================================
+# AI Gateway Blog Generation Endpoint (new LiteLLM-based route)
+# ============================================================================
+
+class AIGatewayBlogRequest(BaseModel):
+    """Request model for AI Gateway blog generation."""
+    topic: str = Field(..., description="The main topic for the blog post")
+    keywords: List[str] = Field(default_factory=list, description="Target SEO keywords")
+    word_count: int = Field(default=1500, ge=300, le=10000, description="Target word count")
+    tone: str = Field(default="professional", description="Content tone")
+    custom_instructions: str = Field(default="", description="Additional instructions")
+    org_id: Optional[str] = Field(default=None, description="Organization ID for tracking")
+    include_polishing: bool = Field(default=True, description="Apply AI polishing to content")
+    include_quality_check: bool = Field(default=True, description="Run quality checks")
+    include_meta_tags: bool = Field(default=True, description="Generate SEO meta tags")
+    model: str = Field(default="gpt-4o", description="AI model to use")
+
+
+@app.post("/api/v1/blog/generate-gateway")
+async def generate_blog_via_gateway(request: AIGatewayBlogRequest):
+    """
+    Generate a blog post using the AI Gateway (LiteLLM proxy).
+    
+    This endpoint routes all AI calls through the centralized AI Gateway which provides:
+    - **Response Caching**: Reduce costs and latency with intelligent caching
+    - **Cost Tracking**: Automatic usage logging to database
+    - **Model Routing**: Support for OpenAI, Anthropic, and other providers
+    - **Content Polishing**: AI-powered post-processing
+    - **Quality Checks**: Automated content quality scoring
+    - **Meta Tag Generation**: SEO-optimized meta tags
+    
+    **Note**: This is an alternative to the main generate-enhanced endpoint.
+    Use this when you want direct control over the AI Gateway features.
+    
+    Returns complete blog with content, quality score, and meta tags.
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        # Get or initialize AI Gateway
+        ai_gateway = get_ai_gateway()
+        
+        # Get or initialize Usage Logger and connect to AI Gateway
+        usage_logger = get_usage_logger()
+        ai_gateway.set_usage_logger(usage_logger)
+        
+        # Set model if specified
+        if request.model:
+            ai_gateway.default_model = request.model
+        
+        # Generate complete blog using AI Gateway
+        org_id = request.org_id or "default"
+        user_id = "api_user"  # Would come from authentication in production
+        
+        result = await ai_gateway.generate_complete_blog(
+            topic=request.topic,
+            keywords=request.keywords,
+            org_id=org_id,
+            user_id=user_id,
+            word_count=request.word_count,
+            tone=request.tone,
+            custom_instructions=request.custom_instructions,
+            include_polishing=request.include_polishing,
+            include_quality_check=request.include_quality_check,
+            include_meta_tags=request.include_meta_tags
+        )
+        
+        # Add metadata
+        result["endpoint"] = "generate-gateway"
+        result["api_version"] = APP_VERSION
+        result["total_time"] = round(time.time() - start_time, 2)
+        
+        logger.info(f"AI Gateway blog generated: {result.get('word_count', 0)} words, quality: {result.get('quality_grade', 'N/A')}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"AI Gateway blog generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/blog/polish")
+async def polish_blog_content(
+    content: str = Query(..., description="Content to polish"),
+    instructions: str = Query(default="Ensure professional tone, remove artifacts", description="Polishing instructions"),
+    org_id: str = Query(default="default", description="Organization ID")
+):
+    """
+    Polish and clean blog content using AI.
+    
+    Removes AI artifacts, improves flow, and fixes grammar.
+    This is a standalone utility that can be used after generation.
+    """
+    try:
+        ai_gateway = get_ai_gateway()
+        result = await ai_gateway.polish_content(
+            content=content,
+            instructions=instructions,
+            org_id=org_id
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Content polishing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/blog/quality-check")
+async def check_blog_quality(
+    content: str = Query(..., description="Content to check")
+):
+    """
+    Check content quality and get improvement suggestions.
+    
+    Returns quality score, issues found, and cleaned content.
+    """
+    try:
+        ai_gateway = get_ai_gateway()
+        result = await ai_gateway.check_quality(content=content)
+        return result
+    except Exception as e:
+        logger.error(f"Quality check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/blog/meta-tags")
+async def generate_meta_tags(
+    content: str = Query(..., description="Blog content"),
+    title: str = Query(..., description="Blog title"),
+    keywords: List[str] = Query(default=[], description="Target keywords"),
+    org_id: str = Query(default="default", description="Organization ID")
+):
+    """
+    Generate SEO-optimized meta tags for a blog post.
+    
+    Returns title, description, og_title, and og_description.
+    """
+    try:
+        ai_gateway = get_ai_gateway()
+        result = await ai_gateway.generate_meta_tags(
+            content=content,
+            title=title,
+            keywords=keywords,
+            org_id=org_id
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Meta tag generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 
 
 # Enhanced blog generation endpoint (Phase 1 & 2)
