@@ -13,6 +13,10 @@ from ..models.publishing_models import (
     PublishBlogResponse,
     IntegrationStatus,
     CMSIntegration,
+    PublishingTargetRecord,
+    CreatePublishingTargetRequest,
+    UpdatePublishingTargetRequest,
+    PublishingTargetStatus,
 )
 from ..models.blog_models import BlogGenerationResult
 from ..integrations.webflow_integration import WebflowClient, WebflowPublisher
@@ -171,6 +175,162 @@ class PublishingService:
             "sites": sites,
             "default": default_target
         }
+
+    async def list_publishing_targets(
+        self,
+        org_id: str,
+        include_inactive: bool = False,
+    ) -> List[PublishingTargetRecord]:
+        """
+        List publishing targets stored in the publishing_targets table.
+        """
+        if not self.supabase_client:
+            self.logger.warning("Supabase client not available, returning empty publishing targets list")
+            return []
+
+        records = await self.supabase_client.list_publishing_targets(org_id, include_inactive=include_inactive)
+        return [PublishingTargetRecord(**item) for item in records]
+
+    async def get_publishing_target(self, target_id: str, org_id: str) -> Optional[PublishingTargetRecord]:
+        """Fetch a single publishing target by id/org."""
+        if not self.supabase_client:
+            self.logger.warning("Supabase client not available, cannot fetch publishing target")
+            return None
+        record = await self.supabase_client.get_publishing_target(target_id, org_id)
+        return PublishingTargetRecord(**record) if record else None
+
+    async def _unset_other_defaults(self, org_id: str, target_type: CMSProvider, exclude_id: Optional[str] = None):
+        """Unset other defaults for the same provider when a new default is set."""
+        if not self.supabase_client:
+            return
+        table = self.supabase_client._get_table_name("publishing_targets")
+        query = (
+            self.supabase_client.client.table(table)
+            .update({"is_default": False, "updated_at": datetime.utcnow().isoformat()})
+            .eq("org_id", org_id)
+            .eq("type", target_type.value)
+            .eq("is_default", True)
+        )
+        if exclude_id:
+            query = query.neq("id", exclude_id)
+        query.execute()
+
+    async def create_publishing_target(
+        self,
+        request: CreatePublishingTargetRequest,
+    ) -> PublishingTargetRecord:
+        """Create a publishing target in Supabase."""
+        if not self.supabase_client:
+            raise ValueError("Supabase client not available")
+
+        now = datetime.utcnow().isoformat()
+        target_data = {
+            "org_id": request.org_id,
+            "name": request.name,
+            "type": request.type.value,
+            "site_url": request.site_url,
+            "status": request.status.value,
+            "is_default": request.is_default,
+            "config": request.config,
+            "credentials": request.credentials,
+            "metadata": request.metadata,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        if request.is_default:
+            await self._unset_other_defaults(request.org_id, request.type)
+
+        record = await self.supabase_client.create_publishing_target(target_data)
+        created = PublishingTargetRecord(**record)
+
+        created_by = request.metadata.get("created_by") if request.metadata else None
+        if created_by:
+            await self.log_audit(
+                user_id=created_by,
+                org_id=request.org_id,
+                action="create_publishing_target",
+                resource_type="publishing_target",
+                resource_id=created.id,
+                metadata={"type": request.type.value, "is_default": request.is_default},
+            )
+
+        return created
+
+    async def update_publishing_target(
+        self,
+        target_id: str,
+        org_id: str,
+        request: UpdatePublishingTargetRequest,
+    ) -> PublishingTargetRecord:
+        """Update a publishing target."""
+        if not self.supabase_client:
+            raise ValueError("Supabase client not available")
+
+        existing = await self.get_publishing_target(target_id, org_id)
+        if not existing:
+            raise ValueError("Publishing target not found")
+
+        updates: Dict[str, Any] = {"updated_at": datetime.utcnow().isoformat()}
+        if request.name is not None:
+            updates["name"] = request.name
+        if request.site_url is not None:
+            updates["site_url"] = request.site_url
+        if request.status is not None:
+            updates["status"] = request.status.value
+        if request.is_default is not None:
+            updates["is_default"] = request.is_default
+        if request.config is not None:
+            updates["config"] = request.config
+        if request.credentials is not None:
+            updates["credentials"] = request.credentials
+        if request.metadata is not None:
+            updates["metadata"] = request.metadata
+
+        # Handle default promotion
+        if request.is_default:
+            await self._unset_other_defaults(org_id, existing.type, exclude_id=target_id)
+
+        record = await self.supabase_client.update_publishing_target(target_id, org_id, updates)
+        updated = PublishingTargetRecord(**record)
+
+        updated_by = (request.metadata or {}).get("updated_by") if request.metadata else None
+        if updated_by:
+            await self.log_audit(
+                user_id=updated_by,
+                org_id=org_id,
+                action="update_publishing_target",
+                resource_type="publishing_target",
+                resource_id=target_id,
+                metadata={"updates": updates},
+            )
+
+        return updated
+
+    async def delete_publishing_target(self, target_id: str, org_id: str) -> bool:
+        """Soft-delete a publishing target."""
+        if not self.supabase_client:
+            raise ValueError("Supabase client not available")
+
+        existing = await self.get_publishing_target(target_id, org_id)
+        if not existing:
+            raise ValueError("Publishing target not found")
+
+        deleted = await self.supabase_client.soft_delete_publishing_target(target_id, org_id)
+
+        if deleted:
+            deleted_by = existing.metadata.get("updated_by") if existing.metadata else None
+            if deleted_by:
+                await self.log_audit(
+                    user_id=deleted_by,
+                    org_id=org_id,
+                    action="delete_publishing_target",
+                    resource_type="publishing_target",
+                    resource_id=target_id,
+                    metadata={"type": existing.type.value},
+                )
+
+        return deleted
     
     async def resolve_publishing_target(
         self,

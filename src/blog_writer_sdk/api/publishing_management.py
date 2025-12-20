@@ -18,6 +18,9 @@ from ..models.publishing_models import (
     BlogPostWithCosts,
     CMSProvider,
     IntegrationStatus,
+    PublishingTargetRecord,
+    CreatePublishingTargetRequest,
+    UpdatePublishingTargetRequest,
 )
 from ..services.publishing_service import PublishingService
 from ..integrations.supabase_client import SupabaseClient
@@ -382,6 +385,118 @@ async def get_publishing_targets(
     except Exception as e:
         logger.error(f"Failed to get publishing targets: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get publishing targets: {str(e)}")
+
+
+# Publishing Targets CRUD (new table-backed)
+@router.get("/publishing-targets", response_model=List[PublishingTargetRecord])
+async def list_publishing_targets(
+    include_inactive: bool = Query(False, description="Include inactive/archived targets"),
+    role_ctx: Tuple[Optional[UserRole], Optional[str], Optional[str]] = Depends(get_user_role),
+    service: PublishingService = Depends(get_publishing_service),
+):
+    """List publishing targets for the organization."""
+    role, user_id, org_id = role_ctx
+
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Organization ID required")
+
+    try:
+        return await service.list_publishing_targets(org_id, include_inactive=include_inactive)
+    except Exception as e:
+        logger.error(f"Failed to list publishing targets: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list publishing targets: {str(e)}")
+
+
+@router.get("/publishing-targets/{target_id}", response_model=PublishingTargetRecord)
+async def get_publishing_target(
+    target_id: str,
+    role_ctx: Tuple[Optional[UserRole], Optional[str], Optional[str]] = Depends(get_user_role),
+    service: PublishingService = Depends(get_publishing_service),
+):
+    """Get a single publishing target."""
+    role, user_id, org_id = role_ctx
+
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Organization ID required")
+
+    try:
+        target = await service.get_publishing_target(target_id, org_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Publishing target not found")
+        return target
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get publishing target: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get publishing target: {str(e)}")
+
+
+@router.post("/publishing-targets", response_model=PublishingTargetRecord)
+async def create_publishing_target(
+    request: CreatePublishingTargetRequest,
+    role_ctx: Tuple[UserRole, str, str] = Depends(require_role([UserRole.admin, UserRole.owner, UserRole.system_admin, UserRole.super_admin])),
+    service: PublishingService = Depends(get_publishing_service),
+):
+    """Create a new publishing target."""
+    role, user_id, org_id = role_ctx
+
+    if request.org_id != org_id:
+        raise HTTPException(status_code=403, detail="Cannot create publishing target for different organization")
+
+    try:
+        # attach metadata for audit
+        if not request.metadata:
+            request.metadata = {}
+        request.metadata["created_by"] = user_id
+        return await service.create_publishing_target(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create publishing target: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create publishing target: {str(e)}")
+
+
+@router.patch("/publishing-targets/{target_id}", response_model=PublishingTargetRecord)
+async def update_publishing_target(
+    target_id: str,
+    request: UpdatePublishingTargetRequest,
+    role_ctx: Tuple[UserRole, str, str] = Depends(require_role([UserRole.admin, UserRole.owner, UserRole.system_admin, UserRole.super_admin])),
+    service: PublishingService = Depends(get_publishing_service),
+):
+    """Update an existing publishing target."""
+    role, user_id, org_id = role_ctx
+
+    try:
+        if request.metadata is None:
+            request.metadata = {}
+        request.metadata["updated_by"] = user_id
+        return await service.update_publishing_target(target_id, org_id, request)
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Failed to update publishing target: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update publishing target: {str(e)}")
+
+
+@router.delete("/publishing-targets/{target_id}")
+async def delete_publishing_target(
+    target_id: str,
+    role_ctx: Tuple[UserRole, str, str] = Depends(require_role([UserRole.admin, UserRole.owner, UserRole.system_admin, UserRole.super_admin])),
+    service: PublishingService = Depends(get_publishing_service),
+):
+    """Soft-delete a publishing target."""
+    role, user_id, org_id = role_ctx
+
+    try:
+        success = await service.delete_publishing_target(target_id, org_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete publishing target")
+        return {"success": True, "target_id": target_id}
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Failed to delete publishing target: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete publishing target: {str(e)}")
 
 
 # Publishing Endpoint
