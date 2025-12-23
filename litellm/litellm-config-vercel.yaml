@@ -1,0 +1,53 @@
+# LiteLLM Configuration - Vercel AI Gateway Integration
+# This routes all AI requests through Vercel AI Gateway for centralized management
+
+model_list:
+  # OpenAI Models via Vercel AI Gateway
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_base: ${VERCEL_AI_GATEWAY_URL}  # e.g., https://your-app.vercel.app/api/ai-gateway
+      api_key: os.environ/VERCEL_AI_GATEWAY_KEY
+      custom_llm_provider: openai  # Tells LiteLLM this is OpenAI-compatible
+      
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_base: ${VERCEL_AI_GATEWAY_URL}
+      api_key: os.environ/VERCEL_AI_GATEWAY_KEY
+      custom_llm_provider: openai
+      
+  # Anthropic Models via Vercel AI Gateway
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_base: ${VERCEL_AI_GATEWAY_URL}
+      api_key: os.environ/VERCEL_AI_GATEWAY_KEY
+      custom_llm_provider: anthropic
+
+litellm_settings:
+  # Enable caching
+  cache: true
+  cache_params:
+    type: redis
+    host: ${REDIS_HOST:-localhost}
+    port: ${REDIS_PORT:-6379}
+    password: ${REDIS_PASSWORD:-}
+    ttl: 3600
+    
+  # Logging and debugging
+  set_verbose: true  # Enable for debugging Vercel connection
+  log_requests: true
+  
+  # Track requests going through Vercel
+  success_callback: ["custom_callback"]
+  
+  # Timeouts
+  request_timeout: 300
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  enable_admin_ui: true
+  health_check_path: "/health"
+
