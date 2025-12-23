@@ -82,3 +82,54 @@ export function useCheckQuality() {
   });
 }
 
+// Secrets sync mutation
+export function useSyncSecrets() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: async (request: import('./client').SecretSyncRequest) => {
+      const { data, error } = await api.syncSecrets(request);
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      // Invalidate secrets list
+      queryClient.invalidateQueries({ queryKey: ['secrets'] });
+    },
+  });
+}
+
+// List secrets query
+export function useSecrets() {
+  return useQuery({
+    queryKey: ['secrets'],
+    queryFn: async () => {
+      const { data, error } = await api.listSecrets();
+      if (error) throw error;
+      return data;
+    },
+  });
+}
+
+// Create/update secret mutation
+export function useCreateOrUpdateSecret() {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: async ({ name, value, labels }: { 
+      name: string; 
+      value: string; 
+      labels?: Record<string, string>;
+    }) => {
+      const { data, error } = await api.createOrUpdateSecret(name, { value, labels });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      // Invalidate secrets list and config
+      queryClient.invalidateQueries({ queryKey: ['secrets'] });
+      queryClient.invalidateQueries({ queryKey: ['config'] });
+    },
+  });
+}
+

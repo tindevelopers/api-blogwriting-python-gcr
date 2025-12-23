@@ -64,6 +64,31 @@ class SecretCreateRequest(BaseModel):
     labels: Dict[str, str] = Field(default_factory=dict)
 
 
+class SecretSyncRequest(BaseModel):
+    """Request model for secrets sync."""
+    source: str = Field(default="google_secret_manager", description="Source of secrets")
+    target: str = Field(default="application", description="Target destination")
+    secret_names: Optional[List[str]] = Field(default=None, description="Specific secrets to sync (None = all)")
+    dry_run: bool = Field(default=False, description="Preview without syncing")
+
+
+class SecretSyncResult(BaseModel):
+    """Result of a single secret sync."""
+    name: str
+    status: str  # 'synced', 'failed', 'skipped'
+    version: Optional[str] = None
+    error: Optional[str] = None
+
+
+class SecretSyncResponse(BaseModel):
+    """Response model for secrets sync."""
+    synced_count: int
+    synced_secrets: List[SecretSyncResult]
+    failed: List[SecretSyncResult]
+    timestamp: str
+    synced_by: str
+
+
 class EnvVarUpdate(BaseModel):
     """Environment variable update request."""
     variables: Dict[str, str]
@@ -296,6 +321,10 @@ async def create_or_update_secret(
     
     If the secret doesn't exist, it will be created.
     If it exists, a new version will be added.
+    
+    **Auto-Sync:** After creating/updating in Secret Manager,
+    this endpoint automatically syncs the secret to the application
+    environment, making it immediately available.
     """
     try:
         client = get_secret_manager_client()
@@ -322,22 +351,42 @@ async def create_or_update_secret(
             action = "secret_create"
         
         # Add new version
-        client.add_secret_version(
+        version_response = client.add_secret_version(
             request={
                 "parent": secret_path,
                 "payload": {"data": data.value.encode("UTF-8")}
             }
         )
         
+        version = version_response.name.split("/")[-1]
+        
+        # AUTO-SYNC: Make secret available to application immediately
+        os.environ[name] = data.value
+        logger.info(f"Auto-synced secret '{name}' to application environment")
+        
+        # Sync metadata to Firestore
+        try:
+            await sync_secret_metadata(name, version)
+        except Exception as meta_error:
+            logger.warning(f"Failed to sync metadata: {meta_error}")
+        
+        # Reload application config to pick up new secret
+        try:
+            await reload_application_config()
+        except Exception as reload_error:
+            logger.warning(f"Failed to reload config: {reload_error}")
+        
         await log_admin_action(
             admin["id"], action, "secret", name,
-            None, {"labels": data.labels}, request
+            None, {"labels": data.labels, "auto_synced": True, "version": version}, request
         )
         
         return {
             "name": name,
             "action": "created" if action == "secret_create" else "updated",
-            "updated_by": admin["email"],
+            "version": version,
+            "synced": True,  # Indicates auto-sync occurred
+            "updated_by": admin.get("email", admin.get("id", "unknown")),
             "updated_at": datetime.utcnow().isoformat()
         }
         
@@ -384,6 +433,240 @@ async def delete_secret(
     except Exception as e:
         logger.error(f"Failed to delete secret: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/secrets/sync", response_model=SecretSyncResponse)
+async def sync_secrets(
+    data: SecretSyncRequest,
+    admin: Dict = Depends(require_admin),
+    request: Request = None
+):
+    """
+    Sync secrets from Google Secret Manager to application.
+    
+    Fetches secrets from Google Secret Manager and makes them available
+    to the application by loading them into environment variables.
+    
+    **Use Cases:**
+    - Initial deployment: Sync all secrets on first startup
+    - Refresh: Update secrets after changes in Secret Manager
+    - Selective: Sync only specific secrets that changed
+    
+    **Features:**
+    - Dry-run mode for preview
+    - Selective or bulk sync
+    - Audit logging
+    - Error handling per secret
+    
+    **Security:**
+    - Requires admin authentication
+    - All operations audit logged
+    - Permissions validated
+    
+    Returns:
+        SecretSyncResponse with synced_count and details per secret
+    """
+    try:
+        client = get_secret_manager_client()
+        project_id = get_project_id()
+        parent = f"projects/{project_id}"
+        
+        synced_secrets = []
+        failed_secrets = []
+        
+        # Determine which secrets to sync
+        if data.secret_names:
+            # Sync specific secrets
+            secrets_to_sync = data.secret_names
+            logger.info(f"Syncing {len(secrets_to_sync)} specific secrets (dry_run={data.dry_run})")
+        else:
+            # Sync all secrets
+            try:
+                all_secrets = client.list_secrets(request={"parent": parent})
+                secrets_to_sync = [secret.name.split("/")[-1] for secret in all_secrets]
+                logger.info(f"Syncing all {len(secrets_to_sync)} secrets (dry_run={data.dry_run})")
+            except Exception as e:
+                logger.error(f"Failed to list secrets: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to list secrets: {str(e)}")
+        
+        # Sync each secret
+        for secret_name in secrets_to_sync:
+            try:
+                secret_path = f"{parent}/secrets/{secret_name}/versions/latest"
+                
+                # Get secret value from Secret Manager
+                response = client.access_secret_version(request={"name": secret_path})
+                value = response.payload.data.decode("UTF-8")
+                version = response.name.split("/")[-1]
+                
+                if not data.dry_run:
+                    # Sync to application environment
+                    os.environ[secret_name] = value
+                    logger.info(f"Synced secret '{secret_name}' version {version} to environment")
+                    
+                    # Optional: Save metadata to Firestore (not the value itself)
+                    try:
+                        await sync_secret_metadata(secret_name, version)
+                    except Exception as meta_error:
+                        logger.warning(f"Failed to sync metadata for {secret_name}: {meta_error}")
+                
+                synced_secrets.append(SecretSyncResult(
+                    name=secret_name,
+                    status="synced" if not data.dry_run else "would_sync",
+                    version=version
+                ))
+                
+                logger.debug(f"Secret {secret_name} {'synced' if not data.dry_run else 'would sync'}")
+                
+            except google_exceptions.NotFound:
+                error_msg = f"Secret '{secret_name}' not found in Secret Manager"
+                logger.warning(error_msg)
+                failed_secrets.append(SecretSyncResult(
+                    name=secret_name,
+                    status="failed",
+                    error=error_msg
+                ))
+            except google_exceptions.PermissionDenied:
+                error_msg = f"Permission denied for secret '{secret_name}'"
+                logger.error(error_msg)
+                failed_secrets.append(SecretSyncResult(
+                    name=secret_name,
+                    status="failed",
+                    error=error_msg
+                ))
+            except Exception as e:
+                error_msg = f"Error syncing '{secret_name}': {str(e)}"
+                logger.error(error_msg)
+                failed_secrets.append(SecretSyncResult(
+                    name=secret_name,
+                    status="failed",
+                    error=str(e)
+                ))
+        
+        # Reload application config if secrets were synced
+        if not data.dry_run and synced_secrets:
+            try:
+                await reload_application_config()
+                logger.info("Application configuration reloaded after secrets sync")
+            except Exception as reload_error:
+                logger.warning(f"Failed to reload application config: {reload_error}")
+        
+        # Audit log the sync operation
+        await log_admin_action(
+            admin["id"], 
+            "secrets_sync", 
+            "secrets", 
+            f"sync_operation",
+            None,
+            {
+                "synced_count": len(synced_secrets),
+                "failed_count": len(failed_secrets),
+                "dry_run": data.dry_run,
+                "total_requested": len(secrets_to_sync),
+                "secret_names": secrets_to_sync if len(secrets_to_sync) <= 10 else f"{len(secrets_to_sync)} secrets"
+            },
+            request
+        )
+        
+        logger.info(
+            f"Secrets sync complete: {len(synced_secrets)} synced, {len(failed_secrets)} failed "
+            f"(dry_run={data.dry_run}) by {admin['email']}"
+        )
+        
+        return SecretSyncResponse(
+            synced_count=len(synced_secrets),
+            synced_secrets=synced_secrets,
+            failed=failed_secrets,
+            timestamp=datetime.utcnow().isoformat(),
+            synced_by=admin.get("email", admin.get("id", "unknown"))
+        )
+        
+    except HTTPException:
+        raise
+    except google_exceptions.PermissionDenied:
+        raise HTTPException(status_code=403, detail="Permission denied to access Secret Manager")
+    except Exception as e:
+        logger.error(f"Secrets sync failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Secrets sync failed: {str(e)}")
+
+
+async def sync_secret_metadata(secret_name: str, version: str):
+    """
+    Sync secret metadata to Firestore (not the secret value itself).
+    
+    This allows the frontend to see which secrets exist and their versions,
+    without exposing the actual secret values.
+    
+    Args:
+        secret_name: Name of the secret
+        version: Version number from Secret Manager
+    """
+    try:
+        # Only sync metadata if Firestore is available
+        if not GOOGLE_CLOUD_AVAILABLE:
+            return
+        
+        from google.cloud import firestore
+        
+        db = firestore.Client()
+        doc_ref = db.collection('secrets_metadata').document(secret_name)
+        
+        doc_ref.set({
+            'name': secret_name,
+            'version': version,
+            'synced_at': firestore.SERVER_TIMESTAMP,
+            'source': 'google_secret_manager',
+        }, merge=True)
+        
+        logger.debug(f"Synced metadata for secret '{secret_name}' to Firestore")
+        
+    except Exception as e:
+        logger.warning(f"Failed to sync metadata to Firestore for {secret_name}: {e}")
+        # Don't fail the entire sync if Firestore update fails
+
+
+async def reload_application_config():
+    """
+    Reload application configuration after secrets sync.
+    
+    This ensures the application picks up new secret values without restart.
+    Reloads various service configurations that depend on secrets.
+    """
+    try:
+        # Reload AI Gateway configuration if available
+        try:
+            from ...services.ai_gateway import initialize_ai_gateway
+            
+            litellm_url = os.getenv("LITELLM_PROXY_URL")
+            litellm_key = os.getenv("LITELLM_API_KEY")
+            
+            if litellm_url or litellm_key:
+                initialize_ai_gateway(
+                    base_url=litellm_url,
+                    api_key=litellm_key,
+                )
+                logger.debug("AI Gateway config reloaded")
+        except Exception as e:
+            logger.warning(f"Failed to reload AI Gateway config: {e}")
+        
+        # Reload DataForSEO client if available
+        try:
+            from ...integrations.dataforseo_integration import DataForSEOClient
+            
+            dataforseo_key = os.getenv("DATAFORSEO_API_KEY")
+            dataforseo_secret = os.getenv("DATAFORSEO_API_SECRET")
+            
+            if dataforseo_key or dataforseo_secret:
+                # Client will be re-initialized on next use with new credentials
+                logger.debug("DataForSEO credentials updated")
+        except Exception as e:
+            logger.warning(f"Failed to reload DataForSEO config: {e}")
+        
+        logger.info("Application config reload completed")
+        
+    except Exception as e:
+        logger.error(f"Error during application config reload: {e}")
+        # Don't fail the sync if reload fails
 
 
 # ============================================================================

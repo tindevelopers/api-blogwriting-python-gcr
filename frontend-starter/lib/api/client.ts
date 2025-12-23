@@ -41,6 +41,29 @@ export const api = {
     client.GET('/api/v1/blog/jobs/{job_id}', {
       params: { path: { job_id: jobId } }
     }),
+  
+  // Secrets Management (Admin only)
+  listSecrets: () =>
+    client.GET('/api/v1/admin/secrets'),
+  
+  getSecret: (name: string) =>
+    client.GET('/api/v1/admin/secrets/{name}', {
+      params: { path: { name } }
+    }),
+  
+  createOrUpdateSecret: (name: string, body: SecretCreateRequest) =>
+    client.PUT('/api/v1/admin/secrets/{name}', {
+      params: { path: { name } },
+      body,
+    }),
+  
+  syncSecrets: (body: SecretSyncRequest) =>
+    client.POST('/api/v1/admin/secrets/sync', { body }),
+  
+  deleteSecret: (name: string) =>
+    client.DELETE('/api/v1/admin/secrets/{name}', {
+      params: { path: { name } }
+    }),
 };
 
 // Type exports
@@ -89,6 +112,33 @@ export type KeywordAnalysisRequest = {
   keywords: string[];
   location?: string;
   language?: string;
+};
+
+export type SecretCreateRequest = {
+  value: string;
+  labels?: Record<string, string>;
+};
+
+export type SecretSyncRequest = {
+  source?: string;
+  target?: string;
+  secret_names?: string[];
+  dry_run?: boolean;
+};
+
+export type SecretSyncResult = {
+  name: string;
+  status: string;
+  version?: string;
+  error?: string;
+};
+
+export type SecretSyncResponse = {
+  synced_count: number;
+  synced_secrets: SecretSyncResult[];
+  failed: SecretSyncResult[];
+  timestamp: string;
+  synced_by: string;
 };
 
 export default client;
