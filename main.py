@@ -101,6 +101,7 @@ from src.blog_writer_sdk.api.user_management import router as user_management_ro
 from src.blog_writer_sdk.api.field_enhancement import router as field_enhancement_router
 from src.blog_writer_sdk.api.publishing_management import router as publishing_router
 from src.blog_writer_sdk.api.admin_management import router as admin_router
+from src.blog_writer_sdk.api.content_validation import router as content_validation_router
 from src.blog_writer_sdk.api.keyword_streaming import (
     KeywordSearchStage,
     create_stage_update,
@@ -875,6 +876,8 @@ app.include_router(field_enhancement_router)
 app.include_router(publishing_router)
 # Include admin management router (secrets, logs, usage, jobs)
 app.include_router(admin_router)
+# Include content validation router
+app.include_router(content_validation_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
@@ -1671,6 +1674,19 @@ async def generate_blog_enhanced(
         if request.custom_instructions:
             additional_context["custom_instructions"] = request.custom_instructions
         
+        # Add multi-site support parameters (December 2025)
+        if request.site_id:
+            additional_context["site_id"] = request.site_id
+        if request.site_domain:
+            additional_context["site_domain"] = request.site_domain
+        if request.internal_link_targets:
+            # Convert Pydantic models to dicts for pipeline
+            additional_context["internal_link_targets"] = [
+                target.dict() if hasattr(target, 'dict') else target
+                for target in request.internal_link_targets
+            ]
+        additional_context["max_internal_links"] = request.max_internal_links
+        
         # Add product research requirements if enabled
         if request.include_product_research:
             additional_context["product_research_requirements"] = {
@@ -1840,9 +1856,22 @@ async def generate_blog_enhanced(
         if additional_context.get("brand_recommendations"):
             brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
         
+        # Apply content sanitization to remove LLM artifacts (December 2025)
+        from src.blog_writer_sdk.utils.content_sanitizer import sanitize_llm_output
+        final_content, artifacts_removed = sanitize_llm_output(final_content)
+        sanitization_applied = len(artifacts_removed) > 0
+        if sanitization_applied:
+            logger.info(f"Content sanitization applied, artifacts removed: {artifacts_removed}")
+        
         # Extract content metadata for frontend processing (unified + remark + rehype support)
         content_metadata = extract_content_metadata(final_content)
         excerpt = extract_excerpt(final_content, max_length=250)
+        
+        # Sanitize excerpt for meta description quality
+        from src.blog_writer_sdk.utils.content_sanitizer import sanitize_excerpt
+        if excerpt:
+            primary_keyword = request.keywords[0] if request.keywords else None
+            excerpt = sanitize_excerpt(excerpt, primary_keyword)
         
         # Enhance SEO metadata with OG and Twitter tags
         enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1932,6 +1961,35 @@ async def generate_blog_enhanced(
             generation_time=pipeline_result.generation_time
         )
         
+        # Build internal links metadata (December 2025 enhanced format)
+        internal_links_metadata_dict = pipeline_result.seo_metadata.get("internal_links_metadata")
+        internal_links_metadata = None
+        if internal_links_metadata_dict:
+            from src.blog_writer_sdk.models.enhanced_blog_models import InternalLinksMetadata, InsertedInternalLink
+            try:
+                inserted_links = [
+                    InsertedInternalLink(**link) if isinstance(link, dict) else link
+                    for link in internal_links_metadata_dict.get("inserted", [])
+                ]
+                internal_links_metadata = InternalLinksMetadata(
+                    inserted=inserted_links,
+                    available_count=internal_links_metadata_dict.get("available_count", 0),
+                    inserted_count=internal_links_metadata_dict.get("inserted_count", 0),
+                    max_allowed=internal_links_metadata_dict.get("max_allowed", 5)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to build internal links metadata: {e}")
+        
+        # Build site context for response
+        site_context = None
+        if request.site_id or request.site_domain:
+            from src.blog_writer_sdk.models.enhanced_blog_models import SiteContext
+            site_context = SiteContext(
+                site_id=request.site_id,
+                site_domain=request.site_domain,
+                total_pages=len(request.internal_link_targets) if request.internal_link_targets else 0
+            )
+        
         return EnhancedBlogGenerationResponse(
             title=pipeline_result.meta_title or request.topic,
             content=final_content,
@@ -1947,6 +2005,8 @@ async def generate_blog_enhanced(
             generation_time=pipeline_result.generation_time,
             seo_metadata=enhanced_seo_metadata,
             internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+            internal_links_metadata=internal_links_metadata,
+            site_context=site_context,
             quality_score=pipeline_result.quality_score,
             quality_dimensions=quality_dimensions,
             structured_data=enhanced_structured_data,
@@ -1956,7 +2016,10 @@ async def generate_blog_enhanced(
             brand_recommendations=brand_recommendations,
             success=True,
             warnings=all_warnings,  # Include API warnings
-            progress_updates=progress_updates  # Include progress updates for frontend
+            progress_updates=progress_updates,  # Include progress updates for frontend
+            sanitization_applied=sanitization_applied,
+            artifacts_removed=artifacts_removed,
+            image_positions=[]  # Images handled by frontend; positions can be added via content metadata
         )
         
     except Exception as e:
@@ -2300,6 +2363,18 @@ async def blog_generation_worker(request: Dict[str, Any]):
             if blog_request.custom_instructions:
                 additional_context["custom_instructions"] = blog_request.custom_instructions
             
+            # Add multi-site support parameters (December 2025)
+            if blog_request.site_id:
+                additional_context["site_id"] = blog_request.site_id
+            if blog_request.site_domain:
+                additional_context["site_domain"] = blog_request.site_domain
+            if blog_request.internal_link_targets:
+                additional_context["internal_link_targets"] = [
+                    target.dict() if hasattr(target, 'dict') else target
+                    for target in blog_request.internal_link_targets
+                ]
+            additional_context["max_internal_links"] = blog_request.max_internal_links
+            
             # Add product research requirements if enabled
             if blog_request.include_product_research:
                 additional_context["product_research_requirements"] = {
@@ -2449,9 +2524,21 @@ async def blog_generation_worker(request: Dict[str, Any]):
             if additional_context.get("brand_recommendations"):
                 brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
             
+            # Apply content sanitization (December 2025)
+            from src.blog_writer_sdk.utils.content_sanitizer import sanitize_llm_output, sanitize_excerpt as _sanitize_excerpt
+            final_content, artifacts_removed = sanitize_llm_output(final_content)
+            sanitization_applied = len(artifacts_removed) > 0
+            if sanitization_applied:
+                logger.info(f"Worker: Content sanitization applied, artifacts removed: {artifacts_removed}")
+            
             # Extract content metadata
             content_metadata = extract_content_metadata(final_content)
             excerpt = extract_excerpt(final_content, max_length=250)
+            
+            # Sanitize excerpt
+            if excerpt:
+                primary_keyword = blog_request.keywords[0] if blog_request.keywords else None
+                excerpt = _sanitize_excerpt(excerpt, primary_keyword)
             
             # Enhance SEO metadata
             enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -2523,6 +2610,35 @@ async def blog_generation_worker(request: Dict[str, Any]):
             if citation_warnings:
                 all_warnings.extend(citation_warnings)
             
+            # Build internal links metadata (December 2025)
+            internal_links_metadata_dict = pipeline_result.seo_metadata.get("internal_links_metadata")
+            internal_links_metadata = None
+            if internal_links_metadata_dict:
+                from src.blog_writer_sdk.models.enhanced_blog_models import InternalLinksMetadata, InsertedInternalLink
+                try:
+                    inserted_links = [
+                        InsertedInternalLink(**link) if isinstance(link, dict) else link
+                        for link in internal_links_metadata_dict.get("inserted", [])
+                    ]
+                    internal_links_metadata = InternalLinksMetadata(
+                        inserted=inserted_links,
+                        available_count=internal_links_metadata_dict.get("available_count", 0),
+                        inserted_count=internal_links_metadata_dict.get("inserted_count", 0),
+                        max_allowed=internal_links_metadata_dict.get("max_allowed", 5)
+                    )
+                except Exception as e:
+                    logger.warning(f"Worker: Failed to build internal links metadata: {e}")
+            
+            # Build site context
+            site_context = None
+            if blog_request.site_id or blog_request.site_domain:
+                from src.blog_writer_sdk.models.enhanced_blog_models import SiteContext
+                site_context = SiteContext(
+                    site_id=blog_request.site_id,
+                    site_domain=blog_request.site_domain,
+                    total_pages=len(blog_request.internal_link_targets) if blog_request.internal_link_targets else 0
+                )
+            
             # Create response
             response = EnhancedBlogGenerationResponse(
                 title=pipeline_result.meta_title or blog_request.topic,
@@ -2539,6 +2655,8 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 generation_time=pipeline_result.generation_time,
                 seo_metadata=enhanced_seo_metadata,
                 internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+                internal_links_metadata=internal_links_metadata,
+                site_context=site_context,
                 quality_score=pipeline_result.quality_score,
                 quality_dimensions=quality_dimensions,
                 structured_data=enhanced_structured_data,
@@ -2547,8 +2665,11 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 generated_images=None,  # Image generation moved to separate endpoint
                 brand_recommendations=brand_recommendations,
                 success=True,
-                warnings=[],  # Image generation warnings removed (use separate endpoint)
-                progress_updates=progress_updates
+                warnings=all_warnings,
+                progress_updates=progress_updates,
+                sanitization_applied=sanitization_applied,
+                artifacts_removed=artifacts_removed,
+                image_positions=[]
             )
             
             # Update job with result

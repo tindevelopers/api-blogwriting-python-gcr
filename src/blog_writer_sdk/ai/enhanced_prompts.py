@@ -352,17 +352,30 @@ LINKING REQUIREMENTS:
    - Don't over-link (maximum 1-2 links per paragraph)
    - Ensure links are relevant to the surrounding content
 
-IMAGE PLACEMENT:
-1. Add image placeholder after H1 and introduction: ![Featured image description](image-url)
-   - Use descriptive alt text for SEO
-   - Place after first paragraph following H1
-   
-2. Add image placeholders before major H2 sections: ![Section image description](image-url)
-   - Use relevant images that enhance understanding
-   - Include descriptive alt text
-   - Place before H2 heading, not after
+IMAGE HANDLING:
+- DO NOT include image placeholders in the content
+- DO NOT use markdown image syntax like ![alt](url)
+- Images will be added separately by the frontend after generation
+- Focus on written content only
 
-Generate comprehensive, well-researched content that readers will find valuable and search engines will recognize as authoritative."""
+CRITICAL OUTPUT RULES - FOLLOW EXACTLY:
+1. OUTPUT ONLY THE BLOG CONTENT - nothing else
+2. DO NOT include ANY preamble such as:
+   - "Here's the enhanced version..."
+   - "Here's the blog post..."
+   - "I'll provide..."
+   - "Here's a comprehensive..."
+   - "Addressing the..."
+   - "Below is..."
+   - "The following..."
+3. DO NOT include meta-commentary about the content
+4. DO NOT include sections like "Enhancements Made", "Key Points", or "Summary of Changes" at the end
+5. DO NOT include "Last updated", "Note:", or similar metadata
+6. START DIRECTLY with the blog title (# Title) as the very first line
+7. END DIRECTLY with the conclusion paragraph - no sign-offs, no summaries of changes made
+8. NO explanations before or after the content
+
+Generate comprehensive, well-researched content that readers will find valuable and search engines will recognize as authoritative. Remember: output ONLY the blog content itself."""
         
         if context:
             if context.get("sources"):
@@ -537,17 +550,33 @@ EXPERIENCE INDICATOR EXAMPLES:
 ✅ Good: "I've worked with many clients who..."
 ✅ Good: "From my own experience, I can say that..."
 
-OUTPUT REQUIREMENTS:
-- Return the enhanced version of the content
-- Maintain the original structure and length
-- Preserve all factual information
-- Improve without changing the core message
-- Add citations or source references where appropriate
-- Ensure the content reads naturally and flows well
+IMAGE HANDLING:
+- DO NOT include image placeholders in the content
+- DO NOT use markdown image syntax like ![alt](url) unless a real URL is provided
+- Strip any malformed image placeholders from the content
+- Images will be added separately by the frontend
+
+CRITICAL OUTPUT RULES - FOLLOW EXACTLY:
+1. OUTPUT ONLY THE ENHANCED BLOG CONTENT - nothing else
+2. DO NOT include ANY preamble such as:
+   - "Here's the enhanced version..."
+   - "I've enhanced the content..."
+   - "Addressing the specified tasks..."
+   - "Below is the improved content..."
+3. DO NOT include meta-commentary about what you changed
+4. DO NOT include sections like "Enhancements Made", "Changes Made", or "Key Improvements" at the end
+5. DO NOT include notes about your editing process
+6. START DIRECTLY with the blog title (# Title) as the very first line
+7. END DIRECTLY with the conclusion paragraph - no sign-offs, no change logs
+8. Maintain the original structure and length
+9. Preserve all factual information
+10. Improve without changing the core message
+11. Add citations or source references where appropriate
+12. Ensure the content reads naturally and flows well
 - CRITICAL: Reading ease MUST be 60-70 after enhancement
 - CRITICAL: Include 2-3 first-hand experience indicators per 1000 words
 
-Focus on making the content more authoritative, engaging, and valuable while maintaining accuracy and readability. Prioritize readability improvements - content must be easy to read (60-70 reading ease)."""
+Focus on making the content more authoritative, engaging, and valuable. Output ONLY the enhanced blog content itself - no explanations or commentary."""
         
         if context:
             if context.get("readability_issues"):

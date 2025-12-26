@@ -285,22 +285,25 @@ class AIGateway:
             user_id: Optional user ID
         
         Returns:
-            Dict with polished_content and metadata
+            Dict with polished_content, sanitization_applied, artifacts_removed, and metadata
         """
         start_time = time.time()
         
-        # First, strip artifacts using regex (fast, no AI needed)
-        cleaned_content = self._strip_artifacts(content)
-        artifacts_removed = len(content) - len(cleaned_content)
+        # First, strip artifacts using comprehensive sanitizer (fast, no AI needed)
+        cleaned_content, artifacts_list = self._strip_artifacts_with_report(content)
+        artifacts_removed_count = len(content) - len(cleaned_content)
+        sanitization_applied = len(artifacts_list) > 0
         
         # If minimal changes needed, skip AI polishing
-        if artifacts_removed < 50 and len(cleaned_content) > 500:
+        if artifacts_removed_count < 50 and len(cleaned_content) > 500:
             # Quick structural checks only
             return {
                 "polished_content": cleaned_content,
                 "original_length": len(content),
                 "polished_length": len(cleaned_content),
-                "artifacts_removed": artifacts_removed,
+                "artifacts_removed": artifacts_list,
+                "artifacts_removed_count": artifacts_removed_count,
+                "sanitization_applied": sanitization_applied,
                 "ai_polished": False
             }
         
@@ -337,11 +340,17 @@ Return ONLY the polished content, no explanations or meta-commentary."""
             
             latency_ms = int((time.time() - start_time) * 1000)
             
+            # Apply sanitization to AI-polished content as well (in case AI added artifacts)
+            final_content, final_artifacts = self._strip_artifacts_with_report(polished)
+            all_artifacts = artifacts_list + final_artifacts
+            
             return {
-                "polished_content": polished,
+                "polished_content": final_content,
                 "original_length": len(content),
-                "polished_length": len(polished),
-                "artifacts_removed": artifacts_removed,
+                "polished_length": len(final_content),
+                "artifacts_removed": all_artifacts,
+                "artifacts_removed_count": len(content) - len(final_content),
+                "sanitization_applied": True,
                 "ai_polished": True,
                 "latency_ms": latency_ms
             }
@@ -353,7 +362,9 @@ Return ONLY the polished content, no explanations or meta-commentary."""
                 "polished_content": cleaned_content,
                 "original_length": len(content),
                 "polished_length": len(cleaned_content),
-                "artifacts_removed": artifacts_removed,
+                "artifacts_removed": artifacts_list,
+                "artifacts_removed_count": artifacts_removed_count,
+                "sanitization_applied": sanitization_applied,
                 "ai_polished": False,
                 "error": str(e)
             }
@@ -362,7 +373,7 @@ Return ONLY the polished content, no explanations or meta-commentary."""
         """
         Strip AI artifacts from content.
         
-        Python port of stripArtifacts.ts from frontend.
+        Uses the comprehensive content_sanitizer module for thorough artifact removal.
         
         Args:
             content: Raw content with potential artifacts
@@ -373,35 +384,141 @@ Return ONLY the polished content, no explanations or meta-commentary."""
         if not content:
             return content
         
-        # Remove thinking tags and content
-        patterns = [
-            r'<thinking>.*?</thinking>',
-            r'<thought>.*?</thought>',
-            r'<reasoning>.*?</reasoning>',
-            r'<reflection>.*?</reflection>',
-            r'<internal>.*?</internal>',
-            r'\[THINKING\].*?\[/THINKING\]',
-            r'\[THOUGHT\].*?\[/THOUGHT\]',
-            r'\*\*Thinking:\*\*.*?(?=\n\n|\Z)',
-            r'\*\*Internal:\*\*.*?(?=\n\n|\Z)',
-            r'---\s*thinking\s*---.*?---\s*end\s*thinking\s*---',
+        # Use comprehensive sanitizer
+        from ..utils.content_sanitizer import sanitize_llm_output
+        cleaned, _ = sanitize_llm_output(content)
+        return cleaned
+    
+    def _strip_artifacts_with_report(self, content: str) -> tuple:
+        """
+        Strip AI artifacts from content and return a report of what was removed.
+        
+        Args:
+            content: Raw content with potential artifacts
+            
+        Returns:
+            Tuple of (cleaned_content, artifacts_removed_list)
+        """
+        if not content:
+            return content, []
+        
+        from ..utils.content_sanitizer import sanitize_llm_output
+        return sanitize_llm_output(content)
+    
+    async def generate_excerpt(
+        self,
+        content: str,
+        org_id: str,
+        primary_keyword: Optional[str] = None,
+        user_id: Optional[str] = None,
+        max_length: int = 160
+    ) -> Dict[str, Any]:
+        """
+        Generate a high-quality excerpt/meta description using a dedicated LLM call.
+        
+        This creates a compelling meta description that:
+        - Is exactly 150-160 characters
+        - Includes the primary keyword naturally
+        - Has a call-to-action or engaging hook
+        - Ends with proper punctuation (not cut off mid-sentence)
+        
+        Args:
+            content: Full blog content to summarize
+            org_id: Organization ID
+            primary_keyword: Primary keyword to include
+            user_id: Optional user ID
+            max_length: Maximum character length (default 160)
+            
+        Returns:
+            Dict with excerpt, character_count, and metadata
+        """
+        # Extract first 1500 chars for context (introduction + first section)
+        content_preview = content[:1500] if len(content) > 1500 else content
+        
+        keyword_instruction = f"- Include the keyword '{primary_keyword}' naturally" if primary_keyword else ""
+        
+        excerpt_prompt = f"""Create a compelling meta description for this blog post.
+
+REQUIREMENTS:
+- EXACTLY 150-160 characters (this is critical for SEO)
+- Write a complete, engaging sentence
+- Include a hook or value proposition
+- End with proper punctuation (period, exclamation, or question mark)
+- DO NOT end mid-sentence or use ellipsis
+{keyword_instruction}
+
+CONTENT:
+{content_preview}
+
+OUTPUT ONLY the meta description text, nothing else. No quotes, no explanation, just the text."""
+
+        messages = [
+            {
+                "role": "system", 
+                "content": "You are an SEO specialist. Output only the meta description text, exactly 150-160 characters."
+            },
+            {"role": "user", "content": excerpt_prompt}
         ]
         
-        cleaned = content
-        for pattern in patterns:
-            cleaned = re.sub(pattern, '', cleaned, flags=re.DOTALL | re.IGNORECASE)
-        
-        # Remove multiple blank lines
-        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
-        
-        # Remove leading/trailing whitespace from lines
-        lines = [line.rstrip() for line in cleaned.split('\n')]
-        cleaned = '\n'.join(lines)
-        
-        # Trim overall whitespace
-        cleaned = cleaned.strip()
-        
-        return cleaned
+        try:
+            excerpt = await self.generate_content(
+                messages=messages,
+                org_id=org_id,
+                user_id=user_id or "system",
+                model="gpt-4o-mini",  # Fast and efficient for short outputs
+                temperature=0.5,
+                max_tokens=100,
+                metadata={"operation": "excerpt_generation"}
+            )
+            
+            # Clean and sanitize the excerpt
+            from ..utils.content_sanitizer import sanitize_excerpt
+            cleaned_excerpt = sanitize_excerpt(excerpt.strip(), primary_keyword)
+            
+            # Ensure proper length
+            if len(cleaned_excerpt) > max_length:
+                # Find last complete sentence within limit
+                for end_char in ['. ', '! ', '? ']:
+                    last_pos = cleaned_excerpt[:max_length-3].rfind(end_char)
+                    if last_pos > 100:
+                        cleaned_excerpt = cleaned_excerpt[:last_pos + 1]
+                        break
+                else:
+                    # No sentence end found, truncate at word boundary
+                    cleaned_excerpt = cleaned_excerpt[:max_length-3].rsplit(' ', 1)[0] + '...'
+            
+            return {
+                "excerpt": cleaned_excerpt,
+                "character_count": len(cleaned_excerpt),
+                "within_limit": len(cleaned_excerpt) <= max_length,
+                "contains_keyword": primary_keyword.lower() in cleaned_excerpt.lower() if primary_keyword else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Excerpt generation failed: {e}", exc_info=True)
+            
+            # Fallback: Extract first sentence from content
+            from ..utils.content_sanitizer import sanitize_excerpt
+            
+            # Find first paragraph (skip title)
+            lines = content.split('\n')
+            first_para = ""
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith('#') and len(line) > 50:
+                    first_para = line
+                    break
+            
+            fallback = sanitize_excerpt(first_para[:200], primary_keyword)
+            
+            return {
+                "excerpt": fallback,
+                "character_count": len(fallback),
+                "within_limit": len(fallback) <= max_length,
+                "contains_keyword": primary_keyword.lower() in fallback.lower() if primary_keyword else None,
+                "is_fallback": True,
+                "error": str(e)
+            }
     
     async def check_quality(self, content: str) -> Dict[str, Any]:
         """
