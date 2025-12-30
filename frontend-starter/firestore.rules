@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOrgMember(orgId) {
+      return isAuthenticated() && 
+        request.auth.token.orgId == orgId;
+    }
+    
+    function isAdmin(orgId) {
+      return isAuthenticated() && 
+        request.auth.token.role == 'admin' &&
+        request.auth.token.orgId == orgId;
+    }
+    
+    // Organization config - only admins can read/write
+    match /organizations/{orgId}/config/{document=**} {
+      allow read: if isAdmin(orgId);
+      allow write: if isAdmin(orgId);
+    }
+    
+    // Usage logs - org members can read, system can write
+    match /usage_logs/{logId} {
+      allow read: if isOrgMember(resource.data.orgId);
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Logs are immutable
+    }
+    
+    // Audit logs - only admins can read
+    match /audit_logs/{logId} {
+      allow read: if isAdmin(resource.data.orgId);
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Audit logs are immutable
+    }
+  }
+}
+

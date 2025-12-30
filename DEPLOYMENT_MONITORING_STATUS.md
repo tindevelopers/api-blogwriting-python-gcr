@@ -1,96 +1,108 @@
 # Deployment Monitoring Status
 
-## ✅ Code Pushed to GitHub
+## 🎯 Current Status
 
-**Latest Commit:** `e5d5c34` - "chore: Trigger deployment to test Cloud Build trigger"  
-**Branch:** `develop`  
-**Status:** ⏳ Waiting for Cloud Build trigger
-
----
-
-## 📊 Monitoring Results
-
-**Checks Performed:**
-- ✅ Code pushed successfully to `develop` branch
-- ✅ Monitoring scripts created and ready
-- ⚠️ No Cloud Build trigger found or configured
-- ⚠️ No build triggered for latest commit after 2+ minutes
+**Last Commit:** `2de2d6d` - Fix GSC service account key path  
+**Pushed to:** `develop` branch  
+**Cloud Build Status:** ⏳ **Not Triggered Yet**
 
 ---
 
-## 🔍 Findings
+## ✅ Fixes Applied
 
-1. **No Trigger Configured:** The Cloud Build trigger `deploy-dev-on-develop` does not appear to be configured
-2. **Previous Build:** The last build (2036d923) failed due to startup probe issues and was NOT trigger-based (no BUILD_TRIGGER_ID)
-3. **Manual Build Prevention:** The safeguard is working - it would prevent manual builds
+### 1. Syntax Errors Fixed ✅
+- **Issue:** `IndentationError` in citation generation code
+- **Fixed:** Lines 1229-1235, 1550-1618 (main endpoint), 2146-2216 (worker endpoint)
+- **Status:** Committed and pushed
 
----
-
-## 📋 Next Steps
-
-### Immediate Action Required:
-
-**Configure Cloud Build Trigger in Cloud Console:**
-
-1. Navigate to: https://console.cloud.google.com/cloud-build/triggers?project=api-ai-blog-writer
-2. Click "Create Trigger"
-3. Configure:
-   - **Name:** `deploy-dev-on-develop`
-   - **Event:** Push to a branch
-   - **Source:** Connect repository (if not already connected)
-   - **Repository:** `tindevelopers/api-blogwriting-python-gcr`
-   - **Branch:** `^develop$`
-   - **Configuration:** Cloud Build configuration file
-   - **Location:** `cloudbuild.yaml`
-   - **Substitution variables:**
-     - `_REGION` = `europe-west9`
-     - `_ENV` = `dev`
-     - `_SERVICE_NAME` = `blog-writer-api-dev`
-4. Save trigger
-
-### After Trigger Configuration:
-
-Once the trigger is configured, it will automatically fire on the next push to `develop`. To test:
-
-```bash
-# Make a small change
-echo "# Test" >> .deploy-trigger
-git add .deploy-trigger
-git commit -m "test: Trigger deployment"
-git push origin develop
-
-# Monitor the deployment
-./check_trigger_and_deploy.sh
-```
+### 2. GSC Service Account Path Fixed ✅
+- **Issue:** `File /secrets/gsc-service-account-key was not found`
+- **Root Cause:** Path mismatch - secret mounted as `GSC_SERVICE_ACCOUNT_KEY` but env var pointed to `/secrets/gsc-service-account-key`
+- **Fix:** Updated `cloudbuild.yaml` line 79 to use `/secrets/GSC_SERVICE_ACCOUNT_KEY`
+- **Status:** Committed and pushed
 
 ---
 
-## 🔒 Security Status
+## ⏳ Waiting For
 
-✅ **Manual Build Prevention:** Active  
-The `cloudbuild.yaml` includes a safeguard that checks for `BUILD_TRIGGER_ID`. Only trigger-based builds will proceed.
-
----
-
-## 📝 Monitoring Scripts Created
-
-- `check_trigger_and_deploy.sh` - Check trigger status and monitor deployment
-- `monitor_and_update.sh` - Monitor build and update GitHub status
-- `continuous_monitor.sh` - Continuous monitoring mode
-- `check_and_monitor.sh` - Check for builds and monitor progress
-
-All scripts verify `BUILD_TRIGGER_ID` to ensure only trigger-based deployments.
+### Cloud Build Trigger
+- **Expected:** Automatic trigger on push to `develop` branch
+- **Status:** Not triggered yet (5+ minutes since push)
+- **Possible Issues:**
+  - Cloud Build trigger may be disabled
+  - GitHub webhook may not be configured
+  - Trigger may need manual activation
 
 ---
 
-## 📊 Current Cloud Run Service
+## 🔍 Next Steps
 
-**Service:** `blog-writer-api-dev`  
-**Region:** `europe-west9`  
-**Status:** ✅ Running (previous deployment)  
-**Latest Revision:** `blog-writer-api-dev-00130-crz`
+1. **Verify Cloud Build Trigger:**
+   - Check if trigger exists for `develop` branch
+   - Verify trigger is enabled
+   - Check GitHub webhook configuration
+
+2. **Monitor Deployment:**
+   - Wait for Cloud Build to start
+   - Monitor build logs for errors
+   - Check Cloud Run revision status
+   - Verify service startup
+
+3. **If Trigger Doesn't Work:**
+   - Consider manual build trigger
+   - Or fix trigger configuration
 
 ---
 
-**Last Check:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")  
-**Status:** Waiting for trigger configuration
+## 📋 What to Monitor
+
+### After Build Starts:
+- ✅ Build completes successfully
+- ✅ New Cloud Run revision created
+- ✅ Revision becomes ready
+- ✅ Service starts without errors
+- ✅ No `IndentationError` or `SyntaxError`
+- ✅ GSC service account key found at correct path
+- ✅ Application startup succeeds
+
+### Success Indicators:
+- `Starting Blog Writer SDK on port 8000`
+- `Google Search Console client initialized` (if GSC access granted)
+- No `DefaultCredentialsError`
+- No `IndentationError` or `SyntaxError`
+- Health check passes
+
+---
+
+## 🚨 Known Issues Fixed
+
+1. ✅ **Syntax Errors** - Fixed indentation in citation generation
+2. ✅ **GSC Path** - Fixed service account key path mismatch
+
+---
+
+## 📝 Commits Made
+
+1. `04b036e` - Fix indentation errors in citation generation code
+2. `2de2d6d` - Fix GSC service account key path
+
+Both commits pushed to `develop` branch.
+
+---
+
+## ⏱️ Timeline
+
+- **23:41** - Fixed syntax errors, committed and pushed
+- **23:44** - Fixed GSC path, committed and pushed  
+- **23:50-23:55** - Monitoring for Cloud Build trigger (not triggered yet)
+
+---
+
+## 🔄 Current Action
+
+**Waiting for Cloud Build trigger to activate...**
+
+If trigger doesn't activate within 10 minutes, we may need to:
+1. Check trigger configuration
+2. Manually trigger build
+3. Or investigate webhook issues

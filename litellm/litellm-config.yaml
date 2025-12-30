@@ -1,0 +1,96 @@
+# LiteLLM Proxy Configuration
+# Deployed to Cloud Run as a centralized AI gateway
+# Documentation: https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+  # OpenAI Models
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      
+  - model_name: gpt-4-turbo
+    litellm_params:
+      model: openai/gpt-4-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Anthropic Models
+  - model_name: claude-3-5-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+      
+  - model_name: claude-3-haiku
+    litellm_params:
+      model: anthropic/claude-3-haiku-20240307
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Model aliases for convenience
+  - model_name: default
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: fast
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: quality
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+litellm_settings:
+  # Enable caching (requires Redis)
+  cache: true
+  cache_params:
+    type: redis
+    host: ${REDIS_HOST:-localhost}
+    port: ${REDIS_PORT:-6379}
+    password: ${REDIS_PASSWORD:-}
+    ttl: 3600  # 1 hour cache TTL
+    
+  # Fallback to in-memory cache if Redis unavailable
+  cache_fallback: true
+  
+  # Cost tracking and callbacks
+  success_callback: ["custom_callback"]
+  
+  # General settings
+  drop_params: true  # Drop unsupported params instead of erroring
+  set_verbose: false  # Set to true for debugging
+  
+  # Request timeout (seconds)
+  request_timeout: 300
+  
+  # Max retries on failure
+  num_retries: 2
+  
+  # Enable request/response logging
+  log_requests: true
+
+general_settings:
+  # Master key for admin operations
+  master_key: os.environ/LITELLM_MASTER_KEY
+  
+  # Database for usage tracking (optional - we use Supabase instead)
+  # database_url: os.environ/DATABASE_URL
+  
+  # Enable the admin UI
+  enable_admin_ui: true
+  
+  # Health check endpoint
+  health_check_path: "/health"
+
+# Router settings for load balancing (future use)
+router_settings:
+  routing_strategy: "simple-shuffle"  # Options: simple-shuffle, least-busy, latency-based
+  num_retries: 2
+  timeout: 300
+  retry_after: 5

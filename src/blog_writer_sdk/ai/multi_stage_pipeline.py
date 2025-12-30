@@ -16,6 +16,7 @@ from .ai_content_generator import AIContentGenerator
 from .enhanced_prompts import EnhancedPromptBuilder, PromptTemplate
 from .base_provider import AIRequest, AIGenerationConfig, ContentType
 from .consensus_generator import ConsensusGenerator
+from .content_enhancement import ContentEnhancer
 from ..models.blog_models import ContentTone, ContentLength
 from ..models.progress_models import ProgressUpdate, ProgressCallback, PipelineStage
 from ..integrations.google_custom_search import GoogleCustomSearchClient
@@ -103,6 +104,7 @@ class MultiStageGenerationPipeline:
         length_optimizer: Optional[Any] = None,  # ContentLengthOptimizer
         use_consensus: bool = False,
         dataforseo_client: Optional[DataForSEOClient] = None,
+        search_console: Optional[Any] = None,  # GoogleSearchConsoleClient
         progress_callback: Optional[ProgressCallback] = None
     ):
         """
@@ -119,6 +121,8 @@ class MultiStageGenerationPipeline:
             few_shot_extractor: Few-shot learning extractor (optional)
             length_optimizer: Content length optimizer (optional)
             use_consensus: Whether to use consensus generation (Phase 3)
+            dataforseo_client: DataForSEO client (optional)
+            search_console: Google Search Console client (optional, for multi-site support)
         """
         self.ai_generator = ai_generator
         self.google_search = google_search
@@ -133,6 +137,7 @@ class MultiStageGenerationPipeline:
         self.consensus_generator = ConsensusGenerator(ai_generator) if use_consensus else None
         self.prompt_builder = EnhancedPromptBuilder()
         self.dataforseo_client = dataforseo_client
+        self.search_console = search_console
         self.progress_callback = progress_callback
     
     async def _emit_progress(
@@ -579,13 +584,64 @@ class MultiStageGenerationPipeline:
         readability_metrics = self.readability_analyzer.analyze(enhanced_content)
         readability_score = readability_metrics.flesch_reading_ease
         
-        # Optimize readability if needed
+        # Phase 2: AI-powered readability optimization (if below target)
         if readability_score < 60:
-            logger.info("Optimizing readability")
-            optimized_content, _ = self.readability_analyzer.optimize_content(
-                enhanced_content
+            logger.info(f"Reading ease ({readability_score:.1f}) below target (60), applying AI-powered simplification")
+            await self._emit_progress(
+                PipelineStage.ENHANCEMENT,
+                current_stage,
+                total_stages,
+                "AI Readability Optimization",
+                f"Simplifying content to improve reading ease from {readability_score:.1f} to 60-70"
             )
-            enhanced_content = optimized_content
+            
+            # Use AI-powered readability enhancement
+            content_enhancer = ContentEnhancer(ai_generator=self.ai_generator)
+            readability_result = await content_enhancer.enhance_readability_with_ai(
+                content=enhanced_content,
+                target_reading_ease=65.0,
+                current_reading_ease=readability_score
+            )
+            
+            if readability_result.changes_made:
+                enhanced_content = readability_result.content
+                logger.info(f"AI readability enhancement applied: {', '.join(readability_result.changes_made)}")
+            else:
+                # Fallback to simple optimization
+                logger.info("Falling back to simple readability optimization")
+                optimized_content, _ = self.readability_analyzer.optimize_content(
+                    enhanced_content
+                )
+                enhanced_content = optimized_content
+        
+        # Phase 2: Engagement element injection
+        logger.info("Injecting engagement elements")
+        content_enhancer = ContentEnhancer(ai_generator=self.ai_generator)
+        
+        # Calculate word count for engagement targets
+        word_count = len(enhanced_content.split())
+        engagement_result = content_enhancer.inject_engagement_elements(
+            content=enhanced_content,
+            target_questions=max(3, int(word_count / 500)),  # ~1 question per 500 words
+            target_examples=max(5, int(word_count / 200)),  # ~1 example per 200 words
+            target_ctas=max(2, int(word_count / 1000))  # ~1 CTA per 1000 words
+        )
+        
+        if engagement_result.changes_made:
+            enhanced_content = engagement_result.content
+            logger.info(f"Engagement elements injected: {', '.join(engagement_result.changes_made)}")
+        
+        # Phase 2: Experience indicator injection
+        logger.info("Injecting experience indicators")
+        experience_result = content_enhancer.inject_experience_indicators(
+            content=enhanced_content,
+            target_count=3,  # 3 per 1000 words
+            word_count=word_count
+        )
+        
+        if experience_result.changes_made:
+            enhanced_content = experience_result.content
+            logger.info(f"Experience indicators injected: {', '.join(experience_result.changes_made)}")
         
         # Extract SEO metadata from stage 4
         seo_metadata = seo_result.metadata.get("seo_metadata", {})
@@ -734,14 +790,24 @@ class MultiStageGenerationPipeline:
         )
         
         # Generate and insert internal links
-        enhanced_content, internal_links_list = await self._generate_and_insert_internal_links(
+        # Get link targets from additional_context if provided by frontend
+        internal_link_targets = additional_context.get("internal_link_targets") if additional_context else None
+        site_domain = additional_context.get("site_domain") if additional_context else None
+        max_internal_links = additional_context.get("max_internal_links", 5) if additional_context else 5
+        
+        enhanced_content, internal_links_list, internal_links_metadata = await self._generate_and_insert_internal_links(
             enhanced_content,
             keywords,
-            topic
+            topic,
+            internal_link_targets=internal_link_targets,
+            site_domain=site_domain,
+            max_links=max_internal_links
         )
         
-        # Store internal links in seo_metadata for response
+        # Store internal links in seo_metadata for response (legacy format)
         seo_metadata["internal_links"] = internal_links_list
+        # Store enhanced metadata
+        seo_metadata["internal_links_metadata"] = internal_links_metadata
         
         # Finalization
         await self._emit_progress(
@@ -901,6 +967,35 @@ class MultiStageGenerationPipeline:
                 logger.warning(warning_msg)
                 api_warnings.append("AI citation optimization unavailable: DataForSEO client not configured.")
         
+        # Google Search Console: Content opportunities and gaps (if available)
+        gsc_opportunities = None
+        gsc_content_gaps = None
+        if self.search_console and keywords:
+            try:
+                logger.info(f"Analyzing Google Search Console data for keywords: {keywords[:3]}")
+                
+                # Get content opportunities (high impressions, low CTR)
+                opportunities = await self.search_console.identify_content_opportunities(
+                    min_impressions=50,
+                    max_position=20.0,
+                    min_ctr_threshold=0.02
+                )
+                if opportunities:
+                    gsc_opportunities = opportunities[:10]  # Top 10 opportunities
+                    logger.info(f"Found {len(gsc_opportunities)} content opportunities from Search Console")
+                
+                # Get content gaps for target keywords
+                gaps = await self.search_console.get_content_gaps(target_keywords=keywords)
+                if gaps and gaps.get("gaps"):
+                    gsc_content_gaps = gaps
+                    logger.info(f"Found {gaps.get('gaps_found', 0)} content gaps for target keywords")
+                
+            except Exception as e:
+                error_msg = f"Google Search Console API unavailable: {str(e)}"
+                logger.warning(f"GSC analysis failed: {error_msg}")
+                api_warnings.append(f"Search Console optimization unavailable: GSC API error. Content generated without site-specific performance data.")
+                logger.warning(f"API_UNAVAILABLE: Google Search Console API failed. Error: {type(e).__name__}: {str(e)}")
+        
         # Priority 3: Query LLM Responses for research
         llm_responses_data = None
         if self.dataforseo_client and self.dataforseo_client.is_configured:
@@ -953,6 +1048,10 @@ class MultiStageGenerationPipeline:
             research_context["llm_mentions"] = llm_mentions_data
         if llm_responses_data:
             research_context["llm_responses"] = llm_responses_data
+        if gsc_opportunities:
+            research_context["gsc_opportunities"] = gsc_opportunities
+        if gsc_content_gaps:
+            research_context["gsc_content_gaps"] = gsc_content_gaps
         
         prompt = self.prompt_builder.build_research_prompt(
             topic, keywords, research_context
@@ -1314,42 +1413,90 @@ class MultiStageGenerationPipeline:
         self,
         content: str,
         keywords: List[str],
-        topic: str
-    ) -> tuple:
+        topic: str,
+        internal_link_targets: Optional[List[Dict[str, Any]]] = None,
+        site_domain: Optional[str] = None,
+        max_links: int = 5
+    ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
         """
-        Generate and insert actual internal links into content.
+        Generate and insert internal links into content.
+        
+        If internal_link_targets are provided by frontend, use those.
+        Otherwise, fall back to generating placeholder links from keywords.
         
         Args:
             content: Content to add links to
-            keywords: Keywords for link generation
+            keywords: Keywords for link generation (fallback)
             topic: Blog topic
+            internal_link_targets: Optional list of actual link targets from frontend/database
+            site_domain: Site domain for URL generation
+            max_links: Maximum number of links to insert
             
         Returns:
-            Tuple of (content with internal links inserted, list of internal link dictionaries)
+            Tuple of (content with links, inserted_links_list, internal_links_metadata)
         """
-        # Generate internal link opportunities based on keywords
-        internal_links = []
-        
-        # Create link opportunities from keywords and related terms
-        for keyword in keywords[:5]:  # Use top 5 keywords
-            # Generate URL-friendly slug
-            slug = keyword.lower().replace(' ', '-').replace(',', '').replace('.', '')
-            # Create link opportunity as proper dictionary format
-            internal_links.append({
-                'anchor_text': keyword,
-                'url': f'/{slug}',
-                'text': keyword  # Add text field for compatibility
-            })
+        # Determine link sources
+        if internal_link_targets and len(internal_link_targets) > 0:
+            # Use provided link targets (preferred)
+            logger.info(f"Using {len(internal_link_targets)} provided internal link targets")
+            link_sources = []
+            for target in internal_link_targets:
+                # Handle both dict and model formats
+                if hasattr(target, 'dict'):
+                    target = target.dict()
+                
+                url = target.get('url', '')
+                # Ensure full URL if site_domain provided and URL is relative
+                if site_domain and url.startswith('/'):
+                    url = site_domain.rstrip('/') + url
+                
+                link_sources.append({
+                    'anchor_text': target.get('title', ''),
+                    'url': url,
+                    'target_title': target.get('title', ''),
+                    'keywords': target.get('keywords', []),
+                    'type': target.get('type', 'cms'),
+                })
+            available_count = len(internal_link_targets)
+        else:
+            # Fallback: Generate placeholder links from keywords
+            logger.warning("No internal link targets provided, generating placeholder links from keywords")
+            link_sources = []
+            for keyword in keywords[:max_links]:
+                slug = keyword.lower().replace(' ', '-').replace(',', '').replace('.', '')
+                url = f"/{slug}" if not site_domain else f"{site_domain.rstrip('/')}/{slug}"
+                link_sources.append({
+                    'anchor_text': keyword,
+                    'url': url,
+                    'target_title': keyword.title(),
+                    'keywords': [keyword],
+                    'type': 'generated',
+                })
+            available_count = len(link_sources)
         
         # Find natural insertion points in content
         lines = content.split('\n')
         fixed_lines = []
         links_inserted = 0
-        target_link_count = min(5, len(internal_links))
-        inserted_links = []  # Track which links were actually inserted
+        target_link_count = min(max_links, len(link_sources))
+        inserted_links = []
+        used_urls = set()  # Avoid duplicate links
+        
+        # Track content position for metadata
+        current_section = "introduction"
+        h2_count = 0
+        total_lines = len(lines)
         
         for i, line in enumerate(lines):
             fixed_lines.append(line)
+            
+            # Track position in content
+            if line.strip().startswith('## '):
+                h2_count += 1
+                if h2_count == 1:
+                    current_section = "body"
+                elif 'conclusion' in line.lower() or i > total_lines * 0.8:
+                    current_section = "conclusion"
             
             # Insert links in paragraphs (not in headings or code blocks)
             if (links_inserted < target_link_count and 
@@ -1357,58 +1504,72 @@ class MultiStageGenerationPipeline:
                 not line.strip().startswith('#') and
                 not line.strip().startswith('```') and
                 not line.strip().startswith('![') and
-                len(line.strip()) > 50):  # Only in substantial paragraphs
+                not line.strip().startswith('|') and  # Skip table rows
+                len(line.strip()) > 50):
                 
-                # Check if any keyword appears in this line
-                for link_info in internal_links:
-                    if link_info['anchor_text'].lower() in line.lower() and links_inserted < target_link_count:
-                        # Insert link after first occurrence of keyword
-                        keyword_lower = link_info['anchor_text'].lower()
-                        line_lower = line.lower()
-                        if keyword_lower in line_lower:
-                            # Find position and insert link
-                            idx = line_lower.find(keyword_lower)
+                # Check if any link source matches this line
+                for link_info in link_sources:
+                    if link_info['url'] in used_urls:
+                        continue
+                    
+                    # Try to find anchor text in line
+                    anchor_text = link_info['anchor_text']
+                    anchor_lower = anchor_text.lower()
+                    line_lower = line.lower()
+                    
+                    # Also check keywords associated with this link
+                    keywords_to_check = [anchor_lower] + [k.lower() for k in link_info.get('keywords', [])]
+                    
+                    for keyword in keywords_to_check:
+                        if keyword in line_lower and links_inserted < target_link_count:
+                            idx = line_lower.find(keyword)
                             if idx != -1:
-                                # Replace keyword with linked version
                                 before = line[:idx]
-                                keyword_text = line[idx:idx+len(link_info['anchor_text'])]
-                                after = line[idx+len(link_info['anchor_text']):]
-                                
                                 # Check if already linked
                                 if '[' not in before[-20:] and '](' not in before[-20:]:
+                                    keyword_text = line[idx:idx+len(keyword)]
+                                    after = line[idx+len(keyword):]
+                                    
                                     linked_keyword = f"[{keyword_text}]({link_info['url']})"
                                     fixed_lines[-1] = before + linked_keyword + after
                                     links_inserted += 1
-                                    # Add to inserted links list (format: Dict[str, str] as expected by model)
+                                    used_urls.add(link_info['url'])
+                                    
+                                    # Calculate simple relevance score based on keyword match
+                                    relevance = 0.8 if keyword == anchor_lower else 0.6
+                                    
                                     inserted_links.append({
-                                        'text': link_info['anchor_text'],
-                                        'url': link_info['url']
+                                        'anchor_text': keyword_text,
+                                        'url': link_info['url'],
+                                        'target_title': link_info.get('target_title', ''),
+                                        'position': current_section,
+                                        'relevance_score': relevance,
+                                        # Legacy format fields for backwards compatibility
+                                        'text': keyword_text,
                                     })
-                                    logger.info(f"Inserted internal link: {link_info['anchor_text']} -> {link_info['url']}")
+                                    logger.info(f"Inserted internal link: {keyword_text} -> {link_info['url']} ({current_section})")
                                     break
+                        if links_inserted >= target_link_count:
+                            break
+                    if links_inserted >= target_link_count:
+                        break
         
         if links_inserted > 0:
             logger.info(f"Inserted {links_inserted} internal links into content")
         else:
-            logger.warning("No internal links were inserted - may need manual review")
-            # Return all generated links even if not inserted (for response metadata)
-            inserted_links = [{'text': link['anchor_text'], 'url': link['url']} for link in internal_links[:5]]
+            logger.warning("No internal links were inserted - content may need manual review")
         
-        # Ensure all links are proper dictionaries with 'text' and 'url' keys
-        formatted_links = []
-        for link in inserted_links:
-            if isinstance(link, dict) and 'text' in link and 'url' in link:
-                formatted_links.append({'text': str(link['text']), 'url': str(link['url'])})
-            elif isinstance(link, dict):
-                # Handle different dict formats
-                if 'anchor_text' in link:
-                    formatted_links.append({'text': str(link['anchor_text']), 'url': str(link.get('url', '/'))})
-                elif 'text' in link:
-                    formatted_links.append({'text': str(link['text']), 'url': str(link.get('url', '/'))})
-            else:
-                # Skip non-dict values (shouldn't happen, but be safe)
-                logger.warning(f"Skipping invalid internal link format: {link}")
+        # Build metadata for response
+        internal_links_metadata = {
+            'inserted': inserted_links,
+            'available_count': available_count,
+            'inserted_count': links_inserted,
+            'max_allowed': max_links,
+        }
         
-        return '\n'.join(fixed_lines), formatted_links
+        # Legacy format for backwards compatibility
+        legacy_links = [{'text': link['anchor_text'], 'url': link['url']} for link in inserted_links]
+        
+        return '\n'.join(fixed_lines), legacy_links, internal_links_metadata
     
 

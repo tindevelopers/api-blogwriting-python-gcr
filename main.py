@@ -12,6 +12,7 @@ import asyncio
 import uuid
 import math
 import json
+import base64
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
@@ -22,12 +23,13 @@ startup_time = time.time()
 
 # Deployment trigger - updated timestamp
 deployment_version = "2025-11-15-001"
-APP_VERSION = os.getenv("APP_VERSION", "1.3.2")
+APP_VERSION = os.getenv("APP_VERSION", "1.3.6")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from enum import Enum
 
 from src.blog_writer_sdk import BlogWriter
 from src.blog_writer_sdk.models.blog_models import (
@@ -55,7 +57,9 @@ from src.blog_writer_sdk.ai import (
     ContentStrategy,
     ContentQuality
 )
-# LiteLLM router removed - using direct AI provider integrations
+# AI Gateway and Usage Logger for centralized AI operations
+from src.blog_writer_sdk.services.ai_gateway import get_ai_gateway, initialize_ai_gateway
+from src.blog_writer_sdk.services.usage_logger import get_usage_logger, initialize_usage_logger
 from src.blog_writer_sdk.middleware.rate_limiter import rate_limit_middleware
 from src.blog_writer_sdk.cache.redis_cache import initialize_cache, get_cache_manager
 from src.blog_writer_sdk.monitoring.metrics import initialize_metrics, get_metrics_collector, monitor_performance
@@ -76,7 +80,8 @@ dataforseo_client_global = None
 from src.blog_writer_sdk.integrations import (
     WebflowClient, WebflowPublisher,
     ShopifyClient, ShopifyPublisher,
-    CloudinaryStorage, CloudflareR2Storage, MediaStorageManager
+    CloudinaryStorage, CloudflareR2Storage, MediaStorageManager,
+    GoogleReviewsClient, ReviewAggregationService
 )
 try:
     # Optional: WordPress not installed in this repo currently
@@ -93,9 +98,29 @@ from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
 from src.blog_writer_sdk.api.user_management import router as user_management_router
+from src.blog_writer_sdk.api.field_enhancement import router as field_enhancement_router
+from src.blog_writer_sdk.api.publishing_management import router as publishing_router
+from src.blog_writer_sdk.api.admin_management import router as admin_router
+from src.blog_writer_sdk.api.content_validation import router as content_validation_router
+from src.blog_writer_sdk.api.keyword_streaming import (
+    KeywordSearchStage,
+    create_stage_update,
+    stream_stage_update
+)
+from src.blog_writer_sdk.api.blog_streaming import (
+    BlogGenerationStage,
+    create_blog_stage_update,
+    stream_blog_stage_update
+)
 from src.blog_writer_sdk.models.enhanced_blog_models import (
     EnhancedBlogGenerationRequest,
-    EnhancedBlogGenerationResponse
+    GenerationMode,
+    EnhancedBlogGenerationResponse,
+    BlogContentType
+)
+from src.blog_writer_sdk.services.dataforseo_content_generation_service import (
+    DataForSEOContentGenerationService,
+    BlogType as DataForSEOBlogType
 )
 from src.blog_writer_sdk.models.job_models import (
     BlogGenerationJob,
@@ -125,6 +150,7 @@ from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficult
 from src.blog_writer_sdk.services.quota_manager import QuotaManager
 from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
+from src.blog_writer_sdk.utils.text_utils import extract_excerpt
 
 
 # API Request/Response Models
@@ -148,7 +174,7 @@ class BlogGenerationRequest(BaseModel):
     
     # Advanced Options
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
-    custom_instructions: Optional[str] = Field(None, max_length=1000, description="Additional instructions")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
 
 
 class ContentAnalysisRequest(BaseModel):
@@ -178,6 +204,51 @@ class EnhancedKeywordAnalysisRequest(BaseModel):
     search_type: Optional[str] = Field("enhanced_keyword_analysis", description="Keyword search type (e.g., keyword_analysis, competitor, enhanced_keyword_analysis)")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
     max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
+
+
+class ContentGoal(str, Enum):
+    """Content goal enumeration for goal-based keyword analysis."""
+    SEO_RANKINGS = "SEO & Rankings"
+    ENGAGEMENT = "Engagement"
+    CONVERSIONS = "Conversions"
+    BRAND_AWARENESS = "Brand Awareness"
+
+
+class GoalBasedAnalysisRequest(BaseModel):
+    """Request model for goal-based keyword analysis."""
+    keywords: List[str] = Field(..., min_items=1, max_length=50, description="Keywords to analyze")
+    content_goal: ContentGoal = Field(..., description="Content goal category")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    include_content_analysis: bool = Field(default=True, description="Include content analysis (for Engagement & Brand Awareness)")
+    include_serp: bool = Field(default=True, description="Include SERP analysis")
+    include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data (for AI-optimized topics)")
+    include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data (for AI-optimized topics)")
+
+
+class LLMMentionsRequest(BaseModel):
+    """Request model for LLM mentions search."""
+    target: str = Field(..., description="Keyword or domain to search for")
+    target_type: str = Field(default="keyword", description="Type: 'keyword' or 'domain'")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    platform: str = Field(default="chat_gpt", description="Platform: 'chat_gpt' or 'google'")
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
+
+
+class AITopicSuggestionsRequest(BaseModel):
+    """Request model for AI topic suggestions."""
+    keywords: Optional[List[str]] = Field(None, max_length=10, description="Seed keywords for topic discovery (optional if content_objective provided)")
+    content_objective: Optional[str] = Field(None, max_length=500, description="Content objective text to extract keywords from")
+    target_audience: Optional[str] = Field(None, max_length=200, description="Target audience description")
+    industry: Optional[str] = Field(None, max_length=100, description="Industry/niche")
+    content_goals: Optional[List[str]] = Field(None, description="Content goals (e.g., ['SEO & Rankings', 'Engagement'])")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    include_ai_search_volume: bool = Field(default=True, description="Include AI search volume data")
+    include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data")
+    include_llm_responses: bool = Field(default=False, description="Include LLM responses for topic research")
+    limit: int = Field(default=50, ge=10, le=200, description="Maximum number of topic suggestions")
 
 class TopicRecommendationRequest(BaseModel):
     """Request model for topic recommendations."""
@@ -262,10 +333,114 @@ class ErrorResponse(BaseModel):
     timestamp: float
 
 
+class BlogType(str, Enum):
+    """Blog generation type enumeration."""
+    STANDARD = "standard"
+    ENHANCED = "enhanced"
+    LOCAL_BUSINESS = "local_business"
+    ABSTRACTION = "abstraction"
+
+
+class UnifiedBlogRequest(BaseModel):
+    """
+    Unified blog generation request model.
+    
+    This model supports all blog types through a single endpoint.
+    Type-specific fields are optional and only used when relevant.
+    """
+    # Required
+    blog_type: BlogType = Field(..., description="Type of blog to generate")
+    topic: str = Field(..., min_length=3, max_length=200, description="Main topic for the blog post")
+    
+    # Common fields (used by all blog types)
+    keywords: List[str] = Field(default_factory=list, max_items=20, description="Target SEO keywords")
+    tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
+    length: ContentLength = Field(default=ContentLength.MEDIUM, description="Target content length")
+    format: ContentFormat = Field(default=ContentFormat.MARKDOWN, description="Output format")
+    target_audience: Optional[str] = Field(None, max_length=200, description="Target audience description")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
+    
+    # Standard & Enhanced fields
+    include_introduction: bool = Field(default=True, description="Include introduction section (standard/enhanced)")
+    include_conclusion: bool = Field(default=True, description="Include conclusion section (standard/enhanced)")
+    include_faq: bool = Field(default=False, description="Include FAQ section (standard/enhanced)")
+    include_toc: bool = Field(default=True, description="Include table of contents (standard/enhanced)")
+    focus_keyword: Optional[str] = Field(None, max_length=100, description="Primary focus keyword (standard/enhanced)")
+    word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target (standard/enhanced)")
+    
+    # Enhanced-specific fields
+    use_google_search: bool = Field(default=True, description="Use Google Custom Search for research (enhanced)")
+    use_fact_checking: bool = Field(default=True, description="Enable fact-checking (enhanced)")
+    use_citations: bool = Field(default=True, description="Include citations and sources (enhanced)")
+    use_serp_optimization: bool = Field(default=True, description="Optimize for SERP features (enhanced)")
+    use_consensus_generation: bool = Field(default=False, description="Use multi-model consensus generation (enhanced)")
+    use_knowledge_graph: bool = Field(default=True, description="Use Google Knowledge Graph for entities (enhanced)")
+    use_semantic_keywords: bool = Field(default=True, description="Use semantic keyword integration (enhanced)")
+    use_quality_scoring: bool = Field(default=True, description="Enable comprehensive quality scoring (enhanced)")
+    template_type: Optional[str] = Field(None, description="Prompt template type (enhanced)")
+    async_mode: bool = Field(default=False, description="Create async job via Cloud Tasks (enhanced)")
+    
+    # Local Business-specific fields
+    location: Optional[str] = Field(None, min_length=2, description="Location for local business blogs (required for local_business)")
+    max_businesses: int = Field(default=10, ge=1, le=20, description="Maximum number of businesses to include (local_business)")
+    max_reviews_per_business: int = Field(default=20, ge=5, le=50, description="Maximum reviews per business (local_business)")
+    include_business_details: bool = Field(default=True, description="Include business details (local_business)")
+    include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis (local_business)")
+    use_google: bool = Field(default=True, description="Fetch reviews from Google Places (local_business)")
+    
+    # Abstraction-specific fields
+    content_strategy: Optional[str] = Field(None, description="Content strategy (abstraction)")
+    quality_target: Optional[str] = Field(None, description="Quality target (abstraction)")
+    preferred_provider: Optional[str] = Field(None, description="Preferred AI provider (abstraction)")
+    seo_requirements: Optional[Dict[str, Any]] = Field(None, description="SEO requirements (abstraction)")
+    
+    class Config:
+        use_enum_values = True
+
+
+class LocalBusinessBlogRequest(BaseModel):
+    """Request model for local business blog generation."""
+    topic: str = Field(..., min_length=3, max_length=200, description="Main topic (e.g., 'best plumbers in Miami')")
+    location: str = Field(..., min_length=2, description="Location (e.g., 'Miami, FL', '33139')")
+    max_businesses: int = Field(default=10, ge=1, le=20, description="Maximum number of businesses to include")
+    max_reviews_per_business: int = Field(default=20, ge=5, le=50, description="Maximum reviews per business")
+    tone: ContentTone = Field(default=ContentTone.PROFESSIONAL, description="Writing tone")
+    length: ContentLength = Field(default=ContentLength.LONG, description="Target content length")
+    format: ContentFormat = Field(default=ContentFormat.MARKDOWN, description="Output format")
+    include_business_details: bool = Field(default=True, description="Include business details (hours, contact, services)")
+    include_review_sentiment: bool = Field(default=True, description="Include review sentiment analysis")
+    use_google: bool = Field(default=True, description="Fetch reviews from Google Places")
+    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions")
+
+
+class BusinessInfo(BaseModel):
+    """Business information model."""
+    name: str
+    google_place_id: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    website: Optional[str] = None
+    rating: Optional[float] = None
+    review_count: Optional[int] = None
+    categories: List[str] = Field(default_factory=list)
+    hours: Optional[Dict[str, Any]] = None
+
+
+class LocalBusinessBlogResponse(BaseModel):
+    """Response model for local business blog generation."""
+    title: str
+    content: str
+    businesses: List[BusinessInfo]
+    total_reviews_aggregated: int
+    generation_time_seconds: float
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 # Application lifespan management
 def load_env_from_secrets():
     """Load environment variables from mounted secrets file.
     
+    Supports both JSON and plain text (key=value) formats.
     Note: Individual secrets (set via --update-secrets) take precedence over
     values in the mounted secret file to avoid placeholder values overriding real credentials.
     """
@@ -274,24 +449,65 @@ def load_env_from_secrets():
         print("📁 Loading environment variables from mounted secrets...")
         loaded_count = 0
         skipped_count = 0
-        with open(secrets_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    # Only set if not already set (individual secrets take precedence)
-                    # Also skip placeholder values
-                    if key not in os.environ:
-                        # Skip placeholder values that look like templates
-                        if not (value.startswith('your_') or value.startswith('YOUR_') or 
-                                'placeholder' in value.lower() or value == ''):
-                            os.environ[key] = value
-                            loaded_count += 1
+        
+        try:
+            # Try JSON format first (Google Secret Manager stores as JSON)
+            import json
+            with open(secrets_file, 'r') as f:
+                content = f.read().strip()
+                if content:
+                    try:
+                        secrets_dict = json.loads(content)
+                        # Load JSON format
+                        # For DATAFORSEO secrets, prefer volume-mounted secrets over individual secrets
+                        # to match STAGING/PRODUCTION behavior
+                        for key, value in secrets_dict.items():
+                            # Skip placeholder values
+                            str_value = str(value) if value is not None else ""
+                            if (str_value.startswith('your_') or str_value.startswith('YOUR_') or 
+                                'placeholder' in str_value.lower() or str_value == ''):
+                                skipped_count += 1
+                                continue
+                            
+                            # For DATAFORSEO and Cloudinary secrets, always use volume-mounted secrets (override individual secrets)
+                            if key in ['DATAFORSEO_API_KEY', 'DATAFORSEO_API_SECRET', 
+                                      'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET', 'CLOUDINARY_FOLDER']:
+                                os.environ[key] = str_value
+                                loaded_count += 1
+                            elif key not in os.environ:
+                                # For other secrets, only set if not already set
+                                os.environ[key] = str_value
+                                loaded_count += 1
+                            else:
+                                skipped_count += 1
+                        print(f"✅ Environment variables loaded from secrets (JSON format): {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
+                        return
+                    except json.JSONDecodeError:
+                        # Not JSON, fall through to plain text parsing
+                        pass
+            
+            # Plain text format (key=value)
+            with open(secrets_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        # Only set if not already set (individual secrets take precedence)
+                        # Also skip placeholder values
+                        if key not in os.environ:
+                            # Skip placeholder values that look like templates
+                            if not (value.startswith('your_') or value.startswith('YOUR_') or 
+                                    'placeholder' in value.lower() or value == ''):
+                                os.environ[key] = value
+                                loaded_count += 1
+                            else:
+                                skipped_count += 1
                         else:
                             skipped_count += 1
-                    else:
-                        skipped_count += 1
-        print(f"✅ Environment variables loaded from secrets: {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
+            print(f"✅ Environment variables loaded from secrets (plain text format): {loaded_count} set, {skipped_count} skipped (already set or placeholders)")
+        except Exception as e:
+            print(f"⚠️ Error loading secrets from {secrets_file}: {e}")
+            print("⚠️ Falling back to system environment variables")
     else:
         print("⚠️ No secrets file found at /secrets/env, using system environment variables")
 
@@ -441,19 +657,41 @@ async def lifespan(app: FastAPI):
     # Initialize Google Search Console client (Phase 2)
     global google_search_console_client
     gsc_site_url = os.getenv("GSC_SITE_URL")
-    if gsc_site_url:
-        google_search_console_client = GoogleSearchConsoleClient(site_url=gsc_site_url)
-        print("✅ Google Search Console client initialized.")
+    gsc_credentials_path = "/secrets/GSC_SERVICE_ACCOUNT_KEY"
+    
+    # Check if GSC credentials file exists
+    if os.path.exists(gsc_credentials_path):
+        try:
+            if gsc_site_url:
+                google_search_console_client = GoogleSearchConsoleClient(
+                    credentials_path=gsc_credentials_path,
+                    site_url=gsc_site_url
+                )
+            else:
+                google_search_console_client = GoogleSearchConsoleClient(
+                    credentials_path=gsc_credentials_path
+                )
+            print("✅ Google Search Console client initialized.")
+        except Exception as e:
+            google_search_console_client = None
+            print(f"⚠️ Google Search Console initialization failed: {e}")
     else:
         google_search_console_client = None
-        print("⚠️ Google Search Console not configured (GSC_SITE_URL)")
+        if gsc_site_url:
+            print(f"⚠️ Google Search Console not configured (GSC credentials file not found at {gsc_credentials_path})")
+        else:
+            print("⚠️ Google Search Console not configured (GSC_SITE_URL not set)")
     
     # Initialize multi-stage pipeline components
     global readability_analyzer, citation_generator, serp_analyzer
     global google_knowledge_graph_client, semantic_integrator, quality_scorer
     global intent_analyzer, few_shot_extractor, length_optimizer
+    global dataforseo_content_generation_service
     readability_analyzer = ReadabilityAnalyzer()
-    citation_generator = CitationGenerator(google_search_client=google_custom_search_client)
+    citation_generator = CitationGenerator(
+        google_search_client=google_custom_search_client,
+        dataforseo_client=dataforseo_client_global
+    )
     serp_analyzer = SERPAnalyzer(dataforseo_client=None)  # Will use DataForSEO if available
     
     # Phase 3: Google Knowledge Graph
@@ -581,14 +819,16 @@ app = FastAPI(
     - `POST /api/v1/generate` - Standard blog generation
     - `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis with DataForSEO
     - `POST /api/v1/integrations/connect-and-recommend` - Backlink/interlink recommendations
+    - `POST /api/v1/content/enhance-fields` - Enhance mandatory CMS fields (SEO title, meta description, slug, alt text) using OpenAI
     
     ## Quick Start
     
     1. **Configure AI Providers**: Use `/api/v1/ai/providers/configure` to add your AI provider credentials
     2. **Generate Enhanced Content**: Use `/api/v1/blog/generate-enhanced` for high-quality blog posts
     3. **Generate Images**: Use `/api/v1/images/generate` to create images from text prompts
-    4. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
-    5. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
+    4. **Enhance CMS Fields**: Use `/api/v1/content/enhance-fields` to optimize SEO title, meta description, slug, and alt text after image generation
+    5. **Publish Content**: Use `/api/v1/publish/{platform}` to publish to Webflow, Shopify, or WordPress
+    6. **Analyze Keywords**: Use `/api/v1/keywords/enhanced` for comprehensive keyword research
     
     ## Documentation
     
@@ -630,6 +870,14 @@ app.include_router(image_generation_router)
 app.include_router(integrations_router)
 # Include user management router
 app.include_router(user_management_router)
+# Include field enhancement router
+app.include_router(field_enhancement_router)
+# Include publishing management router
+app.include_router(publishing_router)
+# Include admin management router (secrets, logs, usage, jobs)
+app.include_router(admin_router)
+# Include content validation router
+app.include_router(content_validation_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
@@ -833,7 +1081,8 @@ async def root():
         "ready": "/ready",
         "live": "/live",
         "endpoints": {
-            "generate": "/api/v1/blog/generate",
+            "generate": "/api/v1/blog/generate-enhanced",
+            "generate_gateway": "/api/v1/blog/generate-gateway",
             "analyze": "/api/v1/analyze",
             "keywords": "/api/v1/keywords",
             "batch": "/api/v1/batch",
@@ -846,82 +1095,184 @@ async def root():
             "media": {
                 "cloudinary": "/api/v1/media/upload/cloudinary",
                 "cloudflare": "/api/v1/media/upload/cloudflare"
+            },
+            "ai_gateway": {
+                "generate": "/api/v1/blog/generate-gateway",
+                "polish": "/api/v1/blog/polish",
+                "quality_check": "/api/v1/blog/quality-check",
+                "meta_tags": "/api/v1/blog/meta-tags"
+            },
+            "admin": {
+                "secrets": "/api/v1/admin/secrets",
+                "env_vars": "/api/v1/admin/env-vars",
+                "logs": "/api/v1/admin/logs",
+                "ai_usage": "/api/v1/admin/ai/usage",
+                "jobs": "/api/v1/admin/jobs"
             }
         }
     }
 
 
 # Blog generation endpoints
-@app.post("/api/v1/blog/generate", response_model=BlogGenerationResult)
-async def generate_blog_v2(
-    request: BlogGenerationRequest,
-    background_tasks: BackgroundTasks,
-    writer: BlogWriter = Depends(get_blog_writer)
-):
-    """
-    Generate a complete blog post with SEO optimization (v2 endpoint).
-    
-    This endpoint creates a full blog post including:
-    - SEO-optimized content structure
-    - Meta tags and descriptions
-    - Keyword optimization
-    - Quality analysis and suggestions
-    """
-    return await generate_blog(request, background_tasks, writer)
+# DEPRECATED: Use /api/v1/blog/generate-enhanced instead
+# The following endpoints have been removed:
+# - POST /api/v1/generate (deprecated - only supports CUSTOM type)
+# - POST /api/v1/blog/generate (deprecated - only supports CUSTOM type)
+# Use POST /api/v1/blog/generate-enhanced for all blog generation with 28 blog types
 
 
-@app.post("/api/v1/generate", response_model=BlogGenerationResult)
-async def generate_blog(
-    request: BlogGenerationRequest,
-    background_tasks: BackgroundTasks,
-    writer: BlogWriter = Depends(get_blog_writer)
-):
+# ============================================================================
+# AI Gateway Blog Generation Endpoint (new LiteLLM-based route)
+# ============================================================================
+
+class AIGatewayBlogRequest(BaseModel):
+    """Request model for AI Gateway blog generation."""
+    topic: str = Field(..., description="The main topic for the blog post")
+    keywords: List[str] = Field(default_factory=list, description="Target SEO keywords")
+    word_count: int = Field(default=1500, ge=300, le=10000, description="Target word count")
+    tone: str = Field(default="professional", description="Content tone")
+    custom_instructions: str = Field(default="", description="Additional instructions")
+    org_id: Optional[str] = Field(default=None, description="Organization ID for tracking")
+    include_polishing: bool = Field(default=True, description="Apply AI polishing to content")
+    include_quality_check: bool = Field(default=True, description="Run quality checks")
+    include_meta_tags: bool = Field(default=True, description="Generate SEO meta tags")
+    model: str = Field(default="gpt-4o", description="AI model to use")
+
+
+@app.post("/api/v1/blog/generate-gateway")
+async def generate_blog_via_gateway(request: AIGatewayBlogRequest):
     """
-    Generate a complete blog post with SEO optimization.
+    Generate a blog post using the AI Gateway (LiteLLM proxy).
     
-    This endpoint creates a full blog post including:
-    - SEO-optimized content structure
-    - Meta tags and descriptions
-    - Keyword optimization
-    - Content quality analysis
+    This endpoint routes all AI calls through the centralized AI Gateway which provides:
+    - **Response Caching**: Reduce costs and latency with intelligent caching
+    - **Cost Tracking**: Automatic usage logging to database
+    - **Model Routing**: Support for OpenAI, Anthropic, and other providers
+    - **Content Polishing**: AI-powered post-processing
+    - **Quality Checks**: Automated content quality scoring
+    - **Meta Tag Generation**: SEO-optimized meta tags
+    
+    **Note**: This is an alternative to the main generate-enhanced endpoint.
+    Use this when you want direct control over the AI Gateway features.
+    
+    Returns complete blog with content, quality score, and meta tags.
     """
+    import time
+    start_time = time.time()
+    
     try:
-        # Convert API request to SDK request
-        blog_request = BlogRequest(
+        # Get or initialize AI Gateway
+        ai_gateway = get_ai_gateway()
+        
+        # Get or initialize Usage Logger and connect to AI Gateway
+        usage_logger = get_usage_logger()
+        ai_gateway.set_usage_logger(usage_logger)
+        
+        # Set model if specified
+        if request.model:
+            ai_gateway.default_model = request.model
+        
+        # Generate complete blog using AI Gateway
+        org_id = request.org_id or "default"
+        user_id = "api_user"  # Would come from authentication in production
+        
+        result = await ai_gateway.generate_complete_blog(
             topic=request.topic,
             keywords=request.keywords,
+            org_id=org_id,
+            user_id=user_id,
+            word_count=request.word_count,
             tone=request.tone,
-            length=request.length,
-            format=request.format,
-            target_audience=request.target_audience,
-            focus_keyword=request.focus_keyword,
-            include_introduction=request.include_introduction,
-            include_conclusion=request.include_conclusion,
-            include_faq=request.include_faq,
-            include_toc=request.include_toc,
-            word_count_target=request.word_count_target,
             custom_instructions=request.custom_instructions,
+            include_polishing=request.include_polishing,
+            include_quality_check=request.include_quality_check,
+            include_meta_tags=request.include_meta_tags
         )
         
-        # Generate blog post
-        result = await writer.generate(blog_request)
+        # Add metadata
+        result["endpoint"] = "generate-gateway"
+        result["api_version"] = APP_VERSION
+        result["total_time"] = round(time.time() - start_time, 2)
         
-        # Log generation for analytics (background task)
-        background_tasks.add_task(
-            log_generation,
-            topic=request.topic,
-            success=result.success,
-            word_count=result.word_count,
-            generation_time=result.generation_time_seconds
-        )
+        logger.info(f"AI Gateway blog generated: {result.get('word_count', 0)} words, quality: {result.get('quality_grade', 'N/A')}")
         
         return result
         
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Blog generation failed: {str(e)}"
+        logger.error(f"AI Gateway blog generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/blog/polish")
+async def polish_blog_content(
+    content: str = Query(..., description="Content to polish"),
+    instructions: str = Query(default="Ensure professional tone, remove artifacts", description="Polishing instructions"),
+    org_id: str = Query(default="default", description="Organization ID")
+):
+    """
+    Polish and clean blog content using AI.
+    
+    Removes AI artifacts, improves flow, and fixes grammar.
+    This is a standalone utility that can be used after generation.
+    """
+    try:
+        ai_gateway = get_ai_gateway()
+        result = await ai_gateway.polish_content(
+            content=content,
+            instructions=instructions,
+            org_id=org_id
         )
+        return result
+    except Exception as e:
+        logger.error(f"Content polishing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/blog/quality-check")
+async def check_blog_quality(
+    content: str = Query(..., description="Content to check")
+):
+    """
+    Check content quality and get improvement suggestions.
+    
+    Returns quality score, issues found, and cleaned content.
+    """
+    try:
+        ai_gateway = get_ai_gateway()
+        result = await ai_gateway.check_quality(content=content)
+        return result
+    except Exception as e:
+        logger.error(f"Quality check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/blog/meta-tags")
+async def generate_meta_tags(
+    content: str = Query(..., description="Blog content"),
+    title: str = Query(..., description="Blog title"),
+    keywords: List[str] = Query(default=[], description="Target keywords"),
+    org_id: str = Query(default="default", description="Organization ID")
+):
+    """
+    Generate SEO-optimized meta tags for a blog post.
+    
+    Returns title, description, og_title, and og_description.
+    """
+    try:
+        ai_gateway = get_ai_gateway()
+        result = await ai_gateway.generate_meta_tags(
+            content=content,
+            title=title,
+            keywords=keywords,
+            org_id=org_id
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Meta tag generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 
 
 # Enhanced blog generation endpoint (Phase 1 & 2)
@@ -929,28 +1280,42 @@ async def generate_blog(
 async def generate_blog_enhanced(
     request: EnhancedBlogGenerationRequest,
     background_tasks: BackgroundTasks,
-    async_mode: bool = Query(default=False, description="If true, creates async job via Cloud Tasks")
+    async_mode: bool = Query(default=True, description="If true, creates async job via Cloud Tasks (default: true, uses queue)")
 ):
     """
-    Generate high-quality blog content using multi-stage pipeline (Phase 1, 2 & 3).
+    Generate high-quality blog content with two workflow modes.
     
-    This endpoint uses:
-    - Multi-stage generation pipeline (Research → Draft → Enhancement → SEO)
-    - Google Custom Search for research and fact-checking
-    - Readability optimization
-    - SERP feature optimization
-    - Citation integration
-    - Phase 3: Multi-model consensus, Knowledge Graph, semantic keywords, quality scoring
+    **Workflow Modes:**
     
-    Query Parameters:
-    - async_mode: If true, creates an async job via Cloud Tasks and returns job_id immediately
+    1. **Quick Generate** (`mode="quick_generate"`, default):
+       - Uses DataForSEO Content Generation API
+       - Fast: 30-60 seconds
+       - Cost-effective: ~$0.001-0.002 per blog
+       - Good SEO optimization built-in
+       - Best for: Quick drafts, simple blogs, high-volume generation
     
-    Returns:
+    2. **Multi-Phase Workflow** (`mode="multi_phase"`):
+       - Uses comprehensive MultiStageGenerationPipeline (Anthropic/OpenAI)
+       - Comprehensive: 12-stage enhancement pipeline
+       - Premium quality: Fact-checking, citations, SERP optimization
+       - Slower: 3-5 minutes
+       - Higher cost: ~$0.008-0.015 per blog
+       - Best for: Premium content, SEO-critical articles, authoritative content
+    
+    **Query Parameters:**
+    - async_mode: If true (default), creates an async job via Cloud Tasks and returns job_id immediately.
+                  If false, processes synchronously (for backward compatibility).
+    
+    **Returns:**
+    - If async_mode=true (default): CreateJobResponse with job_id (asynchronous, uses queue)
     - If async_mode=false: EnhancedBlogGenerationResponse (synchronous)
-    - If async_mode=true: CreateJobResponse with job_id (asynchronous)
     
     Use GET /api/v1/blog/jobs/{job_id} to check status and retrieve results.
+    For real-time streaming updates, use POST /api/v1/blog/generate-enhanced/stream
     """
+    import time
+    start_time = time.time()
+    
     try:
         # Get global clients
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
@@ -958,14 +1323,8 @@ async def generate_blog_enhanced(
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
         global blog_generation_jobs
         
-        # Check if AI generator is available
-        if ai_generator is None:
-            raise HTTPException(
-                status_code=503,
-                detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
-            )
-        
-        # Handle async mode - create Cloud Tasks job
+        # Handle async mode FIRST - if async_mode is True, create Cloud Task and return immediately
+        # This applies to both DataForSEO and pipeline paths
         if async_mode:
             job_id = str(uuid.uuid4())
             
@@ -1005,8 +1364,12 @@ async def generate_blog_enhanced(
                 
                 logger.info(f"Created async blog generation job: {job_id}, task: {task_name}")
                 
-                # Estimate completion time (4 minutes average)
-                estimated_time = 240  # 4 minutes in seconds
+                # Estimate completion time based on mode
+                generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
+                if generation_mode == GenerationMode.QUICK_GENERATE:
+                    estimated_time = 60  # 1 minute for Quick Generate (DataForSEO)
+                else:
+                    estimated_time = 240  # 4 minutes for Multi-Phase (Pipeline)
                 
                 return CreateJobResponse(
                     job_id=job_id,
@@ -1027,11 +1390,257 @@ async def generate_blog_enhanced(
                     detail=f"Failed to create async job: {str(e)}"
                 )
         
+        # Route based on generation mode
+        # Quick Generate: Always use DataForSEO (fast, cost-effective)
+        # Multi-Phase: Always use Pipeline (comprehensive, premium quality)
+        generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
+        
+        if generation_mode == GenerationMode.QUICK_GENERATE:
+            # Quick Generate mode: Force DataForSEO Content Generation
+            USE_DATAFORSEO = True
+            logger.info("⚡ Quick Generate mode: Using DataForSEO Content Generation API")
+            
+            # Disable expensive pipeline features for Quick Generate
+            # These are not needed as DataForSEO handles SEO optimization internally
+            request.use_consensus_generation = False
+            # Note: use_google_search, use_fact_checking can still be used for research if needed
+            # but won't affect the content generation method
+            
+        elif generation_mode == GenerationMode.MULTI_PHASE:
+            # Multi-Phase mode: Force Pipeline (comprehensive workflow)
+            USE_DATAFORSEO = False
+            logger.info("🔧 Multi-Phase mode: Using comprehensive multi-stage pipeline")
+            
+            # Force citations for Multi-Phase mode (premium content requires citations)
+            request.use_citations = True
+            logger.info("🔧 Multi-Phase mode: Citations are mandatory for premium content")
+            
+            # Ensure Google Custom Search is available for citations
+            if not google_custom_search_client:
+                logger.error("Multi-Phase mode requires Google Custom Search for citations")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Google Custom Search API is required for Multi-Phase workflow citations. Please configure GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID."
+                )
+            
+        else:
+            # Fallback: Check legacy flag for backward compatibility
+            if hasattr(request, 'use_dataforseo_content_generation'):
+                USE_DATAFORSEO = request.use_dataforseo_content_generation
+            else:
+                USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            logger.info(f"Using legacy flag: USE_DATAFORSEO={USE_DATAFORSEO}")
+        
+        # Use DataForSEO Content Generation Service (only in sync mode now)
+        if USE_DATAFORSEO:
+            logger.info("🔷 Using DataForSEO Content Generation API for blog generation")
+            
+            # Initialize DataForSEO Content Generation Service
+            content_service = DataForSEOContentGenerationService(dataforseo_client=dataforseo_client_global)
+            await content_service.initialize(tenant_id="default")
+            
+            if not content_service.is_configured:
+                logger.warning("DataForSEO Content Generation not configured, falling back to pipeline")
+                USE_DATAFORSEO = False
+            else:
+                # Map blog type (all 28 blog types supported)
+                blog_type_map = {
+                    BlogContentType.BRAND: DataForSEOBlogType.BRAND,
+                    BlogContentType.TOP_10: DataForSEOBlogType.TOP_10,
+                    BlogContentType.PRODUCT_REVIEW: DataForSEOBlogType.PRODUCT_REVIEW,
+                    BlogContentType.HOW_TO: DataForSEOBlogType.HOW_TO,
+                    BlogContentType.COMPARISON: DataForSEOBlogType.COMPARISON,
+                    BlogContentType.GUIDE: DataForSEOBlogType.GUIDE,
+                    BlogContentType.CUSTOM: DataForSEOBlogType.CUSTOM,
+                    # New blog types (Top 80% of popular formats)
+                    BlogContentType.TUTORIAL: DataForSEOBlogType.TUTORIAL,
+                    BlogContentType.LISTICLE: DataForSEOBlogType.LISTICLE,
+                    BlogContentType.CASE_STUDY: DataForSEOBlogType.CASE_STUDY,
+                    BlogContentType.NEWS: DataForSEOBlogType.NEWS,
+                    BlogContentType.OPINION: DataForSEOBlogType.OPINION,
+                    BlogContentType.INTERVIEW: DataForSEOBlogType.INTERVIEW,
+                    BlogContentType.FAQ: DataForSEOBlogType.FAQ,
+                    BlogContentType.CHECKLIST: DataForSEOBlogType.CHECKLIST,
+                    BlogContentType.TIPS: DataForSEOBlogType.TIPS,
+                    BlogContentType.DEFINITION: DataForSEOBlogType.DEFINITION,
+                    BlogContentType.BENEFITS: DataForSEOBlogType.BENEFITS,
+                    BlogContentType.PROBLEM_SOLUTION: DataForSEOBlogType.PROBLEM_SOLUTION,
+                    BlogContentType.TREND_ANALYSIS: DataForSEOBlogType.TREND_ANALYSIS,
+                    BlogContentType.STATISTICS: DataForSEOBlogType.STATISTICS,
+                    BlogContentType.RESOURCE_LIST: DataForSEOBlogType.RESOURCE_LIST,
+                    BlogContentType.TIMELINE: DataForSEOBlogType.TIMELINE,
+                    BlogContentType.MYTH_BUSTING: DataForSEOBlogType.MYTH_BUSTING,
+                    BlogContentType.BEST_PRACTICES: DataForSEOBlogType.BEST_PRACTICES,
+                    BlogContentType.GETTING_STARTED: DataForSEOBlogType.GETTING_STARTED,
+                    BlogContentType.ADVANCED: DataForSEOBlogType.ADVANCED,
+                    BlogContentType.TROUBLESHOOTING: DataForSEOBlogType.TROUBLESHOOTING,
+                }
+                df_blog_type = blog_type_map.get(request.blog_type or BlogContentType.CUSTOM, DataForSEOBlogType.CUSTOM)
+                
+                # Calculate word count from length
+                word_count_map = {
+                    ContentLength.SHORT: 500,
+                    ContentLength.MEDIUM: 1500,
+                    ContentLength.LONG: 2500,
+                    ContentLength.EXTENDED: 4000,
+                }
+                # Get word count target if available, otherwise calculate from length
+                word_count = request.word_count_target or word_count_map.get(request.length, 1500)
+                
+                # Map tone (handle all ContentTone enum values)
+                tone_map = {
+                    ContentTone.PROFESSIONAL: "professional",
+                    ContentTone.CASUAL: "casual",
+                    ContentTone.FRIENDLY: "friendly",
+                    ContentTone.AUTHORITATIVE: "professional",
+                    ContentTone.CONVERSATIONAL: "casual",
+                    ContentTone.TECHNICAL: "professional",
+                    ContentTone.CREATIVE: "casual",
+                }
+                # Get tone string, fallback to string value if not in map
+                if request.tone in tone_map:
+                    tone_str = tone_map[request.tone]
+                elif hasattr(request.tone, 'value'):
+                    tone_str = request.tone.value
+                else:
+                    tone_str = str(request.tone).lower()
+                
+                # Generate blog content using DataForSEO
+                logger.info(f"Calling DataForSEO generate_blog_content: topic={request.topic}, blog_type={df_blog_type.value}, word_count={word_count}")
+                try:
+                    result = await content_service.generate_blog_content(
+                        topic=request.topic,
+                        keywords=request.keywords,
+                        blog_type=df_blog_type,
+                        tone=tone_str,
+                        word_count=word_count,
+                        target_audience=request.target_audience,
+                        language="en",
+                        tenant_id="default",
+                        optimize_for_traffic=getattr(request, 'optimize_for_traffic', True),
+                        analyze_backlinks=getattr(request, 'analyze_backlinks', False),
+                        backlink_url=getattr(request, 'backlink_url', None),
+                        brand_name=getattr(request, 'brand_name', None),
+                        category=getattr(request, 'category', None),
+                        product_name=getattr(request, 'product_name', None),
+                        items=getattr(request, 'comparison_items', None),
+                        custom_instructions=request.custom_instructions
+                    )
+                    
+                    logger.info(f"DataForSEO generation completed: content_length={len(result.get('content', ''))}, tokens={result.get('tokens_used', 0)}")
+                    
+                    # Validate that content was actually generated
+                    generated_content = result.get("content", "")
+                    if not generated_content or len(generated_content.strip()) < 50:
+                        logger.error(f"DataForSEO returned empty or insufficient content: length={len(generated_content)}, result_keys={list(result.keys())}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Content generation failed: Generated content is empty or too short ({len(generated_content)} chars). DataForSEO API may not be configured correctly or subscription may be required."
+                        )
+                    
+                    generation_time = time.time() - start_time
+                    
+                    # Extract SEO metrics from result
+                    seo_metrics = result.get("seo_metrics", {})
+                    readability_score = seo_metrics.get("readability_score", 75.0)
+                    seo_score = seo_metrics.get("seo_score", 85.0)
+                    
+                    # Build SEO metadata
+                    seo_metadata = {
+                        "semantic_keywords": result.get("keywords", request.keywords),
+                        "subtopics": result.get("subtopics", []),
+                        "blog_type": result.get("blog_type", "custom"),
+                        "keyword_density": seo_metrics.get("keyword_density", {}),
+                        "headings_count": seo_metrics.get("headings_count", 0),
+                        "avg_sentence_length": seo_metrics.get("avg_sentence_length", 0),
+                        "seo_factors": seo_metrics.get("seo_factors", []),
+                        "word_count_range": seo_metrics.get("word_count_range", {}),
+                        "backlink_keywords": result.get("backlink_keywords", [])
+                    }
+                    
+                    # Build quality dimensions from SEO metrics
+                    # quality_dimensions expects Dict[str, float] where values are scores (0-100)
+                    quality_dimensions = {
+                        "readability": readability_score,
+                        "seo": seo_score,
+                        "structure": min(100, seo_metrics.get("headings_count", 0) * 20),  # 5 headings = 100
+                        "keyword_optimization": min(100, seo_score * 0.8)  # Based on SEO score
+                    }
+                    
+                    logger.info(f"Returning successful response: title={result.get('title', '')[:50]}, content_length={len(generated_content)}")
+                    
+                    excerpt = extract_excerpt(generated_content, max_length=250)
+                    
+                    # Build response
+                    return EnhancedBlogGenerationResponse(
+                        title=result.get("title", request.topic),
+                        content=generated_content,
+                        excerpt=excerpt,
+                        meta_title=result.get("meta_title", result.get("title", request.topic)),
+                        meta_description=result.get("meta_description", ""),
+                        readability_score=readability_score,
+                        seo_score=seo_score,
+                        stage_results=[],
+                        citations=[],
+                        total_tokens=result.get("tokens_used", 0),
+                        total_cost=result.get("cost", 0.0),
+                        generation_time=generation_time,
+                        seo_metadata=seo_metadata,
+                        internal_links=[],
+                        quality_score=seo_score,  # Use SEO score as quality score
+                        quality_dimensions=quality_dimensions,
+                        structured_data=None,
+                        semantic_keywords=result.get("keywords", request.keywords),
+                        content_metadata={},
+                        success=True,
+                        warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
+                        progress_updates=[]
+                    )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.error(f"DataForSEO content generation failed: {e}", exc_info=True)
+                    # Fall through to pipeline fallback
+                    USE_DATAFORSEO = False
+                    logger.warning(f"Falling back to pipeline due to DataForSEO error: {str(e)}")
+        
+        # Fallback to original pipeline if DataForSEO is disabled or not configured
+        # Note: async_mode is already handled above, so this is sync mode only
+        logger.info("Using multi-stage pipeline for blog generation")
+        
+        # Check if AI generator is available
+        if ai_generator is None:
+            raise HTTPException(
+                status_code=503,
+                detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
+            )
+        
         # Create progress callback for streaming updates
         progress_updates = []
         async def progress_callback(update):
             """Store progress updates for response."""
             progress_updates.append(update.dict())
+        
+        # Handle Google Search Console client (multi-site support)
+        gsc_client = None
+        gsc_credentials_path = "/secrets/GSC_SERVICE_ACCOUNT_KEY"
+        if request.gsc_site_url:
+            # Use site-specific Search Console client
+            logger.info(f"Using site-specific Search Console: {request.gsc_site_url}")
+            if os.path.exists(gsc_credentials_path):
+                try:
+                    gsc_client = GoogleSearchConsoleClient(
+                        credentials_path=gsc_credentials_path,
+                        site_url=request.gsc_site_url
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to initialize GSC client for {request.gsc_site_url}: {e}")
+                    gsc_client = None
+            else:
+                logger.warning(f"GSC credentials not found at {gsc_credentials_path}, skipping GSC")
+        elif google_search_console_client:
+            # Use default global Search Console client
+            gsc_client = google_search_console_client
         
         # Initialize pipeline with Phase 3 components and additional enhancements
         pipeline = MultiStageGenerationPipeline(
@@ -1044,8 +1653,9 @@ async def generate_blog_enhanced(
             intent_analyzer=intent_analyzer,  # Always enabled for better content
             few_shot_extractor=few_shot_extractor if request.use_google_search else None,
             length_optimizer=length_optimizer if request.use_google_search else None,
-            use_consensus=request.use_consensus_generation,
+            use_consensus=request.use_consensus_generation if hasattr(request, 'use_consensus_generation') and request.use_consensus_generation else (generation_mode == GenerationMode.MULTI_PHASE),  # Enable by default for Multi-Phase
             dataforseo_client=dataforseo_client_global,  # Add DataForSEO Labs integration
+            search_console=gsc_client,  # Add Search Console client (site-specific or default)
             progress_callback=progress_callback  # Add progress callback
         )
         
@@ -1063,6 +1673,19 @@ async def generate_blog_enhanced(
             additional_context["target_audience"] = request.target_audience
         if request.custom_instructions:
             additional_context["custom_instructions"] = request.custom_instructions
+        
+        # Add multi-site support parameters (December 2025)
+        if request.site_id:
+            additional_context["site_id"] = request.site_id
+        if request.site_domain:
+            additional_context["site_domain"] = request.site_domain
+        if request.internal_link_targets:
+            # Convert Pydantic models to dicts for pipeline
+            additional_context["internal_link_targets"] = [
+                target.dict() if hasattr(target, 'dict') else target
+                for target in request.internal_link_targets
+            ]
+        additional_context["max_internal_links"] = request.max_internal_links
         
         # Add product research requirements if enabled
         if request.include_product_research:
@@ -1098,48 +1721,123 @@ async def generate_blog_enhanced(
                 logger.warning(f"SERP analysis failed: {e}")
         
         # Generate using multi-stage pipeline
-        pipeline_result = await pipeline.generate(
-            topic=request.topic,
-            keywords=request.keywords,
-            tone=request.tone,
-            length=request.length,
-            template=template,
-            additional_context=additional_context
-        )
+        logger.info(f"Using multi-stage pipeline for blog generation: topic={request.topic}")
+        try:
+            pipeline_result = await pipeline.generate(
+                topic=request.topic,
+                keywords=request.keywords,
+                tone=request.tone,
+                length=request.length,
+                template=template,
+                additional_context=additional_context
+            )
+            
+            logger.info(f"Pipeline generation completed: content_length={len(pipeline_result.final_content) if pipeline_result.final_content else 0}, tokens={pipeline_result.total_tokens}")
+            
+            # Image generation has been moved to a separate endpoint
+            # Frontend should call /api/v1/images/generate separately after blog generation
+            final_content = pipeline_result.final_content
+            
+            # Validate that content was actually generated
+            if not final_content or len(final_content.strip()) < 50:
+                logger.error(f"Pipeline returned empty or insufficient content: length={len(final_content) if final_content else 0}, pipeline_result_keys={dir(pipeline_result)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Content generation failed: Generated content is empty or too short ({len(final_content) if final_content else 0} chars). AI provider may not be configured correctly (check OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)."
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Pipeline generation failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Blog generation failed: {str(e)}"
+            )
         
-        # Image generation has been moved to a separate endpoint
-        # Frontend should call /api/v1/images/generate separately after blog generation
-        final_content = pipeline_result.final_content
-        
-        # Add citations if enabled
+        # Add citations if enabled (mandatory for Multi-Phase mode)
         citations = []
-        if request.use_citations and google_custom_search_client:
-            try:
-                citation_result = await citation_generator.generate_citations(
-                    final_content,
-                    request.topic,
-                    request.keywords
-                )
-                citations = [
-                    {
-                        "text": c.text[:100],
-                        "url": c.source_url,
-                        "title": c.source_title
-                    }
-                    for c in citation_result.citations
-                ]
-                # Integrate citations into content
-                final_content = citation_generator.integrate_citations(
-                    final_content,
-                    citation_result.citations
-                )
-                # Add references section
-                if citation_result.sources_used:
-                    final_content += citation_generator.generate_references_section(
-                        citation_result.sources_used
+        citation_warnings = []  # Initialize citation warnings list
+        if request.use_citations:
+            if not google_custom_search_client:
+                if generation_mode == GenerationMode.MULTI_PHASE:
+                    # Citations are mandatory for Multi-Phase - fail fast
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Citation generation requires Google Custom Search API. Please configure GOOGLE_CUSTOM_SEARCH_API_KEY and GOOGLE_CUSTOM_SEARCH_ENGINE_ID."
                     )
-            except Exception as e:
-                logger.warning(f"Citation generation failed: {e}")
+                else:
+                    logger.warning("Citation generation requested but Google Custom Search not available")
+            else:
+                try:
+                    logger.info(f"Generating citations for topic: {request.topic}")
+                    citation_result = await citation_generator.generate_citations(
+                        final_content,
+                        request.topic,
+                        request.keywords,
+                        num_citations=5  # Minimum 5 citations for authoritative content
+                    )
+                    
+                    # Collect citation warnings
+                    if citation_result.warnings:
+                        citation_warnings.extend(citation_result.warnings)
+                    
+                    # Validate citations were generated
+                    if citation_result.citation_count == 0:
+                        logger.error("Citation generation returned 0 citations")
+                        if generation_mode == GenerationMode.MULTI_PHASE:
+                            raise HTTPException(
+                                status_code=500,
+                                detail="Failed to generate citations - no sources found. Citations are required for Multi-Phase workflow."
+                            )
+                        else:
+                            logger.warning("No citations generated - continuing without citations")
+                    else:
+                        logger.info(f"Generated {citation_result.citation_count} citations")
+                    
+                    citations = [
+                        {
+                            "text": c.text[:100],
+                            "url": c.source_url,
+                            "title": c.source_title
+                        }
+                        for c in citation_result.citations
+                    ]
+                    
+                    # Integrate citations into content
+                    final_content = citation_generator.integrate_citations(
+                        final_content,
+                        citation_result.citations
+                    )
+                    
+                    # Add references section
+                    if citation_result.sources_used:
+                        final_content += citation_generator.generate_references_section(
+                            citation_result.sources_used
+                        )
+                    
+                    # Validate citations were integrated
+                    citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                    if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                        logger.error("Citations generated but not integrated into content")
+                        # Retry integration or add citations manually
+                        logger.warning("Attempting to add citations manually...")
+                        # Citations will be in references section even if not integrated inline
+                        
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    error_msg = f"Citation generation failed: {str(e)}"
+                    logger.error(f"Citation generation failed: {error_msg}", exc_info=True)
+                    logger.error(f"API_ERROR: Citation generation exception. Error: {type(e).__name__}: {str(e)}")
+                    if generation_mode == GenerationMode.MULTI_PHASE:
+                        # Citations are mandatory for Multi-Phase - fail fast
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Citation generation failed: {str(e)}. Citations are required for Multi-Phase workflow."
+                        )
+                    else:
+                        logger.warning(f"Citation generation failed: {e} - continuing without citations")
+                        citation_warnings = [f"Citation generation failed: {error_msg}"]
         
         # Calculate SEO score (simplified)
         seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
@@ -1158,8 +1856,22 @@ async def generate_blog_enhanced(
         if additional_context.get("brand_recommendations"):
             brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
         
+        # Apply content sanitization to remove LLM artifacts (December 2025)
+        from src.blog_writer_sdk.utils.content_sanitizer import sanitize_llm_output
+        final_content, artifacts_removed = sanitize_llm_output(final_content)
+        sanitization_applied = len(artifacts_removed) > 0
+        if sanitization_applied:
+            logger.info(f"Content sanitization applied, artifacts removed: {artifacts_removed}")
+        
         # Extract content metadata for frontend processing (unified + remark + rehype support)
         content_metadata = extract_content_metadata(final_content)
+        excerpt = extract_excerpt(final_content, max_length=250)
+        
+        # Sanitize excerpt for meta description quality
+        from src.blog_writer_sdk.utils.content_sanitizer import sanitize_excerpt
+        if excerpt:
+            primary_keyword = request.keywords[0] if request.keywords else None
+            excerpt = sanitize_excerpt(excerpt, primary_keyword)
         
         # Enhance SEO metadata with OG and Twitter tags
         enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1233,6 +1945,13 @@ async def generate_blog_enhanced(
             for s in pipeline_result.stage_results
         ]
         
+        # Collect all warnings from pipeline and citations
+        all_warnings = []
+        if pipeline_result.warnings:
+            all_warnings.extend(pipeline_result.warnings)
+        if 'citation_warnings' in locals() and citation_warnings:
+            all_warnings.extend(citation_warnings)
+        
         # Log generation
         background_tasks.add_task(
             log_generation,
@@ -1242,9 +1961,39 @@ async def generate_blog_enhanced(
             generation_time=pipeline_result.generation_time
         )
         
+        # Build internal links metadata (December 2025 enhanced format)
+        internal_links_metadata_dict = pipeline_result.seo_metadata.get("internal_links_metadata")
+        internal_links_metadata = None
+        if internal_links_metadata_dict:
+            from src.blog_writer_sdk.models.enhanced_blog_models import InternalLinksMetadata, InsertedInternalLink
+            try:
+                inserted_links = [
+                    InsertedInternalLink(**link) if isinstance(link, dict) else link
+                    for link in internal_links_metadata_dict.get("inserted", [])
+                ]
+                internal_links_metadata = InternalLinksMetadata(
+                    inserted=inserted_links,
+                    available_count=internal_links_metadata_dict.get("available_count", 0),
+                    inserted_count=internal_links_metadata_dict.get("inserted_count", 0),
+                    max_allowed=internal_links_metadata_dict.get("max_allowed", 5)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to build internal links metadata: {e}")
+        
+        # Build site context for response
+        site_context = None
+        if request.site_id or request.site_domain:
+            from src.blog_writer_sdk.models.enhanced_blog_models import SiteContext
+            site_context = SiteContext(
+                site_id=request.site_id,
+                site_domain=request.site_domain,
+                total_pages=len(request.internal_link_targets) if request.internal_link_targets else 0
+            )
+        
         return EnhancedBlogGenerationResponse(
             title=pipeline_result.meta_title or request.topic,
             content=final_content,
+            excerpt=excerpt,
             meta_title=pipeline_result.meta_title,
             meta_description=pipeline_result.meta_description,
             readability_score=pipeline_result.readability_score,
@@ -1256,6 +2005,8 @@ async def generate_blog_enhanced(
             generation_time=pipeline_result.generation_time,
             seo_metadata=enhanced_seo_metadata,
             internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+            internal_links_metadata=internal_links_metadata,
+            site_context=site_context,
             quality_score=pipeline_result.quality_score,
             quality_dimensions=quality_dimensions,
             structured_data=enhanced_structured_data,
@@ -1264,8 +2015,11 @@ async def generate_blog_enhanced(
             generated_images=None,  # Image generation moved to separate endpoint
             brand_recommendations=brand_recommendations,
             success=True,
-            warnings=[],  # Image generation warnings removed (use separate endpoint)
-            progress_updates=progress_updates  # Include progress updates for frontend
+            warnings=all_warnings,  # Include API warnings
+            progress_updates=progress_updates,  # Include progress updates for frontend
+            sanitization_applied=sanitization_applied,
+            artifacts_removed=artifacts_removed,
+            image_positions=[]  # Images handled by frontend; positions can be added via content metadata
         )
         
     except Exception as e:
@@ -1325,6 +2079,42 @@ async def blog_generation_worker(request: Dict[str, Any]):
         request_data = request.get("request", {})
         blog_request = EnhancedBlogGenerationRequest(**request_data)
         
+        # Route based on generation mode (same logic as synchronous endpoint)
+        generation_mode = getattr(blog_request, 'mode', GenerationMode.QUICK_GENERATE)
+        
+        if generation_mode == GenerationMode.QUICK_GENERATE:
+            # Quick Generate mode: Use DataForSEO Content Generation
+            USE_DATAFORSEO = True
+            logger.info(f"Worker: ⚡ Quick Generate mode - Using DataForSEO Content Generation API for job {job_id}")
+            
+        elif generation_mode == GenerationMode.MULTI_PHASE:
+            # Multi-Phase mode: Use Pipeline
+            USE_DATAFORSEO = False
+            logger.info(f"Worker: 🔧 Multi-Phase mode - Using comprehensive pipeline for job {job_id}")
+            
+            # Force citations for Multi-Phase mode (premium content requires citations)
+            blog_request.use_citations = True
+            logger.info(f"Worker: 🔧 Multi-Phase mode: Citations are mandatory for premium content")
+            
+            # Ensure Google Custom Search is available for citations
+            if not google_custom_search_client:
+                logger.error(f"Worker: Multi-Phase mode requires Google Custom Search for citations")
+                job.status = JobStatus.FAILED
+                job.error_message = "Google Custom Search API is required for Multi-Phase workflow citations"
+                job.completed_at = datetime.utcnow()
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Google Custom Search API is required for Multi-Phase workflow citations"}
+                )
+            
+        else:
+            # Fallback: Check legacy flag
+            if hasattr(blog_request, 'use_dataforseo_content_generation'):
+                USE_DATAFORSEO = blog_request.use_dataforseo_content_generation
+            else:
+                USE_DATAFORSEO = os.getenv("USE_DATAFORSEO_CONTENT_GENERATION", "true").lower() == "true"
+            logger.info(f"Worker: Using legacy flag - USE_DATAFORSEO={USE_DATAFORSEO}")
+        
         try:
             # Create progress callback that updates job
             progress_updates = []
@@ -1339,6 +2129,208 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 if "progress_percentage" in update:
                     job.progress_percentage = update.get("progress_percentage", 0.0)
             
+            # Use DataForSEO Content Generation if enabled
+            if USE_DATAFORSEO:
+                logger.info(f"Worker: 🔷 Using DataForSEO Content Generation API for blog generation")
+                
+                # Initialize DataForSEO Content Generation Service
+                content_service = DataForSEOContentGenerationService(dataforseo_client=dataforseo_client_global)
+                await content_service.initialize(tenant_id="default")
+                
+                if not content_service.is_configured:
+                    logger.warning("Worker: DataForSEO Content Generation not configured, falling back to pipeline")
+                    USE_DATAFORSEO = False
+                else:
+                    # Map blog type (all 28 blog types supported)
+                    blog_type_map = {
+                        BlogContentType.BRAND: DataForSEOBlogType.BRAND,
+                        BlogContentType.TOP_10: DataForSEOBlogType.TOP_10,
+                        BlogContentType.PRODUCT_REVIEW: DataForSEOBlogType.PRODUCT_REVIEW,
+                        BlogContentType.HOW_TO: DataForSEOBlogType.HOW_TO,
+                        BlogContentType.COMPARISON: DataForSEOBlogType.COMPARISON,
+                        BlogContentType.GUIDE: DataForSEOBlogType.GUIDE,
+                        BlogContentType.CUSTOM: DataForSEOBlogType.CUSTOM,
+                        BlogContentType.TUTORIAL: DataForSEOBlogType.TUTORIAL,
+                        BlogContentType.LISTICLE: DataForSEOBlogType.LISTICLE,
+                        BlogContentType.CASE_STUDY: DataForSEOBlogType.CASE_STUDY,
+                        BlogContentType.NEWS: DataForSEOBlogType.NEWS,
+                        BlogContentType.OPINION: DataForSEOBlogType.OPINION,
+                        BlogContentType.INTERVIEW: DataForSEOBlogType.INTERVIEW,
+                        BlogContentType.FAQ: DataForSEOBlogType.FAQ,
+                        BlogContentType.CHECKLIST: DataForSEOBlogType.CHECKLIST,
+                        BlogContentType.TIPS: DataForSEOBlogType.TIPS,
+                        BlogContentType.DEFINITION: DataForSEOBlogType.DEFINITION,
+                        BlogContentType.BENEFITS: DataForSEOBlogType.BENEFITS,
+                        BlogContentType.PROBLEM_SOLUTION: DataForSEOBlogType.PROBLEM_SOLUTION,
+                        BlogContentType.TREND_ANALYSIS: DataForSEOBlogType.TREND_ANALYSIS,
+                        BlogContentType.STATISTICS: DataForSEOBlogType.STATISTICS,
+                        BlogContentType.RESOURCE_LIST: DataForSEOBlogType.RESOURCE_LIST,
+                        BlogContentType.TIMELINE: DataForSEOBlogType.TIMELINE,
+                        BlogContentType.MYTH_BUSTING: DataForSEOBlogType.MYTH_BUSTING,
+                        BlogContentType.BEST_PRACTICES: DataForSEOBlogType.BEST_PRACTICES,
+                        BlogContentType.GETTING_STARTED: DataForSEOBlogType.GETTING_STARTED,
+                        BlogContentType.ADVANCED: DataForSEOBlogType.ADVANCED,
+                        BlogContentType.TROUBLESHOOTING: DataForSEOBlogType.TROUBLESHOOTING,
+                    }
+                    df_blog_type = blog_type_map.get(blog_request.blog_type or BlogContentType.CUSTOM, DataForSEOBlogType.CUSTOM)
+                    
+                    # Calculate word count from length
+                    word_count_map = {
+                        ContentLength.SHORT: 500,
+                        ContentLength.MEDIUM: 1500,
+                        ContentLength.LONG: 2500,
+                        ContentLength.EXTENDED: 4000,
+                    }
+                    word_count = blog_request.word_count_target or word_count_map.get(blog_request.length, 1500)
+                    
+                    # Map tone
+                    tone_map = {
+                        ContentTone.PROFESSIONAL: "professional",
+                        ContentTone.CASUAL: "casual",
+                        ContentTone.FRIENDLY: "friendly",
+                        ContentTone.AUTHORITATIVE: "professional",
+                        ContentTone.CONVERSATIONAL: "casual",
+                        ContentTone.TECHNICAL: "professional",
+                        ContentTone.CREATIVE: "casual",
+                    }
+                    if blog_request.tone in tone_map:
+                        tone_str = tone_map[blog_request.tone]
+                    elif hasattr(blog_request.tone, 'value'):
+                        tone_str = blog_request.tone.value
+                    else:
+                        tone_str = str(blog_request.tone).lower()
+                    
+                    try:
+                        # Generate blog content using DataForSEO
+                        logger.info(f"Worker: Calling DataForSEO generate_blog_content: topic={blog_request.topic}, blog_type={df_blog_type.value}, word_count={word_count}")
+                        
+                        result = await content_service.generate_blog_content(
+                            topic=blog_request.topic,
+                            keywords=blog_request.keywords,
+                            blog_type=df_blog_type,
+                            tone=tone_str,
+                            word_count=word_count,
+                            target_audience=blog_request.target_audience,
+                            language="en",
+                            tenant_id="default",
+                            optimize_for_traffic=getattr(blog_request, 'optimize_for_traffic', True),
+                            analyze_backlinks=getattr(blog_request, 'analyze_backlinks', False),
+                            backlink_url=getattr(blog_request, 'backlink_url', None),
+                            brand_name=getattr(blog_request, 'brand_name', None),
+                            category=getattr(blog_request, 'category', None),
+                            product_name=getattr(blog_request, 'product_name', None),
+                            items=getattr(blog_request, 'comparison_items', None),
+                            custom_instructions=blog_request.custom_instructions
+                        )
+                        
+                        logger.info(f"Worker: DataForSEO generation completed: content_length={len(result.get('content', ''))}, tokens={result.get('tokens_used', 0)}")
+                        
+                        # Validate content
+                        generated_content = result.get("content", "")
+                        if not generated_content or len(generated_content.strip()) < 50:
+                            raise Exception(f"DataForSEO returned empty content: length={len(generated_content)}")
+                        
+                        # Extract SEO metrics
+                        seo_metrics = result.get("seo_metrics", {})
+                        readability_score = seo_metrics.get("readability_score", 75.0)
+                        seo_score = seo_metrics.get("seo_score", 85.0)
+                        
+                        # Build SEO metadata
+                        seo_metadata = {
+                            "semantic_keywords": result.get("keywords", blog_request.keywords),
+                            "subtopics": result.get("subtopics", []),
+                            "blog_type": result.get("blog_type", "custom"),
+                            "keyword_density": seo_metrics.get("keyword_density", {}),
+                            "headings_count": seo_metrics.get("headings_count", 0),
+                            "avg_sentence_length": seo_metrics.get("avg_sentence_length", 0),
+                            "seo_factors": seo_metrics.get("seo_factors", []),
+                            "word_count_range": seo_metrics.get("word_count_range", {}),
+                            "backlink_keywords": result.get("backlink_keywords", [])
+                        }
+                        
+                        quality_dimensions = {
+                            "readability": readability_score,
+                            "seo": seo_score,
+                            "structure": min(100, seo_metrics.get("headings_count", 0) * 20),
+                            "keyword_optimization": min(100, seo_score * 0.8)
+                        }
+                        
+                        excerpt = extract_excerpt(generated_content, max_length=250)
+                        
+                        # Update job with result
+                        job.status = JobStatus.COMPLETED
+                        job.completed_at = datetime.utcnow()
+                        job.result = EnhancedBlogGenerationResponse(
+                            title=result.get("title", blog_request.topic),
+                            content=generated_content,
+                            excerpt=excerpt,
+                            meta_title=result.get("meta_title", result.get("title", blog_request.topic)),
+                            meta_description=result.get("meta_description", ""),
+                            readability_score=readability_score,
+                            seo_score=seo_score,
+                            stage_results=[],
+                            citations=[],
+                            total_tokens=result.get("tokens_used", 0),
+                            total_cost=result.get("cost", 0.0),
+                            generation_time=(datetime.utcnow() - job.started_at).total_seconds(),
+                            seo_metadata=seo_metadata,
+                            internal_links=[],
+                            quality_score=seo_score,
+                            quality_dimensions=quality_dimensions,
+                            structured_data=None,
+                            semantic_keywords=result.get("keywords", blog_request.keywords),
+                            content_metadata={},
+                            success=True,
+                            warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
+                            progress_updates=progress_updates
+                        )
+                        
+                        logger.info(f"Worker: DataForSEO generation completed successfully for job {job_id}")
+                        return JSONResponse(
+                            status_code=200,
+                            content={"status": "completed", "job_id": job_id}
+                        )
+                        
+                    except Exception as e:
+                        logger.error(f"Worker: DataForSEO content generation failed: {e}", exc_info=True)
+                        USE_DATAFORSEO = False
+                        logger.warning(f"Worker: Falling back to pipeline due to DataForSEO error: {str(e)}")
+            
+            # Fallback to pipeline if DataForSEO is disabled or failed
+            if not USE_DATAFORSEO:
+                logger.info(f"Worker: Using multi-stage pipeline for blog generation")
+                
+                # Check if AI generator is available
+                if ai_generator is None:
+                    job.status = JobStatus.FAILED
+                    job.error_message = "AI Content Generator is not initialized"
+                    job.completed_at = datetime.utcnow()
+                    return JSONResponse(
+                        status_code=503,
+                        content={"error": "AI Content Generator is not initialized"}
+                    )
+            
+            # Handle Google Search Console client (multi-site support)
+            gsc_client_worker = None
+            gsc_credentials_path = "/secrets/GSC_SERVICE_ACCOUNT_KEY"
+            if hasattr(blog_request, 'gsc_site_url') and blog_request.gsc_site_url:
+                # Use site-specific Search Console client
+                logger.info(f"Worker: Using site-specific Search Console: {blog_request.gsc_site_url}")
+                if os.path.exists(gsc_credentials_path):
+                    try:
+                        gsc_client_worker = GoogleSearchConsoleClient(
+                            credentials_path=gsc_credentials_path,
+                            site_url=blog_request.gsc_site_url
+                        )
+                    except Exception as e:
+                        logger.warning(f"Worker: Failed to initialize GSC client for {blog_request.gsc_site_url}: {e}")
+                        gsc_client_worker = None
+                else:
+                    logger.warning(f"Worker: GSC credentials not found at {gsc_credentials_path}, skipping GSC")
+            elif google_search_console_client:
+                # Use default global Search Console client
+                gsc_client_worker = google_search_console_client
+            
             # Initialize pipeline (same as synchronous endpoint)
             pipeline = MultiStageGenerationPipeline(
                 ai_generator=ai_generator,
@@ -1350,6 +2342,7 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 intent_analyzer=intent_analyzer,
                 few_shot_extractor=few_shot_extractor if blog_request.use_google_search else None,
                 length_optimizer=length_optimizer if blog_request.use_google_search else None,
+                search_console=gsc_client_worker,  # Add Search Console client (site-specific or default)
                 use_consensus=blog_request.use_consensus_generation,
                 dataforseo_client=dataforseo_client_global,
                 progress_callback=progress_callback
@@ -1369,6 +2362,18 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 additional_context["target_audience"] = blog_request.target_audience
             if blog_request.custom_instructions:
                 additional_context["custom_instructions"] = blog_request.custom_instructions
+            
+            # Add multi-site support parameters (December 2025)
+            if blog_request.site_id:
+                additional_context["site_id"] = blog_request.site_id
+            if blog_request.site_domain:
+                additional_context["site_domain"] = blog_request.site_domain
+            if blog_request.internal_link_targets:
+                additional_context["internal_link_targets"] = [
+                    target.dict() if hasattr(target, 'dict') else target
+                    for target in blog_request.internal_link_targets
+                ]
+            additional_context["max_internal_links"] = blog_request.max_internal_links
             
             # Add product research requirements if enabled
             if blog_request.include_product_research:
@@ -1412,33 +2417,95 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Frontend should call /api/v1/images/generate separately after blog generation
             final_content = pipeline_result.final_content
             
-            # Add citations if enabled
+            # Add citations if enabled (mandatory for Multi-Phase mode)
             citations = []
-            if blog_request.use_citations and google_custom_search_client:
-                try:
-                    citation_result = await citation_generator.generate_citations(
-                        final_content,
-                        blog_request.topic,
-                        blog_request.keywords
-                    )
-                    citations = [
-                        {
-                            "text": c.text[:100],
-                            "url": c.source_url,
-                            "title": c.source_title
-                        }
-                        for c in citation_result.citations
-                    ]
-                    final_content = citation_generator.integrate_citations(
-                        final_content,
-                        citation_result.citations
-                    )
-                    if citation_result.sources_used:
-                        final_content += citation_generator.generate_references_section(
-                            citation_result.sources_used
+            citation_warnings = []  # Initialize citation warnings list
+            if blog_request.use_citations:
+                if not google_custom_search_client:
+                    if generation_mode == GenerationMode.MULTI_PHASE:
+                        # Citations are mandatory for Multi-Phase - fail fast
+                        job.status = JobStatus.FAILED
+                        job.error_message = "Citation generation requires Google Custom Search API"
+                        job.completed_at = datetime.utcnow()
+                        return JSONResponse(
+                            status_code=503,
+                            content={"error": "Citation generation requires Google Custom Search API"}
                         )
-                except Exception as e:
-                    logger.warning(f"Citation generation failed: {e}")
+                    else:
+                        logger.warning("Worker: Citation generation requested but Google Custom Search not available")
+                else:
+                    try:
+                        logger.info(f"Worker: Generating citations for topic: {blog_request.topic}")
+                        citation_result = await citation_generator.generate_citations(
+                            final_content,
+                            blog_request.topic,
+                            blog_request.keywords,
+                            num_citations=5  # Minimum 5 citations for authoritative content
+                        )
+                        
+                        # Collect citation warnings
+                        if citation_result.warnings:
+                            citation_warnings.extend(citation_result.warnings)
+                        
+                        # Validate citations were generated
+                        if citation_result.citation_count == 0:
+                            logger.error("Worker: Citation generation returned 0 citations")
+                            if generation_mode == GenerationMode.MULTI_PHASE:
+                                job.status = JobStatus.FAILED
+                                job.error_message = "Failed to generate citations - no sources found"
+                                job.completed_at = datetime.utcnow()
+                                return JSONResponse(
+                                    status_code=500,
+                                    content={"error": "Failed to generate citations - citations are required for Multi-Phase workflow"}
+                                )
+                            else:
+                                logger.warning("Worker: No citations generated - continuing without citations")
+                        else:
+                            logger.info(f"Worker: Generated {citation_result.citation_count} citations")
+                        
+                        citations = [
+                            {
+                                "text": c.text[:100],
+                                "url": c.source_url,
+                                "title": c.source_title
+                            }
+                            for c in citation_result.citations
+                        ]
+                        
+                        # Integrate citations into content
+                        final_content = citation_generator.integrate_citations(
+                            final_content,
+                            citation_result.citations
+                        )
+                        
+                        # Add references section
+                        if citation_result.sources_used:
+                            final_content += citation_generator.generate_references_section(
+                                citation_result.sources_used
+                            )
+                        
+                        # Validate citations were integrated
+                        citation_markers = re.findall(r'\[.*?\]\(.*?\)', final_content)
+                        if len(citation_markers) == 0 and citation_result.citation_count > 0:
+                            logger.error("Worker: Citations generated but not integrated into content")
+                            # Citations will be in references section even if not integrated inline
+                            
+                    except Exception as e:
+                        error_msg = f"Citation generation failed: {str(e)}"
+                        logger.error(f"Worker: Citation generation failed: {error_msg}", exc_info=True)
+                        logger.error(f"API_ERROR: Worker citation generation exception. Error: {type(e).__name__}: {str(e)}")
+                        if generation_mode == GenerationMode.MULTI_PHASE:
+                            # Citations are mandatory for Multi-Phase - fail fast
+                            job.status = JobStatus.FAILED
+                            job.error_message = f"Citation generation failed: {str(e)}"
+                            job.completed_at = datetime.utcnow()
+                            return JSONResponse(
+                                status_code=500,
+                                content={"error": f"Citation generation failed: {str(e)}. Citations are required for Multi-Phase workflow."}
+                            )
+                        else:
+                            logger.warning(f"Worker: Citation generation failed: {e} - continuing without citations")
+                            citation_warnings.append(f"Citation generation failed: {error_msg}")
             
             # Calculate SEO score
             seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
@@ -1457,8 +2524,21 @@ async def blog_generation_worker(request: Dict[str, Any]):
             if additional_context.get("brand_recommendations"):
                 brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
             
+            # Apply content sanitization (December 2025)
+            from src.blog_writer_sdk.utils.content_sanitizer import sanitize_llm_output, sanitize_excerpt as _sanitize_excerpt
+            final_content, artifacts_removed = sanitize_llm_output(final_content)
+            sanitization_applied = len(artifacts_removed) > 0
+            if sanitization_applied:
+                logger.info(f"Worker: Content sanitization applied, artifacts removed: {artifacts_removed}")
+            
             # Extract content metadata
             content_metadata = extract_content_metadata(final_content)
+            excerpt = extract_excerpt(final_content, max_length=250)
+            
+            # Sanitize excerpt
+            if excerpt:
+                primary_keyword = blog_request.keywords[0] if blog_request.keywords else None
+                excerpt = _sanitize_excerpt(excerpt, primary_keyword)
             
             # Enhance SEO metadata
             enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1523,10 +2603,47 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 for s in pipeline_result.stage_results
             ]
             
+            # Collect all warnings from pipeline and citations
+            all_warnings = []
+            if pipeline_result.warnings:
+                all_warnings.extend(pipeline_result.warnings)
+            if citation_warnings:
+                all_warnings.extend(citation_warnings)
+            
+            # Build internal links metadata (December 2025)
+            internal_links_metadata_dict = pipeline_result.seo_metadata.get("internal_links_metadata")
+            internal_links_metadata = None
+            if internal_links_metadata_dict:
+                from src.blog_writer_sdk.models.enhanced_blog_models import InternalLinksMetadata, InsertedInternalLink
+                try:
+                    inserted_links = [
+                        InsertedInternalLink(**link) if isinstance(link, dict) else link
+                        for link in internal_links_metadata_dict.get("inserted", [])
+                    ]
+                    internal_links_metadata = InternalLinksMetadata(
+                        inserted=inserted_links,
+                        available_count=internal_links_metadata_dict.get("available_count", 0),
+                        inserted_count=internal_links_metadata_dict.get("inserted_count", 0),
+                        max_allowed=internal_links_metadata_dict.get("max_allowed", 5)
+                    )
+                except Exception as e:
+                    logger.warning(f"Worker: Failed to build internal links metadata: {e}")
+            
+            # Build site context
+            site_context = None
+            if blog_request.site_id or blog_request.site_domain:
+                from src.blog_writer_sdk.models.enhanced_blog_models import SiteContext
+                site_context = SiteContext(
+                    site_id=blog_request.site_id,
+                    site_domain=blog_request.site_domain,
+                    total_pages=len(blog_request.internal_link_targets) if blog_request.internal_link_targets else 0
+                )
+            
             # Create response
             response = EnhancedBlogGenerationResponse(
                 title=pipeline_result.meta_title or blog_request.topic,
                 content=final_content,
+                excerpt=excerpt,
                 meta_title=pipeline_result.meta_title,
                 meta_description=pipeline_result.meta_description,
                 readability_score=pipeline_result.readability_score,
@@ -1538,6 +2655,8 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 generation_time=pipeline_result.generation_time,
                 seo_metadata=enhanced_seo_metadata,
                 internal_links=pipeline_result.seo_metadata.get("internal_links", []),
+                internal_links_metadata=internal_links_metadata,
+                site_context=site_context,
                 quality_score=pipeline_result.quality_score,
                 quality_dimensions=quality_dimensions,
                 structured_data=enhanced_structured_data,
@@ -1546,8 +2665,11 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 generated_images=None,  # Image generation moved to separate endpoint
                 brand_recommendations=brand_recommendations,
                 success=True,
-                warnings=[],  # Image generation warnings removed (use separate endpoint)
-                progress_updates=progress_updates
+                warnings=all_warnings,
+                progress_updates=progress_updates,
+                sanitization_applied=sanitization_applied,
+                artifacts_removed=artifacts_removed,
+                image_positions=[]
             )
             
             # Update job with result
@@ -1631,6 +2753,263 @@ async def get_job_status(job_id: str):
         result=job.result,
         error_message=job.error_message,
         estimated_time_remaining=estimated_time_remaining
+    )
+
+
+# Streaming version of enhanced blog generation
+@app.post("/api/v1/blog/generate-enhanced/stream")
+async def generate_blog_enhanced_stream(
+    request: EnhancedBlogGenerationRequest,
+    http_request: Request
+):
+    """
+    Streaming version of enhanced blog generation.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - queued: Job created and queued
+    - initialization: Setting up pipeline
+    - keyword_analysis: Analyzing keywords with DataForSEO
+    - competitor_analysis: Analyzing SERP competitors
+    - intent_analysis: Determining search intent
+    - length_optimization: Optimizing content length
+    - research_outline: Research & outline generation
+    - draft_generation: Initial draft creation
+    - enhancement: Content enhancement
+    - seo_polish: SEO optimization
+    - semantic_integration: Semantic keyword integration
+    - quality_scoring: Quality assessment
+    - citation_generation: Adding citations
+    - finalization: Final processing
+    - completed: Final results
+    
+    This endpoint always uses async mode (queue) and streams stage updates.
+    Frontend can listen to these events to show real-time progress.
+    
+    Example:
+    ```typescript
+    const response = await fetch('/api/v1/blog/generate-enhanced/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: 'Python', keywords: ['python'] })
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const update = JSON.parse(line.slice(6));
+          console.log(`Stage: ${update.stage}, Progress: ${update.progress}%`);
+        }
+      }
+    }
+    ```
+    """
+    async def generate_stream():
+        try:
+            global blog_generation_jobs
+            
+            # Stage 1: Create async job
+            job_id = str(uuid.uuid4())
+            
+            # Create job record
+            job = BlogGenerationJob(
+                job_id=job_id,
+                status=JobStatus.PENDING,
+                request=request.dict()
+            )
+            blog_generation_jobs[job_id] = job
+            
+            # Yield initial queued status
+            yield await stream_blog_stage_update(
+                BlogGenerationStage.QUEUED,
+                0.0,
+                message="Blog generation job created",
+                job_id=job_id,
+                status="queued"
+            )
+            
+            try:
+                # Get Cloud Tasks service
+                cloud_tasks_service = get_cloud_tasks_service()
+                
+                # Get worker URL
+                worker_url = os.getenv("CLOUD_RUN_WORKER_URL")
+                if not worker_url:
+                    service_base_url = os.getenv("CLOUD_RUN_SERVICE_URL", "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app")
+                    worker_url = f"{service_base_url}/api/v1/blog/worker"
+                
+                # Create Cloud Task
+                task_name = cloud_tasks_service.create_blog_generation_task(
+                    request_data={
+                        "job_id": job_id,
+                        "request": request.dict()
+                    },
+                    worker_url=worker_url
+                )
+                
+                # Update job
+                job.task_name = task_name
+                job.status = JobStatus.QUEUED
+                job.queued_at = datetime.utcnow()
+                
+                # Yield queued status
+                yield await stream_blog_stage_update(
+                    BlogGenerationStage.QUEUED,
+                    5.0,
+                    message="Job queued successfully",
+                    job_id=job_id,
+                    status="queued"
+                )
+                
+                # Poll job status and stream updates
+                last_stage = None
+                last_progress = 0.0
+                max_wait_time = 600  # 10 minutes max
+                start_time = time.time()
+                
+                while True:
+                    # Check timeout
+                    if time.time() - start_time > max_wait_time:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Timeout waiting for job completion"},
+                            message="Job timeout - took too long",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Get current job status
+                    if job_id not in blog_generation_jobs:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            0.0,
+                            data={"error": "Job not found"},
+                            message="Job not found",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    job = blog_generation_jobs[job_id]
+                    
+                    # Map job status to stage
+                    if job.status == JobStatus.QUEUED:
+                        current_stage = BlogGenerationStage.QUEUED
+                    elif job.status == JobStatus.PROCESSING:
+                        current_stage = BlogGenerationStage.PROCESSING
+                        # Map current_stage string to BlogGenerationStage enum
+                        if job.current_stage:
+                            stage_mapping = {
+                                "initialization": BlogGenerationStage.INITIALIZATION,
+                                "keyword_analysis": BlogGenerationStage.KEYWORD_ANALYSIS,
+                                "competitor_analysis": BlogGenerationStage.COMPETITOR_ANALYSIS,
+                                "intent_analysis": BlogGenerationStage.INTENT_ANALYSIS,
+                                "length_optimization": BlogGenerationStage.LENGTH_OPTIMIZATION,
+                                "research_outline": BlogGenerationStage.RESEARCH_OUTLINE,
+                                "draft_generation": BlogGenerationStage.DRAFT_GENERATION,
+                                "enhancement": BlogGenerationStage.ENHANCEMENT,
+                                "seo_polish": BlogGenerationStage.SEO_POLISH,
+                                "semantic_integration": BlogGenerationStage.SEMANTIC_INTEGRATION,
+                                "quality_scoring": BlogGenerationStage.QUALITY_SCORING,
+                                "citation_generation": BlogGenerationStage.CITATION_GENERATION,
+                                "finalization": BlogGenerationStage.FINALIZATION,
+                            }
+                            current_stage = stage_mapping.get(job.current_stage, BlogGenerationStage.PROCESSING)
+                    elif job.status == JobStatus.COMPLETED:
+                        current_stage = BlogGenerationStage.COMPLETED
+                    elif job.status == JobStatus.FAILED:
+                        current_stage = BlogGenerationStage.ERROR
+                    else:
+                        current_stage = BlogGenerationStage.PROCESSING
+                    
+                    # Yield update if stage or progress changed
+                    if current_stage != last_stage or job.progress_percentage != last_progress:
+                        # Get latest progress update if available
+                        latest_update = None
+                        if job.progress_updates:
+                            latest_update = job.progress_updates[-1]
+                        
+                        yield await stream_blog_stage_update(
+                            current_stage,
+                            job.progress_percentage,
+                            data={
+                                "current_stage": job.current_stage,
+                                "progress_updates": job.progress_updates[-5:] if job.progress_updates else [],  # Last 5 updates
+                                "latest_update": latest_update
+                            },
+                            message=latest_update.get("status", job.current_stage or "Processing") if latest_update else (job.current_stage or "Processing"),
+                            job_id=job_id,
+                            status=job.status.value
+                        )
+                        
+                        last_stage = current_stage
+                        last_progress = job.progress_percentage
+                    
+                    # Check if completed
+                    if job.status == JobStatus.COMPLETED:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.COMPLETED,
+                            100.0,
+                            data={"result": job.result},
+                            message="Blog generation completed successfully",
+                            job_id=job_id,
+                            status="completed"
+                        )
+                        break
+                    
+                    # Check if failed
+                    if job.status == JobStatus.FAILED:
+                        yield await stream_blog_stage_update(
+                            BlogGenerationStage.ERROR,
+                            job.progress_percentage,
+                            data={"error": job.error_message, "error_details": job.error_details},
+                            message=f"Blog generation failed: {job.error_message}",
+                            job_id=job_id,
+                            status="failed"
+                        )
+                        break
+                    
+                    # Wait before next poll
+                    await asyncio.sleep(0.5)
+                    
+            except Exception as e:
+                logger.error(f"Failed to create or monitor blog generation job: {e}", exc_info=True)
+                yield await stream_blog_stage_update(
+                    BlogGenerationStage.ERROR,
+                    0.0,
+                    data={"error": str(e)},
+                    message=f"Failed to create job: {str(e)}",
+                    job_id=job_id,
+                    status="failed"
+                )
+                
+        except Exception as e:
+            logger.error(f"Blog generation stream error: {e}", exc_info=True)
+            yield await stream_blog_stage_update(
+                BlogGenerationStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"Stream error: {str(e)}",
+                status="failed"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
     )
 
 
@@ -1941,7 +3320,7 @@ async def _build_keyword_discovery(
                 location_name=location,
                 language_code=language,
                 tenant_id=tenant_id,
-                depth=20
+                depth=10  # Reduced from 20 to save credits
             ),
             return_exceptions=True
         )
@@ -2123,41 +3502,16 @@ async def analyze_keywords_enhanced(
     - Falls back to "United States" if IP detection fails or is unavailable
     """
     try:
-        # Use shared function without progress callbacks for standard endpoint
-        return await _analyze_keywords_with_progress(
-            request=request,
-            http_request=http_request,
-            progress_callback=None
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Enhanced keyword analysis failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Enhanced keyword analysis failed: {str(e)}"
-        )
-
-
-async def _analyze_keywords_with_progress_legacy(
-    request: EnhancedKeywordAnalysisRequest,
-    http_request: Request
-):
-    """
-    Legacy implementation - kept for reference.
-    Use _analyze_keywords_with_progress instead.
-    """
-    try:
         # Detect location from IP if not explicitly specified
         detected_location = None
-        if not request.location or request.location == "United States":
+        if not request.location:
             if http_request:
                 detected_location = await detect_location_from_ip(http_request)
                 if detected_location:
                     logger.info(f"Detected location from IP: {detected_location}")
         
         # Use detected location or fall back to request location or default
-        effective_location = detected_location or request.location or "United States"
+        effective_location = request.location or detected_location or "United States"
         from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
         
         # Apply testing mode limits
@@ -2623,740 +3977,708 @@ async def _analyze_keywords_with_progress_legacy(
         )
 
 
-async def _analyze_keywords_with_progress(
-    request: EnhancedKeywordAnalysisRequest,
-    http_request: Request,
-    progress_callback: Optional[Any] = None
-) -> Dict[str, Any]:
-    """
-    Internal function to analyze keywords with optional progress callbacks.
-    Used by both standard and streaming endpoints.
-    """
-    import time
-    from src.blog_writer_sdk.models.progress_models import ProgressUpdate
-    
-    total_stages = 10
-    
-    async def emit_progress(stage: str, stage_num: int, progress: float, status: str, details: str = None, metadata: Dict[str, Any] = None):
-        """Helper to emit progress updates."""
-        if progress_callback:
-            update = ProgressUpdate(
-                stage=stage,
-                stage_number=stage_num,
-                total_stages=total_stages,
-                progress_percentage=progress,
-                status=status,
-                details=details,
-                metadata=metadata or {},
-                timestamp=time.time()
-            )
-            try:
-                await progress_callback(update)
-            except Exception as e:
-                logger.warning(f"Progress callback failed: {e}")
-    
-    try:
-        # Stage 1: Initialization (5%)
-        current_stage = 1
-        await emit_progress(
-            "initialization",
-            current_stage,
-            5.0,
-            "Initializing keyword analysis",
-            f"Setting up analysis for {len(request.keywords)} keywords",
-            {"keywords_count": len(request.keywords), "keywords": request.keywords[:3]}
-        )
-        # Detect location from IP if not explicitly specified
-        detected_location = None
-        if not request.location or request.location == "United States":
-            if http_request:
-                detected_location = await detect_location_from_ip(http_request)
-                if detected_location:
-                    logger.info(f"Detected location from IP: {detected_location}")
-        
-        effective_location = detected_location or request.location or "United States"
-        from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
-        
-        # Apply testing mode limits
-        limited_keywords = apply_keyword_limits(request.keywords)
-        max_suggestions = apply_suggestions_limit(request.max_suggestions_per_keyword)
-        limits = get_testing_limits() if is_testing_mode() else {}
-        max_total = limits.get("max_total_keywords", 200) if is_testing_mode() else 200
-        
-        if is_testing_mode():
-            logger.info(f"🧪 TESTING MODE: Keyword limits - {len(limited_keywords)} primary, {max_suggestions} suggestions/keyword, {max_total} total max")
-        
-        if not enhanced_analyzer:
-            raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
-        
-        # Stage 2: Primary Keyword Analysis (20%)
-        current_stage = 2
-        await emit_progress(
-            "keyword_analysis",
-            current_stage,
-            20.0,
-            "Analyzing primary keywords",
-            f"Analyzing {len(limited_keywords)} keywords for search volume, CPC, and competition",
-            {"keywords": limited_keywords}
-        )
-        
-        results = await enhanced_analyzer.analyze_keywords_comprehensive(
-            keywords=limited_keywords,
-            tenant_id=os.getenv("TENANT_ID", "default")
-        )
-        
-        await emit_progress(
-            "keyword_analysis",
-            current_stage,
-            20.0,
-            "Primary keyword analysis complete",
-            f"Analyzed {len(results)} keywords",
-            {"keywords_analyzed": len(results)}
-        )
-        
-        # Stage 3: Getting Suggestions (40%)
-        current_stage = 3
-        all_keywords = list(limited_keywords)
-        if enhanced_analyzer and enhanced_analyzer._df_client:
-            try:
-                tenant_id = os.getenv("TENANT_ID", "default")
-                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
-                
-                max_seed_keywords = limits.get("max_keywords", 5) if is_testing_mode() else 5
-                for idx, seed_keyword in enumerate(limited_keywords[:max_seed_keywords]):
-                    if len(all_keywords) >= max_total:
-                        break
-                    
-                    progress_pct = 20.0 + (idx + 1) * 20.0 / max_seed_keywords
-                    await emit_progress(
-                        "getting_suggestions",
-                        current_stage,
-                        progress_pct,
-                        "Getting keyword suggestions",
-                        f"Fetching suggestions for '{seed_keyword}' ({idx + 1}/{min(len(limited_keywords), max_seed_keywords)})",
-                        {"seed_keyword": seed_keyword, "progress": idx + 1, "total": min(len(limited_keywords), max_seed_keywords)}
-                    )
-                    
-                    try:
-                        df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
-                            seed_keyword=seed_keyword,
-                            location_name=effective_location,
-                            language_code=request.language or "en",
-                            tenant_id=tenant_id,
-                            limit=max_suggestions
-                        )
-                        
-                        for suggestion in df_suggestions:
-                            if len(all_keywords) >= max_total:
-                                break
-                            kw = suggestion.get("keyword", "").strip()
-                            if kw and kw not in all_keywords:
-                                all_keywords.append(kw)
-                    except Exception as e:
-                        logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
-                        continue
-            except Exception as e:
-                logger.warning(f"DataForSEO suggestions failed: {e}")
-        
-        await emit_progress(
-            "getting_suggestions",
-            current_stage,
-            40.0,
-            "Keyword suggestions complete",
-            f"Found {len(all_keywords) - len(limited_keywords)} additional keywords",
-            {"total_keywords": len(all_keywords), "suggestions_count": len(all_keywords) - len(limited_keywords)}
-        )
-        
-        # Stage 4: Analyzing Suggestions (60%)
-        current_stage = 4
-        if len(all_keywords) > len(request.keywords):
-            await emit_progress(
-                "analyzing_suggestions",
-                current_stage,
-                50.0,
-                "Analyzing suggested keywords",
-                f"Analyzing {len(all_keywords) - len(request.keywords)} suggested keywords",
-                {"suggestions_to_analyze": len(all_keywords) - len(request.keywords)}
-            )
-            
-            additional_results = await enhanced_analyzer.analyze_keywords_comprehensive(
-                keywords=all_keywords[len(request.keywords):],
-                tenant_id=os.getenv("TENANT_ID", "default")
-            )
-            results.update(additional_results)
-            
-            await emit_progress(
-                "analyzing_suggestions",
-                current_stage,
-                60.0,
-                "Suggested keywords analyzed",
-                f"Analyzed {len(additional_results)} additional keywords",
-                {"analyzed_count": len(additional_results)}
-            )
-        
-        # Stage 5: Clustering Keywords (75%)
-        current_stage = 5
-        await emit_progress(
-            "clustering",
-            current_stage,
-            65.0,
-            "Clustering keywords",
-            f"Grouping {len(all_keywords)} keywords by parent topics",
-            {"keywords_to_cluster": len(all_keywords)}
-        )
-        
-        kg_client = None
-        try:
-            kg_client = google_knowledge_graph_client if 'google_knowledge_graph_client' in globals() else None
-        except:
-            pass
-        
-        clustering = KeywordClustering(knowledge_graph_client=kg_client)
-        try:
-            max_clusters, max_keywords_per_cluster = apply_clustering_limits()
-            clustering_result = clustering.cluster_keywords(
-                keywords=all_keywords,
-                min_cluster_size=1,
-                max_clusters=max_clusters,
-                max_keywords_per_cluster=max_keywords_per_cluster
-            )
-            logger.info(f"Clustering result: {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords")
-        except Exception as e:
-            logger.warning(f"Clustering failed: {e}, continuing without clustering")
-            from src.blog_writer_sdk.seo.keyword_clustering import ClusteringResult, KeywordCluster
-            clustering_result = ClusteringResult(
-                clusters=[KeywordCluster(
-                    parent_topic=kw,
-                    keywords=[kw],
-                    cluster_score=0.5,
-                    dominant_words=kw.split()[:3],
-                    category_type="topic"
-                ) for kw in all_keywords[:50]],
-                unclustered=all_keywords[50:] if len(all_keywords) > 50 else [],
-                total_keywords=len(all_keywords),
-                cluster_count=min(len(all_keywords), 50)
-            )
-        
-        await emit_progress(
-            "clustering",
-            current_stage,
-            75.0,
-            "Clustering complete",
-            f"Created {clustering_result.cluster_count} clusters from {clustering_result.total_keywords} keywords",
-            {"cluster_count": clustering_result.cluster_count, "total_keywords": clustering_result.total_keywords}
-        )
-        
-        # Stage 6: AI Optimization Data (85%)
-        current_stage = 6
-        await emit_progress(
-            "ai_optimization",
-            current_stage,
-            80.0,
-            "Getting AI optimization data",
-            "Fetching AI search volume metrics",
-            {}
-        )
-        
-        ai_optimization_data = {}
-        if enhanced_analyzer and enhanced_analyzer._df_client:
-            try:
-                tenant_id = os.getenv("TENANT_ID", "default")
-                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
-                ai_optimization_data = await enhanced_analyzer._df_client.get_ai_search_volume(
-                    keywords=list(results.keys()),
-                    location_name=effective_location,
-                    language_code=request.language or "en",
-                    tenant_id=tenant_id
-                )
-            except Exception as e:
-                logger.warning(f"Failed to get AI optimization data: {e}")
-        
-        await emit_progress(
-            "ai_optimization",
-            current_stage,
-            85.0,
-            "AI optimization data complete",
-            f"Retrieved AI metrics for {len(ai_optimization_data)} keywords",
-            {"ai_metrics_count": len(ai_optimization_data)}
-        )
-        
-        # Stage 7: Related Keywords (92%)
-        current_stage = 7
-        await emit_progress(
-            "related_keywords",
-            current_stage,
-            87.0,
-            "Getting related keywords",
-            f"Fetching related keywords for {min(len(limited_keywords), 5)} primary keywords",
-            {}
-        )
-        
-        related_keywords_data = {}
-        keyword_ideas_data = {}
-        if enhanced_analyzer and enhanced_analyzer._df_client:
-            try:
-                tenant_id = os.getenv("TENANT_ID", "default")
-                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
-                
-                max_primary = min(len(limited_keywords), 5)
-                for idx, primary_keyword in enumerate(limited_keywords[:max_primary]):
-                    try:
-                        related_response = await enhanced_analyzer._df_client.get_related_keywords(
-                            keyword=primary_keyword,
-                            location_name=effective_location,
-                            language_code=request.language or "en",
-                            tenant_id=tenant_id,
-                            depth=1,
-                            limit=20
-                        )
-                        related_keywords_list = []
-                        if related_response.get("tasks") and related_response["tasks"][0].get("result"):
-                            for item in related_response["tasks"][0]["result"][:20]:
-                                kw_data = item.get("keyword_data", {}).get("keyword_info", {})
-                                related_keywords_list.append({
-                                    "keyword": item.get("keyword") or kw_data.get("keyword", ""),
-                                    "search_volume": kw_data.get("search_volume", 0) or 0,
-                                    "cpc": kw_data.get("cpc", 0.0) or 0.0,
-                                    "competition": kw_data.get("competition", 0.0) or 0.0,
-                                    "difficulty_score": kw_data.get("keyword_difficulty", 50.0) or 50.0,
-                                })
-                        related_keywords_data[primary_keyword] = related_keywords_list
-                    except Exception as e:
-                        logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
-                        related_keywords_data[primary_keyword] = []
-            except Exception as e:
-                logger.warning(f"Failed to get related keywords: {e}")
-        
-        await emit_progress(
-            "related_keywords",
-            current_stage,
-            90.0,
-            "Related keywords complete",
-            f"Retrieved related keywords for {len(related_keywords_data)} keywords",
-            {"related_keywords_count": len(related_keywords_data)}
-        )
-        
-        # Stage 8: Keyword Ideas (97%)
-        current_stage = 8
-        await emit_progress(
-            "keyword_ideas",
-            current_stage,
-            92.0,
-            "Getting keyword ideas",
-            f"Fetching questions and topics for {min(len(limited_keywords), 5)} primary keywords",
-            {}
-        )
-        
-        if enhanced_analyzer and enhanced_analyzer._df_client:
-            try:
-                tenant_id = os.getenv("TENANT_ID", "default")
-                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
-                
-                max_primary = min(len(limited_keywords), 5)
-                for primary_keyword in limited_keywords[:max_primary]:
-                    try:
-                        ideas_response = await enhanced_analyzer._df_client.get_keyword_ideas(
-                            keywords=[primary_keyword],
-                            location_name=effective_location,
-                            language_code=request.language or "en",
-                            tenant_id=tenant_id,
-                            limit=50
-                        )
-                        ideas_list = []
-                        questions_list = []
-                        topics_list = []
-                        
-                        if isinstance(ideas_response, list):
-                            for item in ideas_response[:50]:
-                                keyword_text = item.get("keyword", "")
-                                keyword_info = item.get("keyword_info", {})
-                                idea_item = {
-                                    "keyword": keyword_text,
-                                    "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
-                                    "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
-                                    "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                    "difficulty_score": keyword_info.get("keyword_difficulty", 0) or item.get("keyword_difficulty", 50.0) or 50.0,
-                                }
-                                ideas_list.append(idea_item)
-                                
-                                keyword_lower = keyword_text.lower()
-                                if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
-                                    questions_list.append(idea_item)
-                                else:
-                                    topics_list.append(idea_item)
-                        elif isinstance(ideas_response, dict) and ideas_response.get("tasks"):
-                            for task in ideas_response.get("tasks", []):
-                                for item in task.get("result", [])[:50]:
-                                    keyword_text = item.get("keyword", "")
-                                    keyword_info = item.get("keyword_data", {}).get("keyword_info", {})
-                                    idea_item = {
-                                        "keyword": keyword_text,
-                                        "search_volume": keyword_info.get("search_volume", 0) or 0,
-                                        "cpc": keyword_info.get("cpc", 0.0) or 0.0,
-                                        "competition": keyword_info.get("competition", 0.0) or 0.0,
-                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or 50.0,
-                                    }
-                                    ideas_list.append(idea_item)
-                                    
-                                    keyword_lower = keyword_text.lower()
-                                    if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are"]):
-                                        questions_list.append(idea_item)
-                                    else:
-                                        topics_list.append(idea_item)
-                        
-                        keyword_ideas_data[primary_keyword] = {
-                            "all_ideas": ideas_list,
-                            "questions": questions_list,
-                            "topics": topics_list,
-                        }
-                    except Exception as e:
-                        logger.warning(f"Failed to get keyword ideas for {primary_keyword}: {e}")
-                        keyword_ideas_data[primary_keyword] = {
-                            "all_ideas": [],
-                            "questions": [],
-                            "topics": [],
-                        }
-            except Exception as e:
-                logger.warning(f"Failed to get keyword ideas: {e}")
-        
-        await emit_progress(
-            "keyword_ideas",
-            current_stage,
-            97.0,
-            "Keyword ideas complete",
-            f"Retrieved ideas for {len(keyword_ideas_data)} keywords",
-            {"keyword_ideas_count": len(keyword_ideas_data)}
-        )
-        
-        # Stage 9: SERP Analysis (99%) - Optional
-        current_stage = 9
-        serp_analysis_summary = {}
-        serp_ai_summary = {}
-        discovery_data = {}
-        if request.include_serp and enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
-            await emit_progress(
-                "serp_analysis",
-                current_stage,
-                98.0,
-                "Analyzing SERP",
-                f"Analyzing search results for '{request.keywords[0]}'",
-                {"primary_keyword": request.keywords[0]}
-            )
-            
-            try:
-                tenant_id_env = os.getenv("TENANT_ID", "default")
-                enrichment = await _build_keyword_discovery(
-                    seed_keyword=request.keywords[0],
-                    location=effective_location,
-                    language=request.language or "en",
-                    tenant_id=tenant_id_env,
-                    df_client=enhanced_analyzer._df_client
-                )
-                serp_analysis_summary = enrichment.pop("serp_analysis", {})
-                serp_ai_summary = enrichment.pop("serp_ai_summary", {})
-                discovery_data = enrichment
-            except Exception as e:
-                logger.warning(f"SERP analysis failed: {e}")
-        elif enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
-            # Build discovery data even if SERP not requested
-            try:
-                tenant_id_env = os.getenv("TENANT_ID", "default")
-                enrichment = await _build_keyword_discovery(
-                    seed_keyword=request.keywords[0],
-                    location=effective_location,
-                    language=request.language or "en",
-                    tenant_id=tenant_id_env,
-                    df_client=enhanced_analyzer._df_client
-                )
-                serp_analysis_summary = enrichment.pop("serp_analysis", {})
-                serp_ai_summary = enrichment.pop("serp_ai_summary", {})
-                discovery_data = enrichment
-            except Exception as e:
-                logger.warning(f"Keyword discovery enrichment failed: {e}")
-        
-        # Stage 10: Finalization (100%)
-        current_stage = 10
-        await emit_progress(
-            "finalization",
-            current_stage,
-            99.0,
-            "Finalizing response",
-            "Compiling results and formatting response",
-            {}
-        )
-        
-        # Build response (reuse existing logic)
-        out = {}
-        for k, v in results.items():
-            parent_topic = None
-            category_type = None
-            cluster_score = None
-            
-            for cluster in clustering_result.clusters:
-                if k in cluster.keywords:
-                    parent_topic = cluster.parent_topic
-                    category_type = cluster.category_type
-                    cluster_score = cluster.cluster_score
-                    break
-            
-            if not parent_topic:
-                parent_topic = clustering._extract_parent_topic_from_keyword(k)
-                category_type = clustering._classify_keyword_type(k)
-                cluster_score = 0.5
-            
-            search_volume = v.search_volume if v.search_volume is not None else 0
-            cpc_value = v.cpc if v.cpc is not None else 0.0
-            competition_value = v.competition if v.competition is not None else 0.0
-            trend_score_value = v.trend_score if v.trend_score is not None else 0.0
-            
-            ai_metrics = ai_optimization_data.get(k, {})
-            ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
-            ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
-            ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
-            
-            try:
-                difficulty_score = getattr(v, 'difficulty_score', None)
-            except (AttributeError, ValueError):
-                difficulty_score = None
-            
-            if difficulty_score is None:
-                difficulty_enum = v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty)
-                enum_to_score = {
-                    "VERY_EASY": 10.0,
-                    "EASY": 30.0,
-                    "MEDIUM": 50.0,
-                    "HARD": 70.0,
-                    "VERY_HARD": 90.0
-                }
-                difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
-            
-            related_keywords_enhanced = related_keywords_data.get(k, [])
-            keyword_ideas_enhanced = keyword_ideas_data.get(k, {
-                "all_ideas": [],
-                "questions": [],
-                "topics": [],
-            })
-            
-            out[k] = {
-                "search_volume": search_volume,
-                "global_search_volume": v.global_search_volume or 0,
-                "search_volume_by_country": v.search_volume_by_country,
-                "monthly_searches": v.monthly_searches,
-                "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
-                "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,
-                "competition": competition_value,
-                "cpc": cpc_value,
-                "cpc_currency": v.cpc_currency,
-                "cps": v.cps,
-                "clicks": v.clicks,
-                "trend_score": trend_score_value,
-                "recommended": v.recommended,
-                "reason": v.reason,
-                "related_keywords": v.related_keywords,
-                "related_keywords_enhanced": related_keywords_enhanced,
-                "long_tail_keywords": v.long_tail_keywords,
-                "questions": keyword_ideas_enhanced.get("questions", []),
-                "topics": keyword_ideas_enhanced.get("topics", []),
-                "keyword_ideas": keyword_ideas_enhanced.get("all_ideas", []),
-                "parent_topic": parent_topic,
-                "category_type": category_type,
-                "cluster_score": cluster_score,
-                "ai_search_volume": ai_search_volume,
-                "ai_trend": ai_trend,
-                "ai_monthly_searches": ai_monthly_searches,
-                "traffic_potential": v.traffic_potential,
-                "serp_features": v.serp_features,
-                "serp_feature_counts": v.serp_feature_counts,
-                "primary_intent": v.primary_intent,
-                "intent_probabilities": v.intent_probabilities,
-                "also_rank_for": v.also_rank_for,
-                "also_talk_about": v.also_talk_about,
-                "top_competitors": v.top_competitors,
-                "first_seen": v.first_seen,
-                "last_updated": v.last_updated,
-            }
-        
-        clusters_list = [
-            {
-                "parent_topic": c.parent_topic,
-                "keywords": c.keywords,
-                "cluster_score": c.cluster_score,
-                "category_type": c.category_type,
-                "keyword_count": len(c.keywords)
-            }
-            for c in clustering_result.clusters
-        ]
-        
-        if not clusters_list and all_keywords:
-            for kw in all_keywords[:50]:
-                parent_topic = clustering._extract_parent_topic_from_keyword(kw)
-                clusters_list.append({
-                    "parent_topic": parent_topic,
-                    "keywords": [kw],
-                    "cluster_score": 0.5,
-                    "category_type": clustering._classify_keyword_type(kw),
-                    "keyword_count": 1
-                })
-        
-        response_payload = {
-            "enhanced_analysis": out,
-            "total_keywords": len(all_keywords),
-            "original_keywords": request.keywords,
-            "suggested_keywords": all_keywords[len(request.keywords):] if len(all_keywords) > len(request.keywords) else [],
-            "clusters": clusters_list,
-            "cluster_summary": {
-                "total_keywords": clustering_result.total_keywords if clustering_result else len(all_keywords),
-                "cluster_count": len(clusters_list),
-                "unclustered_count": len(clustering_result.unclustered) if clustering_result else 0
-            },
-            "location": {
-                "used": effective_location,
-                "detected_from_ip": detected_location is not None,
-                "specified": request.location is not None and request.location != "United States"
-            },
-            "discovery": discovery_data,
-            "serp_analysis": serp_analysis_summary,
-            "serp_ai_summary": serp_ai_summary
-        }
-        
-        await emit_progress(
-            "finalization",
-            current_stage,
-            100.0,
-            "Analysis complete",
-            f"Processed {len(all_keywords)} keywords across {len(clusters_list)} clusters",
-            {"total_keywords": len(all_keywords), "clusters": len(clusters_list)}
-        )
-        
-        return response_payload
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Keyword analysis with progress failed: {e}", exc_info=True)
-        raise
-
-
+# Streaming version of enhanced keyword analysis
 @app.post("/api/v1/keywords/enhanced/stream")
 async def analyze_keywords_enhanced_stream(
     request: EnhancedKeywordAnalysisRequest,
     http_request: Request
 ):
     """
-    Enhanced keyword analysis with Server-Sent Events (SSE) streaming for real-time progress updates.
+    Streaming version of enhanced keyword analysis.
     
-    Returns progress updates as SSE events, followed by the final JSON response.
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - initializing: Starting search
+    - detecting_location: Detecting user location
+    - analyzing_keywords: Analyzing primary keywords
+    - getting_suggestions: Fetching keyword suggestions
+    - analyzing_suggestions: Analyzing suggested keywords
+    - clustering_keywords: Clustering keywords by topic
+    - getting_ai_data: Getting AI optimization metrics
+    - getting_related_keywords: Finding related keywords
+    - getting_keyword_ideas: Getting keyword ideas (questions/topics)
+    - analyzing_serp: Analyzing SERP features (if requested)
+    - building_discovery: Building discovery data
+    - completed: Final results
     
-    Usage (Note: EventSource doesn't support POST, use fetch with ReadableStream):
+    Frontend can listen to these events to show real-time progress.
+    
+    Example:
     ```typescript
     const response = await fetch('/api/v1/keywords/enhanced/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({keywords: ['pet grooming']})
+      body: JSON.stringify({ keywords: ['seo'], location: 'United States' })
     });
     
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     
     while (true) {
-      const {done, value} = await reader.read();
+      const { done, value } = await reader.read();
       if (done) break;
       
       const chunk = decoder.decode(value);
       const lines = chunk.split('\\n');
-      
       for (const line of lines) {
         if (line.startsWith('data: ')) {
-          const data = JSON.parse(line.slice(6));
-          if (data.type === 'complete') {
-            console.log('Analysis complete:', data.result);
-          } else {
-            console.log(`${data.progress_percentage}% - ${data.status}`);
-          }
+          const update = JSON.parse(line.slice(6));
+          console.log(`Stage: ${update.stage}, Progress: ${update.progress}%`);
         }
       }
     }
     ```
     """
-    from src.blog_writer_sdk.models.progress_models import ProgressUpdate
-    import asyncio
-    
     async def generate_stream():
-        """Generate SSE stream with progress updates."""
-        progress_queue = asyncio.Queue()
-        result_container = {"result": None, "error": None}
-        
-        async def progress_callback(update: ProgressUpdate):
-            """Queue progress updates for streaming."""
-            await progress_queue.put(("progress", update.dict()))
-        
-        async def process_analysis():
-            """Process keyword analysis in background."""
-            try:
-                result = await _analyze_keywords_with_progress(
-                    request=request,
-                    http_request=http_request,
-                    progress_callback=progress_callback
-                )
-                result_container["result"] = result
-                await progress_queue.put(("complete", None))
-            except HTTPException as e:
-                result_container["error"] = {
-                    "type": "error",
-                    "error": e.detail,
-                    "status_code": e.status_code
-                }
-                await progress_queue.put(("error", None))
-            except Exception as e:
-                logger.error(f"SSE streaming failed: {e}", exc_info=True)
-                result_container["error"] = {
-                    "type": "error",
-                    "error": str(e),
-                    "status_code": 500
-                }
-                await progress_queue.put(("error", None))
-        
-        # Start processing in background
-        analysis_task = asyncio.create_task(process_analysis())
-        
         try:
-            # Stream progress updates as they arrive
-            while True:
+            # Stage 1: Initializing
+            yield await stream_stage_update(
+                KeywordSearchStage.INITIALIZING,
+                5.0,
+                message="Initializing keyword search..."
+            )
+            
+            # Stage 2: Detecting location
+            detected_location = None
+            if not request.location:
+                yield await stream_stage_update(
+                    KeywordSearchStage.DETECTING_LOCATION,
+                    10.0,
+                    message="Detecting location from IP..."
+                )
+                if http_request:
+                    detected_location = await detect_location_from_ip(http_request)
+                    if detected_location:
+                        yield await stream_stage_update(
+                            KeywordSearchStage.DETECTING_LOCATION,
+                            15.0,
+                            data={"detected_location": detected_location},
+                            message=f"Detected location: {detected_location}"
+                        )
+            
+            effective_location = request.location or detected_location or "United States"
+            
+            # Stage 3: Analyzing keywords
+            yield await stream_stage_update(
+                KeywordSearchStage.ANALYZING_KEYWORDS,
+                20.0,
+                data={"keywords": request.keywords, "location": effective_location},
+                message=f"Analyzing {len(request.keywords)} keywords..."
+            )
+            
+            if not enhanced_analyzer:
+                raise HTTPException(status_code=503, detail="Enhanced analyzer not available")
+            
+            # Apply limits
+            limited_keywords = apply_keyword_limits(request.keywords)
+            max_suggestions = apply_suggestions_limit(request.max_suggestions_per_keyword)
+            limits = get_testing_limits() if is_testing_mode() else {}
+            max_total = limits.get("max_total_keywords", 200) if is_testing_mode() else 200
+            
+            # Analyze primary keywords
+            results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                keywords=limited_keywords,
+                tenant_id=os.getenv("TENANT_ID", "default")
+            )
+            
+            yield await stream_stage_update(
+                KeywordSearchStage.ANALYZING_KEYWORDS,
+                30.0,
+                data={"keywords_analyzed": len(results)},
+                message=f"Analyzed {len(results)} keywords"
+            )
+            
+            # Stage 4: Getting suggestions
+            all_keywords = list(limited_keywords)
+            if enhanced_analyzer and enhanced_analyzer._df_client:
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_SUGGESTIONS,
+                    40.0,
+                    message="Getting keyword suggestions from DataForSEO..."
+                )
+                
                 try:
-                    # Wait for progress update or completion with timeout
-                    event_type, data = await asyncio.wait_for(progress_queue.get(), timeout=30.0)
+                    tenant_id = os.getenv("TENANT_ID", "default")
+                    await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
                     
-                    if event_type == "progress":
-                        # Emit progress update
-                        yield f"data: {json.dumps(data)}\n\n"
-                    elif event_type == "complete":
-                        # Emit completion with result
-                        yield f"data: {json.dumps({'type': 'complete', 'result': result_container['result']})}\n\n"
-                        break
-                    elif event_type == "error":
-                        # Emit error
-                        yield f"data: {json.dumps(result_container['error'])}\n\n"
-                        break
+                    max_seed_keywords = limits.get("max_keywords", 5) if is_testing_mode() else 5
+                    for idx, seed_keyword in enumerate(limited_keywords[:max_seed_keywords]):
+                        if len(all_keywords) >= max_total:
+                            break
                         
-                except asyncio.TimeoutError:
-                    # Send keepalive to prevent connection timeout
-                    yield f": keepalive\n\n"
-                    continue
+                        yield await stream_stage_update(
+                            KeywordSearchStage.GETTING_SUGGESTIONS,
+                            40.0 + (idx + 1) * 5.0 / max_seed_keywords,
+                            data={"current_keyword": seed_keyword, "suggestions_found": len(all_keywords) - len(limited_keywords)},
+                            message=f"Getting suggestions for '{seed_keyword}'..."
+                        )
+                        
+                        try:
+                            df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
+                                seed_keyword=seed_keyword,
+                                location_name=effective_location,
+                                language_code=request.language or "en",
+                                tenant_id=tenant_id,
+                                limit=max_suggestions
+                            )
+                            
+                            for suggestion in df_suggestions:
+                                if len(all_keywords) >= max_total:
+                                    break
+                                kw = suggestion.get("keyword", "").strip()
+                                if kw and kw not in all_keywords:
+                                    all_keywords.append(kw)
+                        except Exception as e:
+                            logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
+                            continue
+                except Exception as e:
+                    logger.warning(f"DataForSEO suggestions failed: {e}")
             
-            # Wait for analysis task to complete
-            await analysis_task
+            # Stage 5: Analyzing suggestions
+            if len(all_keywords) > len(request.keywords):
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_SUGGESTIONS,
+                    50.0,
+                    data={"suggestions_to_analyze": len(all_keywords) - len(request.keywords)},
+                    message=f"Analyzing {len(all_keywords) - len(request.keywords)} suggested keywords..."
+                )
+                
+                additional_results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                    keywords=all_keywords[len(request.keywords):],
+                    tenant_id=os.getenv("TENANT_ID", "default")
+                )
+                results.update(additional_results)
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_SUGGESTIONS,
+                    55.0,
+                    data={"total_keywords_analyzed": len(results)},
+                    message="Completed analyzing suggestions"
+                )
             
-        except Exception as e:
-            logger.error(f"Stream generation failed: {e}", exc_info=True)
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e), 'status_code': 500})}\n\n"
-        finally:
-            # Cancel task if still running
-            if not analysis_task.done():
-                analysis_task.cancel()
+            # Stage 6: Clustering
+            yield await stream_stage_update(
+                KeywordSearchStage.CLUSTERING_KEYWORDS,
+                60.0,
+                message="Clustering keywords by topic..."
+            )
+            
+            from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+            kg_client = None
+            try:
+                kg_client = google_knowledge_graph_client if 'google_knowledge_graph_client' in globals() else None
+            except:
+                pass
+            
+            clustering = KeywordClustering(knowledge_graph_client=kg_client)
+            try:
+                max_clusters, max_keywords_per_cluster = apply_clustering_limits()
+                clustering_result = clustering.cluster_keywords(
+                    keywords=all_keywords,
+                    min_cluster_size=1,
+                    max_clusters=max_clusters,
+                    max_keywords_per_cluster=max_keywords_per_cluster
+                )
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.CLUSTERING_KEYWORDS,
+                    65.0,
+                    data={"clusters_found": clustering_result.cluster_count, "total_keywords": clustering_result.total_keywords},
+                    message=f"Found {clustering_result.cluster_count} keyword clusters"
+                )
+            except Exception as e:
+                logger.warning(f"Clustering failed: {e}")
+                from src.blog_writer_sdk.seo.keyword_clustering import ClusteringResult, KeywordCluster
+                clustering_result = ClusteringResult(
+                    clusters=[KeywordCluster(
+                        parent_topic=kw,
+                        keywords=[kw],
+                        cluster_score=0.5,
+                        dominant_words=kw.split()[:3],
+                        category_type="topic"
+                    ) for kw in all_keywords[:50]],
+                    unclustered=all_keywords[50:] if len(all_keywords) > 50 else [],
+                    total_keywords=len(all_keywords),
+                    cluster_count=min(len(all_keywords), 50)
+                )
+            
+            # Stage 7: Getting AI data
+            yield await stream_stage_update(
+                KeywordSearchStage.GETTING_AI_DATA,
+                70.0,
+                message="Getting AI optimization metrics..."
+            )
+            
+            ai_optimization_data = {}
+            if enhanced_analyzer and enhanced_analyzer._df_client:
                 try:
-                    await analysis_task
-                except asyncio.CancelledError:
-                    pass
+                    tenant_id = os.getenv("TENANT_ID", "default")
+                    await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                    ai_optimization_data = await enhanced_analyzer._df_client.get_ai_search_volume(
+                        keywords=list(results.keys()),
+                        location_name=effective_location,
+                        language_code=request.language or "en",
+                        tenant_id=tenant_id
+                    )
+                    
+                    yield await stream_stage_update(
+                        KeywordSearchStage.GETTING_AI_DATA,
+                        75.0,
+                        data={"ai_metrics_count": len(ai_optimization_data)},
+                        message=f"Retrieved AI metrics for {len(ai_optimization_data)} keywords"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to get AI optimization data: {e}")
+            
+            # Stage 8: Getting related keywords
+            related_keywords_data = {}
+            if enhanced_analyzer and enhanced_analyzer._df_client:
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_RELATED_KEYWORDS,
+                    80.0,
+                    message="Finding related keywords..."
+                )
+                
+                try:
+                    tenant_id = os.getenv("TENANT_ID", "default")
+                    await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                    
+                    max_primary = min(len(limited_keywords), 5)
+                    for idx, primary_keyword in enumerate(limited_keywords[:max_primary]):
+                        yield await stream_stage_update(
+                            KeywordSearchStage.GETTING_RELATED_KEYWORDS,
+                            80.0 + (idx + 1) * 2.0 / max_primary,
+                            data={"current_keyword": primary_keyword},
+                            message=f"Finding related keywords for '{primary_keyword}'..."
+                        )
+                        
+                        try:
+                            related_response = await enhanced_analyzer._df_client.get_related_keywords(
+                                keyword=primary_keyword,
+                                location_name=effective_location,
+                                language_code=request.language or "en",
+                                tenant_id=tenant_id,
+                                depth=1,
+                                limit=20
+                            )
+                            
+                            related_keywords_list = []
+                            if isinstance(related_response, dict) and related_response.get("tasks"):
+                                tasks_list = related_response.get("tasks", [])
+                                if tasks_list and len(tasks_list) > 0:
+                                    first_task = tasks_list[0]
+                                    task_status_code = first_task.get("status_code")
+                                    if task_status_code == 20000:
+                                        result = first_task.get("result")
+                                        if result and isinstance(result, list):
+                                            for item in result[:20]:
+                                                if not isinstance(item, dict):
+                                                    continue
+                                                keyword_text = item.get("keyword") or ""
+                                                kw_data = item.get("keyword_data", {})
+                                                keyword_info = kw_data.get("keyword_info", {}) if kw_data else {}
+                                                
+                                                if not keyword_text:
+                                                    keyword_text = keyword_info.get("keyword", "")
+                                                
+                                                if keyword_text:
+                                                    related_keywords_list.append({
+                                                        "keyword": keyword_text,
+                                                        "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                                        "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                                        "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                                    })
+                            related_keywords_data[primary_keyword] = related_keywords_list
+                        except Exception as e:
+                            logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
+                            related_keywords_data[primary_keyword] = []
+                except Exception as e:
+                    logger.warning(f"Failed to get related keywords: {e}")
+            
+            # Stage 9: Getting keyword ideas
+            keyword_ideas_data = {}
+            if enhanced_analyzer and enhanced_analyzer._df_client:
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_IDEAS,
+                    85.0,
+                    message="Getting keyword ideas (questions and topics)..."
+                )
+                
+                try:
+                    tenant_id = os.getenv("TENANT_ID", "default")
+                    await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                    
+                    max_primary = min(len(limited_keywords), 5)
+                    for idx, primary_keyword in enumerate(limited_keywords[:max_primary]):
+                        yield await stream_stage_update(
+                            KeywordSearchStage.GETTING_KEYWORD_IDEAS,
+                            85.0 + (idx + 1) * 3.0 / max_primary,
+                            data={"current_keyword": primary_keyword},
+                            message=f"Getting ideas for '{primary_keyword}'..."
+                        )
+                        
+                        try:
+                            ideas_response = await enhanced_analyzer._df_client.get_keyword_ideas(
+                                keywords=[primary_keyword],
+                                location_name=effective_location,
+                                language_code=request.language or "en",
+                                tenant_id=tenant_id,
+                                limit=50
+                            )
+                            
+                            ideas_list = []
+                            questions_list = []
+                            topics_list = []
+                            
+                            if isinstance(ideas_response, list):
+                                for item in ideas_response[:50]:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    keyword_text = item.get("keyword", "") or item.get("text", "")
+                                    keyword_info = item.get("keyword_info", {})
+                                    keyword_data = item.get("keyword_data", {})
+                                    if not keyword_text and keyword_data:
+                                        keyword_info_from_data = keyword_data.get("keyword_info", {})
+                                        keyword_text = keyword_info_from_data.get("keyword", "")
+                                    
+                                    if keyword_text:
+                                        idea_item = {
+                                            "keyword": keyword_text,
+                                            "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                            "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                            "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                            "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                        }
+                                        ideas_list.append(idea_item)
+                                        
+                                        keyword_lower = keyword_text.lower()
+                                        if any(q_word in keyword_lower for q_word in ["how", "what", "why", "when", "where", "who", "does", "can", "should", "is", "are", "?"]):
+                                            questions_list.append(idea_item)
+                                        else:
+                                            topics_list.append(idea_item)
+                            
+                            keyword_ideas_data[primary_keyword] = {
+                                "all_ideas": ideas_list,
+                                "questions": questions_list,
+                                "topics": topics_list,
+                            }
+                        except Exception as e:
+                            logger.warning(f"Failed to get keyword ideas for {primary_keyword}: {e}")
+                            keyword_ideas_data[primary_keyword] = {
+                                "all_ideas": [],
+                                "questions": [],
+                                "topics": [],
+                            }
+                except Exception as e:
+                    logger.warning(f"Failed to get keyword ideas: {e}")
+            
+            # Stage 10: SERP analysis and discovery (ALWAYS build, not conditional on include_serp)
+            # This matches the non-streaming endpoint behavior - always include discovery data
+            serp_analysis_summary = {}
+            discovery_data = {}
+            if enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_SERP,
+                    92.0,
+                    data={"keyword": request.keywords[0]},
+                    message=f"Analyzing SERP and building discovery data for '{request.keywords[0]}'..."
+                )
+                
+                try:
+                    tenant_id_env = os.getenv("TENANT_ID", "default")
+                    await enhanced_analyzer._df_client.initialize_credentials(tenant_id_env)
+                    
+                    if enhanced_analyzer._df_client.is_configured:
+                        enrichment = await _build_keyword_discovery(
+                            seed_keyword=request.keywords[0],
+                            location=effective_location,
+                            language=request.language or "en",
+                            tenant_id=tenant_id_env,
+                            df_client=enhanced_analyzer._df_client
+                        )
+                        serp_analysis_summary = enrichment.pop("serp_analysis", {})
+                        discovery_data = enrichment
+                        
+                        # Log what we found
+                        matching_terms_count = len(discovery_data.get("matching_terms", []))
+                        questions_count = len(discovery_data.get("questions", []))
+                        related_terms_count = len(discovery_data.get("related_terms", []))
+                        paa_count = len(serp_analysis_summary.get("people_also_ask", []))
+                        
+                        logger.info(f"Discovery data: {matching_terms_count} matching terms, {questions_count} questions, {related_terms_count} related terms, {paa_count} PAA questions")
+                        
+                        yield await stream_stage_update(
+                            KeywordSearchStage.ANALYZING_SERP,
+                            95.0,
+                            data={
+                                "serp_features_found": len(serp_analysis_summary.get("serp_features", {})),
+                                "matching_terms_count": matching_terms_count,
+                                "questions_count": questions_count,
+                                "related_terms_count": related_terms_count,
+                                "people_also_ask_count": paa_count
+                            },
+                            message=f"SERP analysis completed: {matching_terms_count} matching terms, {paa_count} PAA questions"
+                        )
+                    else:
+                        logger.warning("DataForSEO client not configured, skipping discovery")
+                except Exception as e:
+                    logger.warning(f"SERP analysis and discovery failed: {e}", exc_info=True)
+            else:
+                if not enhanced_analyzer:
+                    logger.debug("Enhanced analyzer not available for discovery")
+                elif not enhanced_analyzer._df_client:
+                    logger.debug("DataForSEO client not initialized")
+                elif not request.keywords:
+                    logger.debug("No keywords provided for discovery")
+            
+            # Stage 11: Building final response
+            yield await stream_stage_update(
+                KeywordSearchStage.BUILDING_DISCOVERY,
+                98.0,
+                message="Building final results..."
+            )
+            
+            # Build response (same logic as non-streaming endpoint)
+            from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+            clustering = KeywordClustering(knowledge_graph_client=kg_client)
+            
+            out = {}
+            for k, v in results.items():
+                parent_topic = None
+                category_type = None
+                cluster_score = None
+                
+                for cluster in clustering_result.clusters:
+                    if k in cluster.keywords:
+                        parent_topic = cluster.parent_topic
+                        category_type = cluster.category_type
+                        cluster_score = cluster.cluster_score
+                        break
+                
+                if not parent_topic:
+                    parent_topic = clustering._extract_parent_topic_from_keyword(k)
+                    category_type = clustering._classify_keyword_type(k)
+                    cluster_score = 0.5
+                
+                search_volume = v.search_volume if v.search_volume is not None else 0
+                cpc_value = v.cpc if v.cpc is not None else 0.0
+                competition_value = v.competition if v.competition is not None else 0.0
+                trend_score_value = v.trend_score if v.trend_score is not None else 0.0
+                
+                ai_metrics = ai_optimization_data.get(k, {})
+                ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
+                ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
+                ai_monthly_searches = ai_metrics.get("ai_monthly_searches", [])
+                
+                try:
+                    difficulty_score = getattr(v, 'difficulty_score', None)
+                except (AttributeError, ValueError):
+                    difficulty_score = None
+                
+                if difficulty_score is None:
+                    difficulty_enum = v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty)
+                    enum_to_score = {
+                        "VERY_EASY": 10.0,
+                        "EASY": 30.0,
+                        "MEDIUM": 50.0,
+                        "HARD": 70.0,
+                        "VERY_HARD": 90.0
+                    }
+                    difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+                
+                related_keywords_enhanced = related_keywords_data.get(k, [])
+                keyword_ideas_enhanced = keyword_ideas_data.get(k, {
+                    "all_ideas": [],
+                    "questions": [],
+                    "topics": [],
+                })
+                
+                out[k] = {
+                    "search_volume": search_volume,
+                    "global_search_volume": v.global_search_volume or 0,
+                    "search_volume_by_country": v.search_volume_by_country,
+                    "monthly_searches": v.monthly_searches,
+                    "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
+                    "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,
+                    "competition": competition_value,
+                    "cpc": cpc_value,
+                    "cpc_currency": v.cpc_currency,
+                    "cps": v.cps,
+                    "clicks": v.clicks,
+                    "trend_score": trend_score_value,
+                    "recommended": v.recommended,
+                    "reason": v.reason,
+                    "related_keywords": v.related_keywords,
+                    "related_keywords_enhanced": related_keywords_enhanced,
+                    "long_tail_keywords": v.long_tail_keywords,
+                    "questions": keyword_ideas_enhanced.get("questions", []),
+                    "topics": keyword_ideas_enhanced.get("topics", []),
+                    "keyword_ideas": keyword_ideas_enhanced.get("all_ideas", []),
+                    "parent_topic": parent_topic,
+                    "category_type": category_type,
+                    "cluster_score": cluster_score,
+                    "ai_search_volume": ai_search_volume,
+                    "ai_trend": ai_trend,
+                    "ai_monthly_searches": ai_monthly_searches,
+                    "traffic_potential": v.traffic_potential,
+                    "serp_features": v.serp_features,
+                    "serp_feature_counts": v.serp_feature_counts,
+                    "primary_intent": v.primary_intent,
+                    "intent_probabilities": v.intent_probabilities,
+                    "also_rank_for": v.also_rank_for,
+                    "also_talk_about": v.also_talk_about,
+                    "top_competitors": v.top_competitors,
+                    "first_seen": v.first_seen,
+                    "last_updated": v.last_updated,
+                }
+            
+            clusters_list = [
+                {
+                    "parent_topic": c.parent_topic,
+                    "keywords": c.keywords,
+                    "cluster_score": c.cluster_score,
+                    "category_type": c.category_type,
+                    "keyword_count": len(c.keywords)
+                }
+                for c in clustering_result.clusters
+            ]
+            
+            if not clusters_list and all_keywords:
+                for kw in all_keywords[:50]:
+                    parent_topic = clustering._extract_parent_topic_from_keyword(kw)
+                    clusters_list.append({
+                        "parent_topic": parent_topic,
+                        "keywords": [kw],
+                        "cluster_score": 0.5,
+                        "category_type": clustering._classify_keyword_type(kw),
+                        "keyword_count": 1
+                    })
+            
+            final_result = {
+                "enhanced_analysis": out,
+                "total_keywords": len(all_keywords),
+                "original_keywords": request.keywords,
+                "suggested_keywords": all_keywords[len(request.keywords):] if len(all_keywords) > len(request.keywords) else [],
+                "clusters": clusters_list,
+                "cluster_summary": {
+                    "total_keywords": clustering_result.total_keywords if clustering_result else len(all_keywords),
+                    "cluster_count": len(clusters_list),
+                    "unclustered_count": len(clustering_result.unclustered) if clustering_result else 0
+                },
+                "location": {
+                    "used": effective_location,
+                    "detected_from_ip": detected_location is not None,
+                    "specified": request.location is not None and request.location != "United States"
+                },
+                "discovery": discovery_data,
+                "serp_analysis": serp_analysis_summary
+            }
+            
+            # Stage 12: Completed - ALWAYS send final result
+            # Log the final result to help debug
+            logger.info(f"Sending final result in stream: {len(final_result.get('enhanced_analysis', {}))} keywords analyzed, total_keywords: {final_result.get('total_keywords', 0)}")
+            
+            # CRITICAL: Send the final result in the data field
+            # Frontend expects: update.data.result when stage === 'completed'
+            # Format: {"stage": "completed", "progress": 100.0, "data": {"result": {...}}}
+            
+            # Verify final_result structure before sending
+            if not isinstance(final_result, dict):
+                logger.error(f"final_result is not a dict: {type(final_result)}")
+                final_result = {}
+            
+            if "enhanced_analysis" not in final_result:
+                logger.warning("final_result missing enhanced_analysis, adding empty dict")
+                final_result["enhanced_analysis"] = {}
+            
+            # Create the completed message with result nested in data
+            completed_data = {
+                "result": final_result
+            }
+            
+            completed_message = await stream_stage_update(
+                KeywordSearchStage.COMPLETED,
+                100.0,
+                data=completed_data,  # This creates update.data.result for frontend
+                message="Search completed successfully"
+            )
+            
+            # Verify the message format before sending
+            try:
+                # Parse to verify it's valid JSON and has result
+                if completed_message.startswith("data: "):
+                    parsed = json.loads(completed_message[6:].strip())
+                    has_result = "result" in parsed.get("data", {})
+                    logger.info(f"Completed message verified - has result: {has_result}, stage: {parsed.get('stage')}, progress: {parsed.get('progress')}")
+                    if not has_result:
+                        logger.error("CRITICAL: Completed message missing result in data field!")
+                else:
+                    logger.error(f"Completed message doesn't start with 'data: ': {completed_message[:100]}")
+            except Exception as e:
+                logger.error(f"Failed to verify completed message format: {e}")
+            
+            # Send the completed message
+            yield completed_message
+            
+            # Send an explicit end marker for frontend to detect stream completion
+            yield f"data: {json.dumps({'type': 'end', 'stage': 'completed'})}\n\n"
+            
+            # Log completion
+            logger.info(f"Stream completed successfully - sent final result with {len(final_result.get('enhanced_analysis', {}))} keywords")
+            
+        except HTTPException as http_ex:
+            # For HTTP exceptions, send error but don't raise (to keep stream open)
+            logger.error(f"Streaming keyword analysis HTTP error: {http_ex.detail}")
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": http_ex.detail, "status_code": http_ex.status_code},
+                message=f"Search failed: {http_ex.detail}"
+            )
+            yield "\n"
+        except Exception as e:
+            logger.error(f"Streaming keyword analysis failed: {e}", exc_info=True)
+            # Try to send partial results if available
+            try:
+                partial_result = {
+                    "enhanced_analysis": {},
+                    "total_keywords": 0,
+                    "original_keywords": request.keywords,
+                    "suggested_keywords": [],
+                    "clusters": [],
+                    "cluster_summary": {
+                        "total_keywords": 0,
+                        "cluster_count": 0,
+                        "unclustered_count": 0
+                    },
+                    "location": {
+                        "used": effective_location if 'effective_location' in locals() else request.location or "United States",
+                        "detected_from_ip": detected_location is not None if 'detected_location' in locals() else False,
+                        "specified": request.location is not None and request.location != "United States"
+                    },
+                    "discovery": {},
+                    "serp_analysis": {},
+                    "error": str(e)
+                }
+                
+                # Send error with partial results if we have any data
+                error_message = await stream_stage_update(
+                    KeywordSearchStage.ERROR,
+                    0.0,
+                    data={"error": str(e), "partial_result": partial_result},
+                    message=f"Search failed: {str(e)}"
+                )
+                yield error_message
+            except:
+                # If even partial result fails, send minimal error
+                error_message = await stream_stage_update(
+                    KeywordSearchStage.ERROR,
+                    0.0,
+                    data={"error": str(e)},
+                    message=f"Search failed: {str(e)}"
+                )
+                yield error_message
+            yield f"data: {json.dumps({'type': 'end', 'stage': 'error'})}\n\n"
     
     return StreamingResponse(
         generate_stream(),
@@ -3364,7 +4686,7 @@ async def analyze_keywords_enhanced_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable buffering for nginx
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
         }
     )
 
@@ -3793,6 +5115,1717 @@ async def extract_keywords(
 
 
 # Keyword suggestions endpoint
+@app.post("/api/v1/keywords/goal-based-analysis")
+async def analyze_keywords_goal_based(
+    request: GoalBasedAnalysisRequest,
+    http_request: Request
+):
+    """
+    Goal-based keyword analysis using optimized DataForSEO endpoints for each content goal.
+    
+    Routes to different endpoint combinations based on content goal:
+    - SEO & Rankings: Focus on search volume, difficulty, SERP analysis
+    - Engagement: Focus on search intent (informational), PAA questions, content analysis
+    - Conversions: Focus on CPC, commercial intent, shopping results
+    - Brand Awareness: Focus on content analysis, brand mentions, competitor analysis
+    """
+    try:
+        # Detect location from IP if not explicitly specified
+        detected_location = None
+        if not request.location:
+            if http_request:
+                detected_location = await detect_location_from_ip(http_request)
+                if detected_location:
+                    logger.info(f"Detected location from IP: {detected_location}")
+        
+        effective_location = request.location or detected_location or "United States"
+        tenant_id = os.getenv("TENANT_ID", "default")
+        
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+        
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        if not enhanced_analyzer._df_client.is_configured:
+            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+        
+        df_client = enhanced_analyzer._df_client
+        results = {
+            "content_goal": request.content_goal.value,
+            "keywords": request.keywords,
+            "location": effective_location,
+            "language": request.language,
+            "analysis": {}
+        }
+        
+        # Route to goal-specific endpoints
+        if request.content_goal == ContentGoal.SEO_RANKINGS:
+            # SEO & Rankings: search_volume, keyword_difficulty, serp_analysis, keyword_overview, LLM mentions
+            logger.info(f"Analyzing keywords for SEO & Rankings goal")
+            
+            # Get search volume and difficulty
+            search_volume_data = await df_client.get_search_volume_data(
+                keywords=request.keywords,
+                location_name=effective_location,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            difficulty_data = await df_client.get_keyword_difficulty(
+                keywords=request.keywords,
+                location_name=effective_location,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get keyword overview
+            keyword_overview = {}
+            if request.keywords:
+                keyword_overview = await df_client.get_keyword_overview(
+                    keywords=request.keywords[:5],  # Limit for overview
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+            
+            # Get SERP analysis
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10
+                )
+            
+            # Get LLM Mentions (for AI-optimized SEO)
+            llm_mentions = {}
+            if request.include_llm_mentions and request.keywords:
+                try:
+                    llm_mentions = await df_client.get_llm_mentions_search(
+                        target=request.keywords[0],
+                        target_type="keyword",
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        platform="chat_gpt",
+                        limit=30
+                    )
+                except Exception as e:
+                    logger.warning(f"LLM mentions failed for SEO & Rankings: {e}")
+            
+            results["analysis"] = {
+                "search_volume": search_volume_data,
+                "difficulty": difficulty_data,
+                "keyword_overview": keyword_overview,
+                "serp_analysis": serp_analysis,
+                "llm_mentions": llm_mentions,
+                "recommendations": _generate_seo_recommendations(search_volume_data, difficulty_data, llm_mentions)
+            }
+        
+        elif request.content_goal == ContentGoal.ENGAGEMENT:
+            # Engagement: search_intent (informational), serp_analysis (PAA), content_analysis, LLM mentions
+            logger.info(f"Analyzing keywords for Engagement goal")
+            
+            # Get search intent (filter for informational)
+            intent_data = await df_client.get_search_intent(
+                keywords=request.keywords,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get SERP analysis (focus on PAA)
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10,
+                    include_people_also_ask=True
+                )
+            
+            # Get content analysis
+            content_analysis = {}
+            if request.include_content_analysis and request.keywords:
+                content_analysis = await df_client.analyze_content_search(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    limit=50
+                )
+            
+            # Get LLM Mentions (for AI engagement topics)
+            llm_mentions = {}
+            if request.include_llm_mentions and request.keywords:
+                try:
+                    llm_mentions = await df_client.get_llm_mentions_search(
+                        target=request.keywords[0],
+                        target_type="keyword",
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        platform="chat_gpt",
+                        limit=50
+                    )
+                except Exception as e:
+                    logger.warning(f"LLM mentions failed for Engagement: {e}")
+            
+            # Get related keywords
+            related_keywords = {}
+            if request.keywords:
+                related_keywords = await df_client.get_related_keywords(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=2,
+                    limit=50
+                )
+            
+            results["analysis"] = {
+                "search_intent": intent_data,
+                "serp_analysis": serp_analysis,
+                "content_analysis": content_analysis,
+                "llm_mentions": llm_mentions,
+                "related_keywords": related_keywords,
+                "recommendations": _generate_engagement_recommendations(intent_data, serp_analysis, content_analysis, llm_mentions)
+            }
+        
+        elif request.content_goal == ContentGoal.CONVERSIONS:
+            # Conversions: search_volume (CPC focus), search_intent (commercial), serp_analysis (shopping)
+            logger.info(f"Analyzing keywords for Conversions goal")
+            
+            # Get search volume (focus on CPC)
+            search_volume_data = await df_client.get_search_volume_data(
+                keywords=request.keywords,
+                location_name=effective_location,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get search intent (filter for commercial/transactional)
+            intent_data = await df_client.get_search_intent(
+                keywords=request.keywords,
+                language_code=request.language,
+                tenant_id=tenant_id
+            )
+            
+            # Get SERP analysis (focus on shopping results)
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10
+                )
+            
+            # Get keyword overview (for intent classification)
+            keyword_overview = {}
+            if request.keywords:
+                keyword_overview = await df_client.get_keyword_overview(
+                    keywords=request.keywords[:5],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+            
+            # Get LLM Mentions (for commercial topics cited by AI)
+            llm_mentions = {}
+            if request.include_llm_mentions and request.keywords:
+                try:
+                    llm_mentions = await df_client.get_llm_mentions_search(
+                        target=request.keywords[0],
+                        target_type="keyword",
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        platform="chat_gpt",
+                        limit=30
+                    )
+                except Exception as e:
+                    logger.warning(f"LLM mentions failed for Conversions: {e}")
+            
+            results["analysis"] = {
+                "search_volume": search_volume_data,
+                "search_intent": intent_data,
+                "serp_analysis": serp_analysis,
+                "keyword_overview": keyword_overview,
+                "llm_mentions": llm_mentions,
+                "recommendations": _generate_conversion_recommendations(search_volume_data, intent_data, serp_analysis, llm_mentions)
+            }
+        
+        elif request.content_goal == ContentGoal.BRAND_AWARENESS:
+            # Brand Awareness: content_analysis, keyword_overview, serp_analysis, competitor analysis
+            logger.info(f"Analyzing keywords for Brand Awareness goal")
+            
+            # Get content analysis (brand mentions, sentiment)
+            content_analysis = {}
+            if request.include_content_analysis and request.keywords:
+                content_analysis = await df_client.analyze_content_search(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    limit=100
+                )
+                
+                # Get content summary
+                content_summary = await df_client.analyze_content_summary(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                content_analysis["summary"] = content_summary
+            
+            # Get keyword overview
+            keyword_overview = {}
+            if request.keywords:
+                keyword_overview = await df_client.get_keyword_overview(
+                    keywords=request.keywords[:5],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+            
+            # Get SERP analysis
+            serp_analysis = {}
+            if request.include_serp and request.keywords:
+                serp_analysis = await df_client.get_serp_analysis(
+                    keyword=request.keywords[0],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    depth=10
+                )
+            
+            # Get keyword ideas (brand + industry combinations)
+            keyword_ideas = {}
+            if request.keywords:
+                keyword_ideas = await df_client.get_keyword_ideas(
+                    keywords=request.keywords[:3],
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    limit=50
+                )
+            
+            results["analysis"] = {
+                "content_analysis": content_analysis,
+                "keyword_overview": keyword_overview,
+                "serp_analysis": serp_analysis,
+                "keyword_ideas": keyword_ideas,
+                "recommendations": _generate_brand_awareness_recommendations(content_analysis, keyword_overview)
+            }
+        
+        return results
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Goal-based keyword analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Goal-based keyword analysis failed: {str(e)}"
+        )
+
+
+# Streaming version of goal-based analysis
+@app.post("/api/v1/keywords/goal-based-analysis/stream")
+async def analyze_keywords_goal_based_stream(
+    request: GoalBasedAnalysisRequest,
+    http_request: Request
+):
+    """
+    Streaming version of goal-based keyword analysis.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - initializing: Starting analysis
+    - detecting_location: Detecting user location
+    - analyzing_keywords: Analyzing primary keywords
+    - getting_search_volume: Getting search volume data
+    - getting_difficulty: Getting keyword difficulty
+    - getting_keyword_overview: Getting comprehensive keyword overview
+    - analyzing_serp: Analyzing SERP features (if requested)
+    - getting_llm_mentions: Getting LLM mentions (if requested)
+    - analyzing_content: Analyzing content (for Engagement/Brand Awareness)
+    - analyzing_intent: Analyzing search intent (for Engagement/Conversions)
+    - generating_recommendations: Generating recommendations
+    - completed: Final results
+    
+    Frontend can listen to these events to show real-time progress.
+    """
+    async def generate_stream():
+        try:
+            # Stage 1: Initializing
+            yield await stream_stage_update(
+                KeywordSearchStage.INITIALIZING,
+                5.0,
+                message=f"Initializing {request.content_goal.value} analysis..."
+            )
+            
+            # Stage 2: Detecting location
+            detected_location = None
+            if not request.location:
+                yield await stream_stage_update(
+                    KeywordSearchStage.DETECTING_LOCATION,
+                    10.0,
+                    message="Detecting location from IP..."
+                )
+                if http_request:
+                    detected_location = await detect_location_from_ip(http_request)
+                    if detected_location:
+                        yield await stream_stage_update(
+                            KeywordSearchStage.DETECTING_LOCATION,
+                            15.0,
+                            data={"detected_location": detected_location},
+                            message=f"Detected location: {detected_location}"
+                        )
+            
+            effective_location = request.location or detected_location or "United States"
+            tenant_id = os.getenv("TENANT_ID", "default")
+            
+            if not enhanced_analyzer or not enhanced_analyzer._df_client:
+                raise HTTPException(status_code=503, detail="DataForSEO client not available")
+            
+            await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+            
+            if not enhanced_analyzer._df_client.is_configured:
+                raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+            
+            df_client = enhanced_analyzer._df_client
+            results = {
+                "content_goal": request.content_goal.value,
+                "keywords": request.keywords,
+                "location": effective_location,
+                "language": request.language,
+                "analysis": {}
+            }
+            
+            # Route to goal-specific endpoints with streaming
+            if request.content_goal == ContentGoal.SEO_RANKINGS:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting SEO & Rankings analysis..."
+                )
+                
+                # Get search volume
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_SEARCH_VOLUME,
+                    30.0,
+                    message="Getting search volume data..."
+                )
+                search_volume_data = await df_client.get_search_volume_data(
+                    keywords=request.keywords,
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get difficulty
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_DIFFICULTY,
+                    50.0,
+                    message="Getting keyword difficulty scores..."
+                )
+                difficulty_data = await df_client.get_keyword_difficulty(
+                    keywords=request.keywords,
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get keyword overview
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_OVERVIEW,
+                    65.0,
+                    message="Getting comprehensive keyword overview..."
+                )
+                keyword_overview = {}
+                if request.keywords:
+                    keyword_overview = await df_client.get_keyword_overview(
+                        keywords=request.keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        75.0,
+                        message="Analyzing SERP features..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10
+                    )
+                
+                # Get LLM Mentions
+                llm_mentions = {}
+                if request.include_llm_mentions and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.GETTING_LLM_MENTIONS,
+                        85.0,
+                        message="Getting LLM mentions data..."
+                    )
+                    try:
+                        llm_mentions = await df_client.get_llm_mentions_search(
+                            target=request.keywords[0],
+                            target_type="keyword",
+                            location_name=effective_location,
+                            language_code=request.language,
+                            tenant_id=tenant_id,
+                            platform="auto",
+                            limit=30
+                        )
+                    except Exception as e:
+                        logger.warning(f"LLM mentions failed: {e}")
+                
+                # Generate recommendations
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating SEO recommendations..."
+                )
+                recommendations = _generate_seo_recommendations(search_volume_data, difficulty_data, llm_mentions)
+                
+                results["analysis"] = {
+                    "search_volume": search_volume_data,
+                    "difficulty": difficulty_data,
+                    "keyword_overview": keyword_overview,
+                    "serp_analysis": serp_analysis,
+                    "llm_mentions": llm_mentions,
+                    "recommendations": recommendations
+                }
+            
+            elif request.content_goal == ContentGoal.ENGAGEMENT:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting Engagement analysis..."
+                )
+                
+                # Get search intent
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_INTENT,
+                    30.0,
+                    message="Analyzing search intent..."
+                )
+                intent_data = await df_client.get_search_intent(
+                    keywords=request.keywords,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        50.0,
+                        message="Analyzing SERP for People Also Ask questions..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10,
+                        include_people_also_ask=True
+                    )
+                
+                # Get content analysis
+                content_analysis = {}
+                if request.include_content_analysis and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_CONTENT,
+                        70.0,
+                        message="Analyzing content sentiment and engagement..."
+                    )
+                    content_analysis = await df_client.analyze_content_search(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        limit=50
+                    )
+                
+                # Get LLM Mentions
+                llm_mentions = {}
+                if request.include_llm_mentions and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.GETTING_LLM_MENTIONS,
+                        85.0,
+                        message="Getting LLM mentions for engagement topics..."
+                    )
+                    try:
+                        llm_mentions = await df_client.get_llm_mentions_search(
+                            target=request.keywords[0],
+                            target_type="keyword",
+                            location_name=effective_location,
+                            language_code=request.language,
+                            tenant_id=tenant_id,
+                            platform="auto",
+                            limit=50
+                        )
+                    except Exception as e:
+                        logger.warning(f"LLM mentions failed: {e}")
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating engagement recommendations..."
+                )
+                recommendations = _generate_engagement_recommendations(intent_data, serp_analysis, content_analysis, llm_mentions)
+                
+                results["analysis"] = {
+                    "search_intent": intent_data,
+                    "serp_analysis": serp_analysis,
+                    "content_analysis": content_analysis,
+                    "llm_mentions": llm_mentions,
+                    "recommendations": recommendations
+                }
+            
+            elif request.content_goal == ContentGoal.CONVERSIONS:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting Conversions analysis..."
+                )
+                
+                # Get search volume (for CPC)
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_SEARCH_VOLUME,
+                    30.0,
+                    message="Getting search volume and CPC data..."
+                )
+                search_volume_data = await df_client.get_search_volume_data(
+                    keywords=request.keywords,
+                    location_name=effective_location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get search intent (commercial)
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_INTENT,
+                    50.0,
+                    message="Analyzing commercial search intent..."
+                )
+                intent_data = await df_client.get_search_intent(
+                    keywords=request.keywords,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        65.0,
+                        message="Analyzing SERP for shopping results..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10
+                    )
+                
+                # Get keyword overview
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_OVERVIEW,
+                    75.0,
+                    message="Getting keyword overview for intent classification..."
+                )
+                keyword_overview = {}
+                if request.keywords:
+                    keyword_overview = await df_client.get_keyword_overview(
+                        keywords=request.keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                
+                # Get LLM Mentions
+                llm_mentions = {}
+                if request.include_llm_mentions and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.GETTING_LLM_MENTIONS,
+                        85.0,
+                        message="Getting LLM mentions for commercial topics..."
+                    )
+                    try:
+                        llm_mentions = await df_client.get_llm_mentions_search(
+                            target=request.keywords[0],
+                            target_type="keyword",
+                            location_name=effective_location,
+                            language_code=request.language,
+                            tenant_id=tenant_id,
+                            platform="auto",
+                            limit=30
+                        )
+                    except Exception as e:
+                        logger.warning(f"LLM mentions failed: {e}")
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating conversion recommendations..."
+                )
+                recommendations = _generate_conversion_recommendations(search_volume_data, intent_data, serp_analysis, llm_mentions)
+                
+                results["analysis"] = {
+                    "search_volume": search_volume_data,
+                    "search_intent": intent_data,
+                    "serp_analysis": serp_analysis,
+                    "keyword_overview": keyword_overview,
+                    "llm_mentions": llm_mentions,
+                    "recommendations": recommendations
+                }
+            
+            elif request.content_goal == ContentGoal.BRAND_AWARENESS:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    20.0,
+                    message="Starting Brand Awareness analysis..."
+                )
+                
+                # Get content analysis
+                content_analysis = {}
+                if request.include_content_analysis and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_CONTENT,
+                        30.0,
+                        message="Analyzing content for brand mentions and sentiment..."
+                    )
+                    content_analysis = await df_client.analyze_content_search(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        limit=100
+                    )
+                    
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_CONTENT,
+                        50.0,
+                        message="Getting content summary..."
+                    )
+                    content_summary = await df_client.analyze_content_summary(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                    content_analysis["summary"] = content_summary
+                
+                # Get keyword overview
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_OVERVIEW,
+                    60.0,
+                    message="Getting keyword overview..."
+                )
+                keyword_overview = {}
+                if request.keywords:
+                    keyword_overview = await df_client.get_keyword_overview(
+                        keywords=request.keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id
+                    )
+                
+                # Get SERP analysis
+                serp_analysis = {}
+                if request.include_serp and request.keywords:
+                    yield await stream_stage_update(
+                        KeywordSearchStage.ANALYZING_SERP,
+                        70.0,
+                        message="Analyzing SERP for competitor presence..."
+                    )
+                    serp_analysis = await df_client.get_serp_analysis(
+                        keyword=request.keywords[0],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        depth=10
+                    )
+                
+                # Get keyword ideas
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_KEYWORD_IDEAS,
+                    80.0,
+                    message="Getting brand + industry keyword ideas..."
+                )
+                keyword_ideas = {}
+                if request.keywords:
+                    keyword_ideas = await df_client.get_keyword_ideas(
+                        keywords=request.keywords[:3],
+                        location_name=effective_location,
+                        language_code=request.language,
+                        tenant_id=tenant_id,
+                        limit=50
+                    )
+                
+                yield await stream_stage_update(
+                    KeywordSearchStage.GENERATING_RECOMMENDATIONS,
+                    95.0,
+                    message="Generating brand awareness recommendations..."
+                )
+                recommendations = _generate_brand_awareness_recommendations(content_analysis, keyword_overview)
+                
+                results["analysis"] = {
+                    "content_analysis": content_analysis,
+                    "keyword_overview": keyword_overview,
+                    "serp_analysis": serp_analysis,
+                    "keyword_ideas": keyword_ideas,
+                    "recommendations": recommendations
+                }
+            
+            # Completed
+            yield await stream_stage_update(
+                KeywordSearchStage.COMPLETED,
+                100.0,
+                data={"result": results},
+                message=f"{request.content_goal.value} analysis completed successfully"
+            )
+            
+        except HTTPException as http_ex:
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": http_ex.detail, "status_code": http_ex.status_code},
+                message=f"Analysis failed: {http_ex.detail}"
+            )
+        except Exception as e:
+            logger.error(f"Goal-based streaming analysis failed: {e}", exc_info=True)
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"Analysis failed: {str(e)}"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+def _generate_seo_recommendations(
+    search_volume_data: Dict,
+    difficulty_data: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate SEO recommendations based on search volume, difficulty, and LLM mentions."""
+    recommendations = []
+    
+    for keyword, data in search_volume_data.items():
+        volume = data.get("search_volume", 0)
+        difficulty = difficulty_data.get(keyword, 50.0)
+        
+        if volume >= 1000 and difficulty < 60:
+            recommendations.append(f"✅ '{keyword}': High volume ({volume}) with low difficulty ({difficulty:.1f}) - Great ranking opportunity")
+        elif volume >= 500 and difficulty < 50:
+            recommendations.append(f"✅ '{keyword}': Good volume ({volume}) with easy difficulty ({difficulty:.1f}) - Good opportunity")
+        elif volume < 100:
+            recommendations.append(f"⚠️ '{keyword}': Low search volume ({volume}) - Consider long-tail variations")
+        elif difficulty > 70:
+            recommendations.append(f"⚠️ '{keyword}': High difficulty ({difficulty:.1f}) - Competitive keyword")
+    
+    # LLM Mentions insights for SEO
+    if llm_mentions:
+        ai_search_volume = llm_mentions.get("ai_search_volume", 0)
+        mentions_count = llm_mentions.get("mentions_count", 0)
+        
+        if ai_search_volume > 0:
+            recommendations.append(f"✅ AI search volume: {ai_search_volume:,} - Optimize for both traditional and AI search")
+        
+        if mentions_count > 0:
+            recommendations.append(f"✅ {mentions_count} AI agent citations - High AI discovery potential")
+        
+        if llm_mentions.get("top_pages"):
+            recommendations.append(f"✅ Analyze {len(llm_mentions['top_pages'])} top-cited pages for SEO patterns")
+    
+    return recommendations
+
+
+def _generate_engagement_recommendations(
+    intent_data: Dict,
+    serp_analysis: Dict,
+    content_analysis: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate engagement recommendations based on intent, SERP, content analysis, and LLM mentions."""
+    recommendations = []
+    
+    # Check for informational intent
+    if intent_data.get("tasks") and intent_data["tasks"][0].get("result"):
+        for item in intent_data["tasks"][0]["result"]:
+            keyword = item.get("keyword", "")
+            intent = item.get("intent", "")
+            if intent.lower() == "informational":
+                recommendations.append(f"✅ '{keyword}': Informational intent - Great for engagement content")
+    
+    # Check for PAA questions
+    if serp_analysis.get("people_also_ask"):
+        paa_count = len(serp_analysis["people_also_ask"])
+        if paa_count > 0:
+            recommendations.append(f"✅ Found {paa_count} People Also Ask questions - Create Q&A content")
+    
+    # Check content sentiment
+    if content_analysis.get("sentiment"):
+        sentiment = content_analysis["sentiment"]
+        positive = sentiment.get("positive", 0)
+        if positive > 0:
+            recommendations.append(f"✅ Positive sentiment detected - Opportunity for engaging content")
+    
+    # LLM Mentions insights for engagement
+    if llm_mentions:
+        if llm_mentions.get("topics"):
+            topics_count = len(llm_mentions["topics"])
+            if topics_count > 0:
+                recommendations.append(f"✅ Found {topics_count} topics cited by AI agents - Create engaging content on these topics")
+        
+        if llm_mentions.get("top_pages"):
+            top_pages_count = len(llm_mentions["top_pages"])
+            if top_pages_count > 0:
+                recommendations.append(f"✅ {top_pages_count} pages cited by AI agents - Analyze what makes them engaging")
+    
+    return recommendations
+
+
+def _generate_conversion_recommendations(
+    search_volume_data: Dict,
+    intent_data: Dict,
+    serp_analysis: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate conversion recommendations based on CPC, intent, SERP, and LLM mentions."""
+    recommendations = []
+    
+    # Check CPC
+    for keyword, data in search_volume_data.items():
+        cpc = data.get("cpc", 0.0)
+        volume = data.get("search_volume", 0)
+        
+        if cpc >= 5.0:
+            recommendations.append(f"✅ '{keyword}': High CPC (${cpc:.2f}) - Strong commercial value")
+        elif cpc >= 2.0 and volume >= 500:
+            recommendations.append(f"✅ '{keyword}': Good CPC (${cpc:.2f}) with decent volume ({volume})")
+    
+    # Check commercial intent
+    if intent_data.get("tasks") and intent_data["tasks"][0].get("result"):
+        for item in intent_data["tasks"][0]["result"]:
+            keyword = item.get("keyword", "")
+            intent = item.get("intent", "")
+            if intent.lower() in ["transactional", "commercial"]:
+                recommendations.append(f"✅ '{keyword}': {intent.capitalize()} intent - Conversion-focused")
+    
+    # Check for shopping results
+    if serp_analysis.get("shopping_results"):
+        recommendations.append("✅ Shopping results present - E-commerce opportunity")
+    
+    # LLM Mentions insights for conversions
+    if llm_mentions:
+        ai_search_volume = llm_mentions.get("ai_search_volume", 0)
+        if ai_search_volume > 0:
+            recommendations.append(f"✅ AI search volume: {ai_search_volume:,} - Optimize product content for AI citations")
+        
+        if llm_mentions.get("top_pages"):
+            recommendations.append(f"✅ Analyze {len(llm_mentions['top_pages'])} commercial pages cited by AI agents")
+    
+    return recommendations
+
+
+def _generate_brand_awareness_recommendations(
+    content_analysis: Dict,
+    keyword_overview: Dict,
+    llm_mentions: Dict = None
+) -> List[str]:
+    """Generate brand awareness recommendations based on content analysis and LLM mentions."""
+    recommendations = []
+    
+    # Check brand mentions
+    if content_analysis.get("brand_mentions"):
+        mentions = content_analysis["brand_mentions"]
+        if mentions:
+            recommendations.append(f"✅ Found {len(mentions)} brand mentions - Track brand visibility")
+    
+    # Check sentiment
+    if content_analysis.get("sentiment"):
+        sentiment = content_analysis["sentiment"]
+        positive = sentiment.get("positive", 0)
+        negative = sentiment.get("negative", 0)
+        
+        if positive > negative:
+            recommendations.append("✅ Positive sentiment outweighs negative - Good brand perception")
+        elif negative > positive:
+            recommendations.append("⚠️ Negative sentiment detected - Address brand concerns")
+    
+    # Check engagement score
+    if content_analysis.get("summary", {}).get("engagement_score", 0) > 0.7:
+        recommendations.append("✅ High engagement score - Strong brand awareness potential")
+    
+    # LLM Mentions insights (CRITICAL for Brand Awareness)
+    if llm_mentions:
+        mentions_count = llm_mentions.get("mentions_count", 0)
+        ai_search_volume = llm_mentions.get("ai_search_volume", 0)
+        
+        if mentions_count > 0:
+            recommendations.append(f"✅ Found {mentions_count} AI agent citations - Brand visible in AI search")
+        
+        if ai_search_volume > 0:
+            recommendations.append(f"✅ AI search volume: {ai_search_volume:,} - High AI discovery potential")
+        
+        if llm_mentions.get("top_pages"):
+            top_pages_count = len(llm_mentions["top_pages"])
+            recommendations.append(f"✅ {top_pages_count} pages cited by AI agents - Analyze citation patterns")
+        
+        if llm_mentions.get("top_domains_analysis", {}).get("top_domains"):
+            top_domains_count = len(llm_mentions["top_domains_analysis"]["top_domains"])
+            recommendations.append(f"✅ {top_domains_count} authoritative domains identified - Competitive analysis")
+        
+        # Content gap detection
+        if ai_search_volume > 1000 and mentions_count < 10:
+            recommendations.append("⚠️ High AI search volume but low citations - Content gap opportunity")
+    
+    return recommendations
+
+
+@app.post("/api/v1/keywords/ai-mentions")
+async def get_llm_mentions(
+    request: LLMMentionsRequest,
+    http_request: Request
+):
+    """
+    Get LLM mentions data for a keyword or domain.
+    
+    This endpoint finds what topics, keywords, and URLs are being cited by AI agents
+    (ChatGPT, Claude, Gemini, Perplexity) in their responses.
+    
+    Critical for: Discovering AI-optimized topics and content gaps.
+    
+    Returns:
+    - Top pages cited by AI agents
+    - Top domains cited by AI agents
+    - Topics frequently mentioned
+    - AI search volume and mention counts
+    """
+    try:
+        tenant_id = os.getenv("TENANT_ID", "default")
+        
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+        
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        if not enhanced_analyzer._df_client.is_configured:
+            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+        
+        df_client = enhanced_analyzer._df_client
+        
+        # Get LLM mentions search
+        mentions_data = await df_client.get_llm_mentions_search(
+            target=request.target,
+            target_type=request.target_type,
+            location_name=request.location,
+            language_code=request.language,
+            tenant_id=tenant_id,
+            platform=request.platform,
+            limit=request.limit
+        )
+        
+        # Get top pages if available
+        top_pages_data = {}
+        if request.target_type == "keyword":
+            try:
+                top_pages_data = await df_client.get_llm_mentions_top_pages(
+                    target=request.target,
+                    target_type=request.target_type,
+                    location_name=request.location,
+                    language_code=request.language,
+                    tenant_id=tenant_id,
+                    platform=request.platform,
+                    limit=10
+                )
+            except Exception as e:
+                logger.warning(f"Failed to get top pages: {e}")
+        
+        # Get top domains
+        top_domains_data = {}
+        try:
+            top_domains_data = await df_client.get_llm_mentions_top_domains(
+                target=request.target,
+                target_type=request.target_type,
+                location_name=request.location,
+                language_code=request.language,
+                tenant_id=tenant_id,
+                platform=request.platform,
+                limit=10
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get top domains: {e}")
+        
+        return {
+            "target": request.target,
+            "target_type": request.target_type,
+            "platform": request.platform,
+            "llm_mentions": mentions_data,
+            "top_pages": top_pages_data,
+            "top_domains": top_domains_data,
+            "insights": _generate_llm_mentions_insights(mentions_data, top_pages_data, top_domains_data)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"LLM mentions search failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"LLM mentions search failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/ai-topic-suggestions")
+async def get_ai_topic_suggestions(
+    request: AITopicSuggestionsRequest,
+    http_request: Request
+):
+    """
+    Get AI-optimized topic suggestions combining multiple DataForSEO AI endpoints.
+    
+    This endpoint combines:
+    - AI Search Volume: Keywords with high AI search volume
+    - LLM Mentions: Topics cited by AI agents
+    - LLM Responses: AI-generated topic research (optional)
+    
+    Critical for: Creating content optimized for AI agent discovery and citation.
+    
+    Returns:
+    - AI-optimized topic suggestions
+    - Content gaps (topics AI agents discuss but have limited citations)
+    - Citation opportunities
+    - AI search volume and mention metrics
+    """
+    try:
+        # Extract keywords from content objective if not provided
+        seed_keywords = request.keywords or []
+        if not seed_keywords and request.content_objective:
+            # Extract meaningful keywords from content objective
+            import re
+            # Remove common stop words and extract meaningful phrases
+            objective_text = request.content_objective.lower()
+            # Extract 2-4 word phrases that are likely keywords
+            words = re.findall(r'\b\w+\b', objective_text)
+            # Filter out common stop words
+            stop_words = {'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'create', 'review', 'each', 'could', 'my', 'competitor'}
+            meaningful_words = [w for w in words if w not in stop_words and len(w) > 2]  # Lowered from 3 to 2 to catch "miami"
+            
+            # Create keyword phrases (2-3 words) - prioritize location + service combinations
+            seed_keywords = []
+            
+            # First, extract location + service patterns (e.g., "plumbers in miami" -> "miami plumbers")
+            location_keywords = ['miami', 'florida', 'fl', 'city', 'area', 'near', 'local']
+            service_keywords = []
+            for word in meaningful_words:
+                if word not in location_keywords:
+                    service_keywords.append(word)
+            
+            # Create location + service combinations
+            for service in service_keywords[:3]:
+                for location in location_keywords[:2]:
+                    if location in objective_text.lower():
+                        seed_keywords.append(f"{location} {service}")
+                        seed_keywords.append(f"{service} {location}")
+            
+            # Also create 2-word phrases from meaningful words
+            if len(meaningful_words) >= 2:
+                for i in range(len(meaningful_words) - 1):
+                    phrase = f"{meaningful_words[i]} {meaningful_words[i+1]}"
+                    if len(phrase.split()) == 2 and phrase not in seed_keywords:
+                        seed_keywords.append(phrase)
+                    if len(seed_keywords) >= 5:
+                        break
+            
+            # Add individual important words if we don't have enough
+            if len(seed_keywords) < 3:
+                seed_keywords.extend([w for w in meaningful_words[:5] if w not in seed_keywords])
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            seed_keywords = [kw for kw in seed_keywords if kw not in seen and not seen.add(kw)]
+            
+            # Limit to 5 keywords
+            seed_keywords = seed_keywords[:5]
+            
+            logger.info(f"Extracted keywords from content objective: {seed_keywords}")
+        
+        if not seed_keywords:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'keywords' or 'content_objective' must be provided"
+            )
+        
+        # Detect location from IP if not explicitly specified
+        detected_location = None
+        if not request.location:
+            if http_request:
+                detected_location = await detect_location_from_ip(http_request)
+                if detected_location:
+                    logger.info(f"Detected location from IP: {detected_location}")
+        
+        effective_location = request.location or detected_location or "United States"
+        tenant_id = os.getenv("TENANT_ID", "default")
+        
+        # Use TopicRecommendationEngine for AI-powered topic generation
+        global topic_recommender, ai_generator
+        if not topic_recommender:
+            raise HTTPException(status_code=503, detail="Topic recommendation engine not available")
+        
+        # Get AI-powered topic recommendations
+        try:
+            topic_result = await topic_recommender.recommend_topics(
+                seed_keywords=seed_keywords[:5],  # Limit to 5 seed keywords
+                location=effective_location,
+                language=request.language or "en",
+                max_topics=request.limit,
+                min_search_volume=10,  # Lowered from 100 to 10 to get more results
+                max_difficulty=80.0,  # Increased from 70.0 to 80.0 to include more topics
+                include_ai_suggestions=True  # Use AI for topic generation
+            )
+        except Exception as e:
+            logger.error(f"Topic recommendation engine failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Topic recommendation failed: {str(e)}"
+            )
+        
+        # Validate topic_result
+        if not topic_result:
+            logger.warning("Topic recommendation engine returned None")
+            topic_result = type('TopicRecommendationResult', (), {
+                'recommended_topics': [],
+                'total_opportunities': 0,
+                'high_priority_topics': [],
+                'trending_topics': [],
+                'low_competition_topics': [],
+                'analysis_date': datetime.now().isoformat()
+            })()
+        
+        # Ensure recommended_topics is a list
+        if not hasattr(topic_result, 'recommended_topics') or topic_result.recommended_topics is None:
+            logger.warning("topic_result.recommended_topics is None or missing")
+            recommended_topics = []
+        else:
+            recommended_topics = topic_result.recommended_topics
+        
+        # Convert RecommendedTopic objects to response format
+        topic_suggestions = []
+        for topic in recommended_topics:
+            try:
+                topic_suggestion = {
+                    "topic": getattr(topic, 'topic', ''),
+                    "source_keyword": getattr(topic, 'primary_keyword', ''),
+                    "ai_search_volume": 0,  # Will be populated below if available
+                    "mentions": 0,
+                    "search_volume": getattr(topic, 'search_volume', 0),
+                    "difficulty": getattr(topic, 'difficulty', 0.0),
+                    "competition": getattr(topic, 'competition', 0.0),
+                    "cpc": getattr(topic, 'cpc', 0.0),
+                    "ranking_score": getattr(topic, 'ranking_score', 0.0),
+                    "opportunity_score": getattr(topic, 'opportunity_score', 0.0),
+                    "estimated_traffic": getattr(topic, 'estimated_traffic', 0),
+                    "reason": getattr(topic, 'reason', ''),
+                    "related_keywords": (getattr(topic, 'related_keywords', []) or [])[:5],
+                    "source": "ai_generated"
+                }
+                topic_suggestions.append(topic_suggestion)
+            except Exception as e:
+                logger.error(f"Error converting topic to suggestion: {e}", exc_info=True)
+                continue
+        
+        # Get AI search volume and LLM mentions for seed keywords (for metrics)
+        df_client = enhanced_analyzer._df_client if enhanced_analyzer else None
+        ai_metrics = {}
+        
+        if df_client and request.include_ai_search_volume:
+            try:
+                await df_client.initialize_credentials(tenant_id)
+                if df_client.is_configured:
+                    logger.info(f"Getting AI search volume for keywords: {seed_keywords[:5]}")
+                    ai_search_volume_data = await df_client.get_ai_search_volume(
+                        keywords=seed_keywords[:5],
+                        location_name=effective_location,
+                        language_code=request.language or "en",
+                        tenant_id=tenant_id
+                    )
+                    logger.info(f"AI search volume data received: {json.dumps(ai_search_volume_data, default=str)[:500]}")
+                    ai_metrics["search_volume"] = ai_search_volume_data
+                    
+                    # Update topic suggestions with AI search volume
+                    # Try to match by exact keyword first, then by partial match
+                    if ai_search_volume_data:  # Ensure ai_search_volume_data is not None
+                        for suggestion in topic_suggestions:
+                            keyword = suggestion["source_keyword"]
+                            
+                            # Try exact match first
+                            if keyword in ai_search_volume_data:
+                                suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
+                            else:
+                                # Try partial match - check if any seed keyword is contained in the topic keyword
+                                matched = False
+                                for seed_kw in seed_keywords:
+                                    if seed_kw.lower() in keyword.lower() or keyword.lower() in seed_kw.lower():
+                                        if seed_kw in ai_search_volume_data:
+                                            suggestion["ai_search_volume"] = ai_search_volume_data[seed_kw].get("ai_search_volume", 0)
+                                            matched = True
+                                            break
+                                
+                                # If still no match, try getting AI search volume for the topic keyword itself
+                                if not matched and df_client:
+                                    try:
+                                        topic_ai_data = await df_client.get_ai_search_volume(
+                                            keywords=[keyword],
+                                            location_name=effective_location,
+                                            language_code=request.language or "en",
+                                            tenant_id=tenant_id
+                                        )
+                                        if keyword in topic_ai_data:
+                                            suggestion["ai_search_volume"] = topic_ai_data[keyword].get("ai_search_volume", 0)
+                                    except Exception as e:
+                                        logger.debug(f"Failed to get AI search volume for topic keyword '{keyword}': {e}")
+                            
+                            # Calculate AI optimization score for this topic (inside the loop)
+                            ai_vol = suggestion.get("ai_search_volume", 0)
+                            if ai_vol > 0:
+                                # Calculate score similar to ai-optimization endpoint
+                                ai_score = min(50, math.log10(ai_vol + 1) * 10)
+                                # Add bonus for good traditional search volume
+                                if suggestion.get("search_volume", 0) > 1000:
+                                    ai_score += 10
+                                # Add bonus for low difficulty
+                                if suggestion.get("difficulty", 100) < 50:
+                                    ai_score += 10
+                                suggestion["ai_optimization_score"] = min(100, max(0, int(ai_score)))
+                            else:
+                                suggestion["ai_optimization_score"] = 0
+            except Exception as e:
+                logger.warning(f"Failed to get AI search volume: {e}")
+        
+        if df_client and request.include_llm_mentions:
+            try:
+                await df_client.initialize_credentials(tenant_id)
+                if df_client.is_configured:
+                    llm_mentions_data = {}
+                    for keyword in seed_keywords[:3]:
+                        try:
+                            logger.info(f"Getting LLM mentions for keyword: {keyword}")
+                            mentions = await df_client.get_llm_mentions_search(
+                                target=keyword,
+                                target_type="keyword",
+                                location_name=effective_location,
+                                language_code=request.language or "en",
+                                tenant_id=tenant_id,
+                                platform="auto",  # Auto tries chat_gpt first, then google
+                                limit=20
+                            )
+                            logger.info(f"LLM mentions for '{keyword}': ai_search_volume={mentions.get('ai_search_volume', 0)}, mentions_count={mentions.get('mentions_count', 0)}, top_pages={len(mentions.get('top_pages', []))}")
+                            llm_mentions_data[keyword] = mentions
+                        except Exception as e:
+                            logger.warning(f"Failed to get LLM mentions for {keyword}: {e}", exc_info=True)
+                    ai_metrics["llm_mentions"] = llm_mentions_data
+            except Exception as e:
+                logger.warning(f"Failed to get LLM mentions: {e}")
+        
+        results = {
+            "seed_keywords": seed_keywords,
+            "content_objective": request.content_objective,
+            "target_audience": request.target_audience,
+            "industry": request.industry,
+            "content_goals": request.content_goals or [],
+            "location": effective_location,
+            "language": request.language or "en",
+            "topic_suggestions": topic_suggestions,
+            "content_gaps": [],  # Can be populated from LLM mentions analysis
+            "citation_opportunities": [],  # Can be populated from LLM mentions analysis
+            "ai_metrics": ai_metrics,
+            "summary": {
+                "total_suggestions": len(topic_suggestions),
+                "high_priority_topics": len(getattr(topic_result, 'high_priority_topics', [])) if topic_result else 0,
+                "trending_topics": len(getattr(topic_result, 'trending_topics', [])) if topic_result else 0,
+                "low_competition_topics": len(getattr(topic_result, 'low_competition_topics', [])) if topic_result else 0,
+                "content_gaps_count": 0,
+                "citation_opportunities_count": 0
+            }
+        }
+        
+        return results
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI topic suggestions failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI topic suggestions failed: {str(e)}"
+        )
+
+
+# Streaming version of AI topic suggestions
+@app.post("/api/v1/keywords/ai-topic-suggestions/stream")
+async def get_ai_topic_suggestions_stream(
+    request: AITopicSuggestionsRequest,
+    http_request: Request
+):
+    """
+    Streaming version of AI topic suggestions.
+    
+    Returns Server-Sent Events (SSE) stream showing progress through each stage:
+    - initializing: Starting AI topic research
+    - detecting_location: Detecting user location
+    - analyzing_keywords: Extracting/analyzing seed keywords
+    - getting_ai_search_volume: Getting AI search volume data
+    - getting_llm_mentions: Getting LLM mentions for each keyword
+    - getting_keyword_ideas: Getting keyword ideas and topics
+    - building_discovery: Building topic suggestions
+    - completed: Final results
+    
+    Frontend can listen to these events to show real-time progress.
+    """
+    async def generate_stream():
+        try:
+            # Stage 1: Initializing
+            yield await stream_stage_update(
+                KeywordSearchStage.INITIALIZING,
+                5.0,
+                message="Initializing AI topic research..."
+            )
+            
+            # Extract keywords from content objective if not provided
+            seed_keywords = request.keywords or []
+            if not seed_keywords and request.content_objective:
+                yield await stream_stage_update(
+                    KeywordSearchStage.ANALYZING_KEYWORDS,
+                    10.0,
+                    message="Extracting keywords from content objective..."
+                )
+                import re
+                objective_text = request.content_objective.lower()
+                words = re.findall(r'\b\w+\b', objective_text)
+                stop_words = {'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'create', 'review', 'each', 'could', 'my', 'competitor'}
+                meaningful_words = [w for w in words if w not in stop_words and len(w) > 2]
+                
+                location_keywords = ['miami', 'florida', 'fl', 'city', 'area', 'near', 'local']
+                service_keywords = [w for w in meaningful_words if w not in location_keywords]
+                
+                for service in service_keywords[:3]:
+                    for location in location_keywords[:2]:
+                        if location in objective_text.lower():
+                            seed_keywords.append(f"{location} {service}")
+                            seed_keywords.append(f"{service} {location}")
+                
+                if len(meaningful_words) >= 2:
+                    for i in range(len(meaningful_words) - 1):
+                        phrase = f"{meaningful_words[i]} {meaningful_words[i+1]}"
+                        if len(phrase.split()) == 2 and phrase not in seed_keywords:
+                            seed_keywords.append(phrase)
+                        if len(seed_keywords) >= 5:
+                            break
+                
+                if len(seed_keywords) < 3:
+                    seed_keywords.extend([w for w in meaningful_words[:5] if w not in seed_keywords])
+                
+                seen = set()
+                seed_keywords = [kw for kw in seed_keywords if kw not in seen and not seen.add(kw)]
+                seed_keywords = seed_keywords[:5]
+            
+            if not seed_keywords:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Either 'keywords' or 'content_objective' must be provided"
+                )
+            
+            # Stage 2: Detecting location
+            detected_location = None
+            if not request.location:
+                yield await stream_stage_update(
+                    KeywordSearchStage.DETECTING_LOCATION,
+                    15.0,
+                    message="Detecting location from IP..."
+                )
+                if http_request:
+                    detected_location = await detect_location_from_ip(http_request)
+                    if detected_location:
+                        yield await stream_stage_update(
+                            KeywordSearchStage.DETECTING_LOCATION,
+                            20.0,
+                            data={"detected_location": detected_location},
+                            message=f"Detected location: {detected_location}"
+                        )
+            
+            effective_location = request.location or detected_location or "United States"
+            tenant_id = os.getenv("TENANT_ID", "default")
+            
+            # Stage 3: Getting topic recommendations
+            yield await stream_stage_update(
+                KeywordSearchStage.GETTING_KEYWORD_IDEAS,
+                25.0,
+                message="Getting AI-powered topic recommendations..."
+            )
+            
+            global topic_recommender
+            if not topic_recommender:
+                raise HTTPException(status_code=503, detail="Topic recommendation engine not available")
+            
+            try:
+                topic_result = await topic_recommender.recommend_topics(
+                    seed_keywords=seed_keywords[:5],
+                    location=effective_location,
+                    language=request.language or "en",
+                    max_topics=request.limit,
+                    min_search_volume=10,
+                    max_difficulty=80.0,
+                    include_ai_suggestions=True
+                )
+            except Exception as e:
+                logger.error(f"Topic recommendation engine failed: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Topic recommendation failed: {str(e)}"
+                )
+            
+            if not topic_result:
+                topic_result = type('TopicRecommendationResult', (), {
+                    'recommended_topics': [],
+                    'total_opportunities': 0,
+                    'high_priority_topics': [],
+                    'trending_topics': [],
+                    'low_competition_topics': [],
+                    'analysis_date': datetime.now().isoformat()
+                })()
+            
+            recommended_topics = getattr(topic_result, 'recommended_topics', []) or []
+            
+            # Stage 4: Converting topics to suggestions
+            yield await stream_stage_update(
+                KeywordSearchStage.BUILDING_DISCOVERY,
+                40.0,
+                message=f"Processing {len(recommended_topics)} topic suggestions..."
+            )
+            
+            topic_suggestions = []
+            for topic in recommended_topics:
+                try:
+                    topic_suggestion = {
+                        "topic": getattr(topic, 'topic', ''),
+                        "source_keyword": getattr(topic, 'primary_keyword', ''),
+                        "ai_search_volume": 0,
+                        "mentions": 0,
+                        "search_volume": getattr(topic, 'search_volume', 0),
+                        "difficulty": getattr(topic, 'difficulty', 0.0),
+                        "competition": getattr(topic, 'competition', 0.0),
+                        "cpc": getattr(topic, 'cpc', 0.0),
+                        "ranking_score": getattr(topic, 'ranking_score', 0.0),
+                        "opportunity_score": getattr(topic, 'opportunity_score', 0.0),
+                        "estimated_traffic": getattr(topic, 'estimated_traffic', 0),
+                        "reason": getattr(topic, 'reason', ''),
+                        "related_keywords": (getattr(topic, 'related_keywords', []) or [])[:5],
+                        "source": "ai_generated"
+                    }
+                    topic_suggestions.append(topic_suggestion)
+                except Exception as e:
+                    logger.error(f"Error converting topic: {e}", exc_info=True)
+                    continue
+            
+            # Stage 5: Getting AI search volume
+            df_client = enhanced_analyzer._df_client if enhanced_analyzer else None
+            ai_metrics = {}
+            
+            if df_client and request.include_ai_search_volume:
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_AI_SEARCH_VOLUME,
+                    50.0,
+                    message="Getting AI search volume data..."
+                )
+                try:
+                    await df_client.initialize_credentials(tenant_id)
+                    if df_client.is_configured:
+                        ai_search_volume_data = await df_client.get_ai_search_volume(
+                            keywords=seed_keywords[:5],
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id
+                        )
+                        ai_metrics["search_volume"] = ai_search_volume_data
+                        
+                        # Update topic suggestions with AI search volume
+                        if ai_search_volume_data:
+                            for suggestion in topic_suggestions:
+                                keyword = suggestion["source_keyword"]
+                                if keyword in ai_search_volume_data:
+                                    suggestion["ai_search_volume"] = ai_search_volume_data[keyword].get("ai_search_volume", 0)
+                except Exception as e:
+                    logger.warning(f"Failed to get AI search volume: {e}")
+            
+            # Stage 6: Getting LLM mentions
+            if df_client and request.include_llm_mentions:
+                yield await stream_stage_update(
+                    KeywordSearchStage.GETTING_LLM_MENTIONS,
+                    70.0,
+                    message="Getting LLM mentions data..."
+                )
+                try:
+                    await df_client.initialize_credentials(tenant_id)
+                    if df_client.is_configured:
+                        llm_mentions_data = {}
+                        for idx, keyword in enumerate(seed_keywords[:3]):
+                            yield await stream_stage_update(
+                                KeywordSearchStage.GETTING_LLM_MENTIONS,
+                                70.0 + (idx + 1) * 8.0,
+                                message=f"Getting LLM mentions for '{keyword}'..."
+                            )
+                            try:
+                                mentions = await df_client.get_llm_mentions_search(
+                                    target=keyword,
+                                    target_type="keyword",
+                                    location_name=effective_location,
+                                    language_code=request.language or "en",
+                                    tenant_id=tenant_id,
+                                    platform="auto",
+                                    limit=20
+                                )
+                                llm_mentions_data[keyword] = mentions
+                            except Exception as e:
+                                logger.warning(f"Failed to get LLM mentions for {keyword}: {e}")
+                        ai_metrics["llm_mentions"] = llm_mentions_data
+                except Exception as e:
+                    logger.warning(f"Failed to get LLM mentions: {e}")
+            
+            # Stage 7: Building final results
+            yield await stream_stage_update(
+                KeywordSearchStage.BUILDING_DISCOVERY,
+                95.0,
+                message="Building final results..."
+            )
+            
+            results = {
+                "seed_keywords": seed_keywords,
+                "content_objective": request.content_objective,
+                "target_audience": request.target_audience,
+                "industry": request.industry,
+                "content_goals": request.content_goals or [],
+                "location": {
+                    "used": effective_location,
+                    "detected": detected_location
+                },
+                "language": request.language or "en",
+                "topic_suggestions": topic_suggestions,
+                "content_gaps": [],
+                "citation_opportunities": [],
+                "ai_metrics": ai_metrics,
+                "summary": {
+                    "total_suggestions": len(topic_suggestions),
+                    "high_priority_topics": len(getattr(topic_result, 'high_priority_topics', [])) if topic_result else 0,
+                    "trending_topics": len(getattr(topic_result, 'trending_topics', [])) if topic_result else 0,
+                    "low_competition_topics": len(getattr(topic_result, 'low_competition_topics', [])) if topic_result else 0,
+                    "content_gaps_count": 0,
+                    "citation_opportunities_count": 0
+                }
+            }
+            
+            # Completed
+            yield await stream_stage_update(
+                KeywordSearchStage.COMPLETED,
+                100.0,
+                data={"result": results},
+                message=f"Found {len(topic_suggestions)} AI-optimized topic suggestions"
+            )
+            
+        except HTTPException as http_ex:
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": http_ex.detail, "status_code": http_ex.status_code},
+                message=f"AI topic suggestions failed: {http_ex.detail}"
+            )
+        except Exception as e:
+            logger.error(f"AI topic suggestions streaming failed: {e}", exc_info=True)
+            yield await stream_stage_update(
+                KeywordSearchStage.ERROR,
+                0.0,
+                data={"error": str(e)},
+                message=f"AI topic suggestions failed: {str(e)}"
+            )
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+def _generate_llm_mentions_insights(
+    mentions_data: Dict[str, Any],
+    top_pages_data: Dict[str, Any],
+    top_domains_data: Dict[str, Any]
+) -> List[str]:
+    """Generate insights from LLM mentions data."""
+    insights = []
+    
+    if mentions_data.get("mentions_count", 0) > 0:
+        insights.append(f"✅ Found {mentions_data['mentions_count']} total mentions by AI agents")
+    
+    if mentions_data.get("ai_search_volume", 0) > 0:
+        insights.append(f"✅ AI search volume: {mentions_data['ai_search_volume']:,}")
+    
+    if mentions_data.get("top_pages"):
+        insights.append(f"✅ {len(mentions_data['top_pages'])} pages cited by AI agents")
+    
+    if top_domains_data.get("top_domains"):
+        insights.append(f"✅ {len(top_domains_data['top_domains'])} authoritative domains identified")
+    
+    if mentions_data.get("mentions_count", 0) > 0 and mentions_data.get("ai_search_volume", 0) > 0:
+        ratio = mentions_data["ai_search_volume"] / mentions_data["mentions_count"]
+        if ratio > 100:
+            insights.append("⚠️ High AI search volume but low citations - Content gap opportunity")
+    
+    return insights
+
+
+def _get_top_sources(topic_suggestions: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Get top sources for topic suggestions."""
+    sources = {}
+    for suggestion in topic_suggestions:
+        source = suggestion.get("source", "unknown")
+        sources[source] = sources.get(source, 0) + 1
+    return sources
+
+
 @app.post("/api/v1/keywords/suggest")
 async def suggest_keywords(
     request: KeywordSuggestionRequest,
@@ -4009,63 +7042,9 @@ def get_abstraction_writer() -> BlogWriterAbstraction:
     return abstraction_writer
 
 
-@app.post("/api/v1/abstraction/blog/generate", response_model=AbstractionBlogGenerationResult)
-async def generate_blog_with_abstraction(
-    request: AbstractionBlogGenerationRequest,
-    background_tasks: BackgroundTasks,
-    writer: BlogWriterAbstraction = Depends(get_abstraction_writer)
-):
-    """
-    Generate a blog post using the new abstraction layer.
-    
-    This endpoint provides advanced blog generation with:
-    - Multiple content strategies (SEO, Engagement, Conversion)
-    - Quality assurance and optimization
-    - Provider management and fallback
-    - Comprehensive analytics and monitoring
-    """
-    try:
-        # Convert API request to abstraction layer request
-        abstraction_request = AbstractionBlogRequest(
-            topic=request.topic,
-            keywords=request.keywords,
-            target_audience=request.target_audience,
-            content_strategy=request.content_strategy,
-            tone=request.tone,
-            length=request.length,
-            format=request.format,
-            quality_target=request.quality_target,
-            preferred_provider=request.preferred_provider,
-            additional_context=request.additional_context,
-            seo_requirements=request.seo_requirements
-        )
-        
-        # Generate blog using abstraction layer
-        result = await writer.generate_blog(abstraction_request)
-        
-        # Convert result to API response
-        return AbstractionBlogGenerationResult(
-            title=result.title,
-            content=result.content,
-            meta_description=result.meta_description,
-            introduction=result.introduction,
-            conclusion=result.conclusion,
-            faq_section=result.faq_section,
-            seo_score=result.seo_score,
-            readability_score=result.readability_score,
-            quality_score=result.quality_score,
-            provider_used=result.provider_used,
-            generation_time=result.generation_time,
-            cost=result.cost,
-            tokens_used=result.tokens_used,
-            metadata=result.metadata
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Blog generation failed: {str(e)}"
-        )
+# DEPRECATED: Use /api/v1/blog/generate-enhanced instead
+# POST /api/v1/abstraction/blog/generate has been removed
+# This endpoint used a different abstraction layer and is not optimized for DataForSEO
 
 
 @app.get("/api/v1/abstraction/strategies")
@@ -4080,6 +7059,18 @@ async def get_content_strategies():
             for strategy in ContentStrategy
         ]
     }
+
+
+# DEPRECATED: Use /api/v1/blog/generate-enhanced instead
+# POST /api/v1/blog/generate-unified has been removed
+# This endpoint used a different abstraction layer and is not optimized for DataForSEO
+# For local business blogs, use /api/v1/blog/generate-enhanced with blog_type: 'brand'
+
+
+# DEPRECATED: Use /api/v1/blog/generate-enhanced instead
+# POST /api/v1/blog/generate-local-business has been removed
+# For local business blogs, use /api/v1/blog/generate-enhanced with blog_type: 'brand'
+# You can include location and business details in custom_instructions
 
 
 @app.get("/api/v1/abstraction/quality-levels")

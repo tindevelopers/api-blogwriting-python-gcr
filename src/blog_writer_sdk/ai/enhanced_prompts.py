@@ -98,11 +98,34 @@ Focus on creating content that provides genuine value, unique insights, and acti
                 prompt += f"\nTARGET AUDIENCE: {context['target_audience']}"
             if context.get("competitor_analysis"):
                 prompt += f"\n\nCOMPETITOR INSIGHTS:\n{context['competitor_analysis']}"
+            if context.get("gsc_opportunities"):
+                opportunities = context['gsc_opportunities']
+                prompt += f"\n\nGOOGLE SEARCH CONSOLE - CONTENT OPPORTUNITIES:\n"
+                prompt += "These keywords have high impressions but low CTR (opportunity to improve):\n"
+                for opp in opportunities[:5]:
+                    keyword = opp.get('keyword', '')
+                    impressions = opp.get('impressions', 0)
+                    position = opp.get('position', 0)
+                    ctr = opp.get('ctr', 0)
+                    prompt += f"- '{keyword}': {impressions} impressions, position {position:.1f}, CTR {ctr:.2%}\n"
+                prompt += "\nConsider optimizing content to target these high-opportunity keywords."
+            if context.get("gsc_content_gaps"):
+                gaps = context['gsc_content_gaps']
+                gap_list = gaps.get('gaps', [])
+                if gap_list:
+                    prompt += f"\n\nGOOGLE SEARCH CONSOLE - CONTENT GAPS:\n"
+                    prompt += "These target keywords are not ranking or ranking low:\n"
+                    for gap in gap_list[:5]:
+                        keyword = gap.get('keyword', '')
+                        status = gap.get('status', '')
+                        recommendation = gap.get('recommendation', '')
+                        prompt += f"- '{keyword}': {status} - {recommendation}\n"
+                    prompt += "\nFocus on creating content that addresses these gaps."
             if context.get("brand_recommendations"):
                 brand_data = context['brand_recommendations']
                 brands_list = ", ".join(brand_data.get("brands", [])[:10])
                 prompt += f"\n\nPRODUCT BRAND RECOMMENDATIONS:\nThe following brands/models are frequently mentioned in top-ranking content:\n{brands_list}\n\nIMPORTANT: Include specific brand recommendations and comparisons in your outline. Create sections that compare different brands, highlight top-rated products, and provide detailed brand-specific information. Include pros/cons for each major brand."
-            
+        
             # Priority 1: AI Citation Pattern Optimization
             if context.get("citation_patterns"):
                 citation_patterns = context['citation_patterns']
@@ -212,6 +235,31 @@ WRITING REQUIREMENTS:
 9. Include natural transitions between sections
 10. End each section with a clear takeaway or summary point
 
+ENGAGEMENT REQUIREMENTS (CRITICAL):
+- Include 3-5 rhetorical questions throughout the content to engage readers
+- Add compelling call-to-action phrases: "Learn more", "Get started", "Discover", "Try this", "Explore"
+- Include 5+ examples using "for example", "such as", "like", "for instance"
+- Use storytelling elements and personal anecdotes where appropriate
+- Add interactive elements: "Try this", "Consider this", "Imagine", "Think about"
+- Include thought-provoking statements that encourage reader engagement
+- End sections with questions or prompts that encourage reflection
+
+ENGAGEMENT EXAMPLES:
+✅ Good: "Have you ever wondered why Python is so popular among developers?"
+✅ Good: "Try this simple exercise to see the difference..."
+✅ Good: "For example, when building a web application, Python's simplicity..."
+✅ Good: "Consider this: What if you could automate your entire workflow?"
+✅ Good: "Imagine being able to build complex applications in just a few lines..."
+
+ACCESSIBILITY REQUIREMENTS (CRITICAL):
+- Use proper heading hierarchy: H1 (title only), H2 (main sections), H3 (subsections)
+- Ensure no skipped heading levels (H1 → H2 → H3, not H1 → H3)
+- For content over 1500 words, include a table of contents section
+- Use descriptive link text (not "click here" or "read more")
+- When mentioning images, include descriptive alt text suggestions
+- Use lists (bulleted or numbered) for scannability (at least one per H2 section)
+- Ensure sufficient white space between sections
+
 READABILITY REQUIREMENTS (CRITICAL):
 - Target Flesch Reading Ease: 60-70 (8th-9th grade level)
 - Use short sentences (average 15-20 words per sentence)
@@ -304,17 +352,30 @@ LINKING REQUIREMENTS:
    - Don't over-link (maximum 1-2 links per paragraph)
    - Ensure links are relevant to the surrounding content
 
-IMAGE PLACEMENT:
-1. Add image placeholder after H1 and introduction: ![Featured image description](image-url)
-   - Use descriptive alt text for SEO
-   - Place after first paragraph following H1
-   
-2. Add image placeholders before major H2 sections: ![Section image description](image-url)
-   - Use relevant images that enhance understanding
-   - Include descriptive alt text
-   - Place before H2 heading, not after
+IMAGE HANDLING:
+- DO NOT include image placeholders in the content
+- DO NOT use markdown image syntax like ![alt](url)
+- Images will be added separately by the frontend after generation
+- Focus on written content only
 
-Generate comprehensive, well-researched content that readers will find valuable and search engines will recognize as authoritative."""
+CRITICAL OUTPUT RULES - FOLLOW EXACTLY:
+1. OUTPUT ONLY THE BLOG CONTENT - nothing else
+2. DO NOT include ANY preamble such as:
+   - "Here's the enhanced version..."
+   - "Here's the blog post..."
+   - "I'll provide..."
+   - "Here's a comprehensive..."
+   - "Addressing the..."
+   - "Below is..."
+   - "The following..."
+3. DO NOT include meta-commentary about the content
+4. DO NOT include sections like "Enhancements Made", "Key Points", or "Summary of Changes" at the end
+5. DO NOT include "Last updated", "Note:", or similar metadata
+6. START DIRECTLY with the blog title (# Title) as the very first line
+7. END DIRECTLY with the conclusion paragraph - no sign-offs, no summaries of changes made
+8. NO explanations before or after the content
+
+Generate comprehensive, well-researched content that readers will find valuable and search engines will recognize as authoritative. Remember: output ONLY the blog content itself."""
         
         if context:
             if context.get("sources"):
@@ -425,6 +486,32 @@ ENHANCEMENT TASKS:
 9. Optimize for featured snippets - ensure key sections can serve as featured snippet answers
 10. Improve conclusion - make it more actionable and memorable
 
+ENGAGEMENT REQUIREMENTS (CRITICAL):
+- Ensure content includes 3-5 rhetorical questions throughout to engage readers
+- Add compelling call-to-action phrases: "Learn more", "Get started", "Discover", "Try this", "Explore"
+- Include 5+ examples using "for example", "such as", "like", "for instance"
+- Use storytelling elements and personal anecdotes where appropriate
+- Add interactive elements: "Try this", "Consider this", "Imagine", "Think about"
+- Include thought-provoking statements that encourage reader engagement
+- End sections with questions or prompts that encourage reflection
+
+ENGAGEMENT EXAMPLES:
+✅ Good: "Have you ever wondered why Python is so popular among developers?"
+✅ Good: "Try this simple exercise to see the difference..."
+✅ Good: "For example, when building a web application, Python's simplicity..."
+✅ Good: "Consider this: What if you could automate your entire workflow?"
+✅ Good: "Imagine being able to build complex applications in just a few lines..."
+
+ACCESSIBILITY REQUIREMENTS (CRITICAL):
+- Verify proper heading hierarchy: H1 (title only), H2 (main sections), H3 (subsections)
+- Ensure no skipped heading levels (H1 → H2 → H3, not H1 → H3)
+- For content over 1500 words, add a table of contents section at the beginning
+- Use descriptive link text (not "click here" or "read more")
+- When mentioning images, include descriptive alt text suggestions
+- Use lists (bulleted or numbered) for scannability (at least one per H2 section)
+- Ensure sufficient white space between sections
+- Check that all images have descriptive alt text placeholders
+
 READABILITY REQUIREMENTS (CRITICAL - MUST TARGET 60-70):
 - Target Flesch Reading Ease: 60-70 (8th-9th grade level) - THIS IS MANDATORY
 - Simplify complex sentences - break long sentences into shorter ones (15-20 words average)
@@ -463,17 +550,33 @@ EXPERIENCE INDICATOR EXAMPLES:
 ✅ Good: "I've worked with many clients who..."
 ✅ Good: "From my own experience, I can say that..."
 
-OUTPUT REQUIREMENTS:
-- Return the enhanced version of the content
-- Maintain the original structure and length
-- Preserve all factual information
-- Improve without changing the core message
-- Add citations or source references where appropriate
-- Ensure the content reads naturally and flows well
+IMAGE HANDLING:
+- DO NOT include image placeholders in the content
+- DO NOT use markdown image syntax like ![alt](url) unless a real URL is provided
+- Strip any malformed image placeholders from the content
+- Images will be added separately by the frontend
+
+CRITICAL OUTPUT RULES - FOLLOW EXACTLY:
+1. OUTPUT ONLY THE ENHANCED BLOG CONTENT - nothing else
+2. DO NOT include ANY preamble such as:
+   - "Here's the enhanced version..."
+   - "I've enhanced the content..."
+   - "Addressing the specified tasks..."
+   - "Below is the improved content..."
+3. DO NOT include meta-commentary about what you changed
+4. DO NOT include sections like "Enhancements Made", "Changes Made", or "Key Improvements" at the end
+5. DO NOT include notes about your editing process
+6. START DIRECTLY with the blog title (# Title) as the very first line
+7. END DIRECTLY with the conclusion paragraph - no sign-offs, no change logs
+8. Maintain the original structure and length
+9. Preserve all factual information
+10. Improve without changing the core message
+11. Add citations or source references where appropriate
+12. Ensure the content reads naturally and flows well
 - CRITICAL: Reading ease MUST be 60-70 after enhancement
 - CRITICAL: Include 2-3 first-hand experience indicators per 1000 words
 
-Focus on making the content more authoritative, engaging, and valuable while maintaining accuracy and readability. Prioritize readability improvements - content must be easy to read (60-70 reading ease)."""
+Focus on making the content more authoritative, engaging, and valuable. Output ONLY the enhanced blog content itself - no explanations or commentary."""
         
         if context:
             if context.get("readability_issues"):

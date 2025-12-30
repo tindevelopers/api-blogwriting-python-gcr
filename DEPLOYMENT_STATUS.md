@@ -1,90 +1,134 @@
-# Deployment Status and Monitoring
+# Deployment Status - Status Code Fix
 
-## Current Status
-
-**Latest Commit:** `a4a88da664bf9ee7c62fb4ac9e57b21ef2fe70f2`  
+**Date:** 2025-01-23  
+**Commit:** `3eb2e53` - fix: Add status code check in DataForSEO generate_text method  
 **Branch:** `develop`  
-**Build Status:** ⏳ Waiting for trigger to fire
+**Status:** ✅ **Pushed to GitHub**
 
 ---
 
-## Issue Identified
+## Changes Deployed
 
-The Cloud Build trigger `deploy-dev-on-develop` appears to be missing or misconfigured. 
+### Fix Applied
+- ✅ Added status code check in `generate_text` method
+- ✅ Clear error messages with actual API status codes
+- ✅ Helpful guidance for common error codes (40204, 40501)
 
-**Attempts Made:**
-1. ✅ Code pushed to `develop` branch successfully
-2. ✅ Manual build prevention safeguard added to `cloudbuild.yaml`
-3. ⚠️ Trigger not found or not accessible
-4. ⚠️ Trigger creation failed (likely connection configuration issue)
+### Files Changed
+1. `src/blog_writer_sdk/integrations/dataforseo_integration.py` - Status code check added
+2. `LOCAL_TEST_INSTRUCTIONS.md` - Testing guide added
+3. `test_dataforseo_status_code_fix.py` - Direct integration test
+4. `test_local_quick_generate.sh` - API endpoint test
+5. `start_local_test.sh` - Automated test script
 
 ---
 
-## Current Cloud Run Service Status
+## Cloud Build Trigger
 
-**Service:** `blog-writer-api-dev`  
-**Region:** `europe-west9`  
-**Status:** ✅ Ready  
-**Latest Revision:** `blog-writer-api-dev-00130-crz`
+The code has been pushed to the `develop` branch, which should automatically trigger Cloud Build.
 
-The service is currently running with a previous deployment.
+### Expected Behavior
+
+1. **GitHub Push** → Cloud Build Trigger fires
+2. **Cloud Build** → Builds Docker image
+3. **Cloud Run** → Deploys new revision
+4. **Service** → New code with fix is live
+
+### Monitor Deployment
+
+```bash
+# Check recent builds
+gcloud builds list --project=api-ai-blog-writer --limit=5
+
+# Watch build logs (replace BUILD_ID)
+gcloud builds log BUILD_ID --project=api-ai-blog-writer --stream
+
+# Check Cloud Run revisions
+gcloud run revisions list --service=blog-writer-api-dev --region=europe-west9 --project=api-ai-blog-writer --limit=1
+```
+
+---
+
+## Verification Steps
+
+After deployment completes:
+
+1. **Test Quick Generate Mode:**
+   ```bash
+   curl -X POST "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/blog/generate-enhanced?async_mode=false" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "topic": "Benefits of Python Programming",
+       "keywords": ["python", "programming"],
+       "mode": "quick_generate",
+       "word_count_target": 100,
+       "async_mode": false
+     }'
+   ```
+
+2. **Expected Result:**
+   - ✅ If DataForSEO API is configured: Should generate content successfully
+   - ✅ If DataForSEO API has issues: Should show clear error with status code (not "empty content")
+
+3. **Check Logs:**
+   ```bash
+   gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=blog-writer-api-dev" \
+     --project=api-ai-blog-writer \
+     --limit=50 \
+     --format=json | jq '.[] | select(.jsonPayload.message | contains("DataForSEO"))'
+   ```
+
+---
+
+## What Changed
+
+### Before Fix
+```python
+# Code tried to extract result without checking status
+result_data = first_task.get("result")
+if result_data and isinstance(result_data, list) and len(result_data) > 0:
+    # Extract content...
+else:
+    return {"text": "", "tokens_used": 0}  # Empty content error
+```
+
+### After Fix
+```python
+# Check status code first
+task_status = first_task.get("status_code")
+if task_status != 20000:
+    error_msg = f"DataForSEO generate_text failed: status_code={task_status}, message={task_message}"
+    if task_status == 40204:
+        error_msg += " (Subscription required...)"
+    raise ValueError(error_msg)
+
+# Only extract result if status is success
+result_data = first_task.get("result")
+# ... extract content ...
+```
 
 ---
 
 ## Next Steps
 
-### Option 1: Manual Trigger (Temporary)
-If the automatic trigger cannot be configured immediately, you can manually trigger a build:
-
-```bash
-gcloud builds submit \
-  --config cloudbuild.yaml \
-  --substitutions _REGION=europe-west9,_ENV=dev,_SERVICE_NAME=blog-writer-api-dev \
-  --project=api-ai-blog-writer
-```
-
-**Note:** This will fail due to the safeguard we added. The safeguard checks for `BUILD_TRIGGER_ID` which manual builds don't have.
-
-### Option 2: Fix Trigger Configuration
-The trigger needs to be configured via Cloud Console or with proper connection details:
-
-1. Go to Cloud Console → Cloud Build → Triggers
-2. Create trigger for `develop` branch
-3. Use `cloudbuild.yaml` as build config
-4. Set substitutions:
-   - `_REGION=europe-west9`
-   - `_ENV=dev`
-   - `_SERVICE_NAME=blog-writer-api-dev`
-
-### Option 3: Temporarily Disable Safeguard
-If you need to deploy immediately, you can temporarily comment out the safeguard check in `cloudbuild.yaml`, deploy, then re-enable it.
+1. ⏳ **Wait for Cloud Build** - Monitor build status
+2. ⏳ **Verify Deployment** - Check Cloud Run revision
+3. ⏳ **Test Endpoint** - Run Quick Generate test
+4. ⏳ **Check Logs** - Verify error messages are clear
 
 ---
 
-## Safeguard Status
+## Commit Details
 
-✅ **Manual Build Prevention:** Active  
-The `cloudbuild.yaml` includes a check for `BUILD_TRIGGER_ID` to ensure only trigger-based builds proceed.
-
----
-
-## Monitoring Script
-
-A monitoring script has been created: `check_and_monitor.sh`
-
-Run it to monitor deployments:
-```bash
-./check_and_monitor.sh
-```
+**Commit:** `3eb2e53`  
+**Message:** `fix: Add status code check in DataForSEO generate_text method`  
+**Files Changed:** 5 files, 549 insertions(+), 1 deletion(-)  
+**Pushed:** ✅ To `develop` branch
 
 ---
 
-## GitHub Status Update
+## Related Files
 
-Once a successful build completes, the status will be saved to `deployment_status.json` with:
-- Build ID
-- Trigger ID (verification)
-- Service URL
-- Commit SHA
-- Build status
-
+- `TEST_RESULTS_BOTH_MODES.md` - Test results documentation
+- `LOCAL_TEST_INSTRUCTIONS.md` - Local testing guide
+- `test_dataforseo_status_code_fix.py` - Direct integration test

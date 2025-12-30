@@ -2,12 +2,64 @@
 Enhanced Blog Generation Models
 
 Models for Phase 1 & 2 enhanced blog generation features.
+Updated December 2025 with multi-site support and enhanced internal linking.
 """
 
 from typing import List, Optional, Dict, Any
 from enum import Enum
+from datetime import datetime
 from pydantic import BaseModel, Field
 from .blog_models import ContentTone, ContentLength
+
+
+# ============================================================================
+# Internal Link Models (Multi-Site Support)
+# ============================================================================
+
+class InternalLinkTarget(BaseModel):
+    """
+    Internal link target from frontend or database.
+    
+    Supports both simple format (backwards compatible) and enhanced format.
+    """
+    title: str = Field(..., description="Page title")
+    url: str = Field(..., description="Full URL or relative path to the page")
+    slug: Optional[str] = Field(None, description="URL slug (optional)")
+    keywords: List[str] = Field(default_factory=list, description="Keywords associated with this page")
+    type: Optional[str] = Field(None, description="Content type: 'cms', 'static', 'blog', etc.")
+    published_at: Optional[str] = Field(None, description="ISO 8601 publication date")
+
+
+class InsertedInternalLink(BaseModel):
+    """Details of an internal link that was inserted into content."""
+    anchor_text: str = Field(..., description="Text used for the link")
+    url: str = Field(..., description="URL the link points to")
+    target_title: Optional[str] = Field(None, description="Title of the target page")
+    position: str = Field(default="body", description="Where in content: 'introduction', 'body', 'conclusion'")
+    relevance_score: float = Field(default=0.0, ge=0, le=1, description="Relevance score 0-1")
+
+
+class InternalLinksMetadata(BaseModel):
+    """Metadata about internal links in the generated content."""
+    inserted: List[InsertedInternalLink] = Field(default_factory=list, description="Links that were inserted")
+    available_count: int = Field(default=0, description="Total available link targets")
+    inserted_count: int = Field(default=0, description="Number of links actually inserted")
+    max_allowed: int = Field(default=5, description="Maximum links allowed")
+
+
+class SiteContext(BaseModel):
+    """Context about the site for internal linking."""
+    site_id: Optional[str] = Field(None, description="Site identifier")
+    site_domain: Optional[str] = Field(None, description="Site domain URL")
+    scan_date: Optional[str] = Field(None, description="When site content was last scanned")
+    total_pages: int = Field(default=0, description="Total pages available for linking")
+
+
+class ImagePosition(BaseModel):
+    """Suggested image position in content."""
+    position: str = Field(..., description="Where to place: 'after_h1', 'before_section_2', etc.")
+    suggested_alt: str = Field(..., description="Suggested alt text for the image")
+    context: str = Field(default="", description="Context about why an image fits here")
 
 
 class GenerationMode(str, Enum):
@@ -138,6 +190,38 @@ class EnhancedBlogGenerationRequest(BaseModel):
     
     # Research depth
     research_depth: Optional[str] = Field(default="standard", description="Research depth: 'basic', 'standard', or 'comprehensive'")
+    
+    # Google Search Console site URL (optional, for multi-site support)
+    gsc_site_url: Optional[str] = Field(
+        None,
+        description="Google Search Console site URL (optional). If not provided, uses default GSC_SITE_URL from environment. Format: 'https://example.com' or 'sc-domain:example.com'"
+    )
+    
+    # Multi-site support (December 2025)
+    org_id: Optional[str] = Field(
+        None,
+        description="Organization ID for multi-tenant support"
+    )
+    site_id: Optional[str] = Field(
+        None,
+        description="Specific site ID for organizations with multiple sites. Used to filter internal link targets."
+    )
+    site_domain: Optional[str] = Field(
+        None,
+        description="Site domain URL (e.g., 'https://example.com'). Used for internal link URL generation."
+    )
+    
+    # Internal linking options
+    internal_link_targets: Optional[List[InternalLinkTarget]] = Field(
+        None,
+        description="List of available internal link targets from the site. If not provided, backend will generate placeholder links."
+    )
+    max_internal_links: int = Field(
+        default=5,
+        ge=0,
+        le=10,
+        description="Maximum number of internal links to insert (0-10)"
+    )
 
 
 class EnhancedBlogGenerationResponse(BaseModel):
@@ -169,7 +253,17 @@ class EnhancedBlogGenerationResponse(BaseModel):
     
     # SEO metadata
     seo_metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional SEO metadata")
-    internal_links: List[Dict[str, str]] = Field(default_factory=list, description="Internal linking suggestions")
+    internal_links: List[Dict[str, str]] = Field(default_factory=list, description="Internal linking suggestions (legacy format)")
+    
+    # Enhanced internal links (December 2025)
+    internal_links_metadata: Optional[InternalLinksMetadata] = Field(
+        None,
+        description="Detailed metadata about inserted internal links"
+    )
+    site_context: Optional[SiteContext] = Field(
+        None,
+        description="Context about the site used for internal linking"
+    )
     
     # Phase 3 features
     quality_score: Optional[float] = Field(None, ge=0, le=100, description="Overall content quality score (Phase 3)")
@@ -186,6 +280,22 @@ class EnhancedBlogGenerationResponse(BaseModel):
     # Success indicators
     success: bool = Field(default=True, description="Whether generation was successful")
     warnings: List[str] = Field(default_factory=list, description="Warnings or issues encountered")
+    
+    # Sanitization info (December 2025)
+    sanitization_applied: bool = Field(
+        default=False,
+        description="Whether content sanitization was applied to remove LLM artifacts"
+    )
+    artifacts_removed: List[str] = Field(
+        default_factory=list,
+        description="List of artifact types that were removed (e.g., 'preamble: 1 instance(s)')"
+    )
+    
+    # Image positions (December 2025)
+    image_positions: List[ImagePosition] = Field(
+        default_factory=list,
+        description="Suggested image positions in content (instead of embedding placeholder images)"
+    )
     
     # Progress tracking
     progress_updates: List[Dict[str, Any]] = Field(

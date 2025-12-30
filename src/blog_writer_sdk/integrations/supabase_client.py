@@ -430,6 +430,111 @@ class SupabaseClient:
         except Exception as e:
             self.logger.error(f"Error searching blog posts: {str(e)}")
             raise
+
+    async def list_publishing_targets(
+        self,
+        org_id: str,
+        include_inactive: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        List publishing targets for an organization.
+        """
+        try:
+            table_name = self._get_table_name("publishing_targets")
+            query = self.client.table(table_name).select("*").eq("org_id", org_id)
+            if not include_inactive:
+                query = query.eq("status", "active")
+            query = query.order("created_at", desc=True)
+            result = query.execute()
+            return result.data or []
+        except Exception as e:
+            self.logger.error(f"Error listing publishing targets: {str(e)}")
+            raise
+
+    async def get_publishing_target(self, target_id: str, org_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a publishing target by id and org.
+        """
+        try:
+            table_name = self._get_table_name("publishing_targets")
+            result = (
+                self.client.table(table_name)
+                .select("*")
+                .eq("id", target_id)
+                .eq("org_id", org_id)
+                .limit(1)
+                .execute()
+            )
+            if result.data:
+                return result.data[0]
+            return None
+        except Exception as e:
+            self.logger.error(f"Error retrieving publishing target: {str(e)}")
+            raise
+
+    async def create_publishing_target(self, target_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new publishing target.
+        """
+        try:
+            table_name = self._get_table_name("publishing_targets")
+            result = self.client.table(table_name).insert(target_data).execute()
+            if result.data:
+                return result.data[0]
+            raise Exception("Failed to create publishing target")
+        except Exception as e:
+            self.logger.error(f"Error creating publishing target: {str(e)}")
+            raise
+
+    async def update_publishing_target(
+        self,
+        target_id: str,
+        org_id: str,
+        updates: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Update an existing publishing target.
+        """
+        try:
+            table_name = self._get_table_name("publishing_targets")
+            updates["updated_at"] = datetime.utcnow().isoformat()
+            result = (
+                self.client.table(table_name)
+                .update(updates)
+                .eq("id", target_id)
+                .eq("org_id", org_id)
+                .execute()
+            )
+            if result.data:
+                return result.data[0]
+            raise Exception("Failed to update publishing target")
+        except Exception as e:
+            self.logger.error(f"Error updating publishing target: {str(e)}")
+            raise
+
+    async def soft_delete_publishing_target(self, target_id: str, org_id: str) -> bool:
+        """
+        Soft delete (inactivate) a publishing target.
+        """
+        try:
+            table_name = self._get_table_name("publishing_targets")
+            result = (
+                self.client.table(table_name)
+                .update(
+                    {
+                        "status": "inactive",
+                        "deleted_at": datetime.utcnow().isoformat(),
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }
+                )
+                .eq("id", target_id)
+                .eq("org_id", org_id)
+                .execute()
+            )
+            return bool(result.data)
+        except Exception as e:
+            self.logger.error(f"Error deleting publishing target: {str(e)}")
+            raise
     
     def create_database_schema(self, create_all_environments: bool = True) -> str:
         """
