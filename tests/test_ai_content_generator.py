@@ -55,8 +55,10 @@ class TestAIContentGenerator:
         mock_provider = AsyncMock()
         mock_response = AIResponse(
             content="Generated blog content",
-            metadata={"provider": "openai", "tokens_used": 150},
-            success=True
+            provider="openai",
+            model="gpt-4",
+            tokens_used=150,
+            metadata={"tokens_used": 150}
         )
         mock_provider.generate_content.return_value = mock_response
         content_generator.provider_manager.get_provider.return_value = mock_provider
@@ -64,15 +66,14 @@ class TestAIContentGenerator:
         # Test content generation
         request = AIRequest(
             prompt="Write a blog about Python",
-            content_type=ContentType.BLOG_POST,
-            max_tokens=500
+            content_type=ContentType.BLOG_POST
         )
         
         result = await content_generator.generate_content(request)
         
         assert result is not None
-        assert result.success is True
-        assert "Generated blog content" in result.content
+        assert result.content == "Generated blog content"
+        assert result.provider == "openai"
     
     @pytest.mark.asyncio
     async def test_generate_content_with_fallback(self, content_generator):
@@ -85,8 +86,10 @@ class TestAIContentGenerator:
         mock_provider2 = AsyncMock()
         mock_response = AIResponse(
             content="Generated content from fallback provider",
-            metadata={"provider": "anthropic", "tokens_used": 200},
-            success=True
+            provider="anthropic",
+            model="claude-3-opus",
+            tokens_used=200,
+            metadata={"tokens_used": 200}
         )
         mock_provider2.generate_content.return_value = mock_response
         
@@ -97,15 +100,14 @@ class TestAIContentGenerator:
         
         request = AIRequest(
             prompt="Write a blog about AI",
-            content_type=ContentType.BLOG_POST,
-            max_tokens=500
+            content_type=ContentType.BLOG_POST
         )
         
         result = await content_generator.generate_content(request)
         
         assert result is not None
-        assert result.success is True
-        assert "Generated content from fallback provider" in result.content
+        assert result.content == "Generated content from fallback provider"
+        assert result.provider == "anthropic"
     
     @pytest.mark.asyncio
     async def test_generate_content_all_providers_fail(self, content_generator):
@@ -117,15 +119,12 @@ class TestAIContentGenerator:
         
         request = AIRequest(
             prompt="Write a blog about testing",
-            content_type=ContentType.BLOG_POST,
-            max_tokens=500
+            content_type=ContentType.BLOG_POST
         )
         
-        result = await content_generator.generate_content(request)
-        
-        assert result is not None
-        assert result.success is False
-        assert "error" in result.content.lower() or "failed" in result.content.lower()
+        # Should raise an exception or return an error response
+        with pytest.raises(Exception):
+            result = await content_generator.generate_content(request)
     
     def test_get_available_templates(self, content_generator):
         """Test getting available content templates."""
@@ -158,8 +157,9 @@ class TestAIContentGenerator:
         mock_provider = AsyncMock()
         mock_response = AIResponse(
             content="Optimized content with better SEO and readability",
-            metadata={"optimization_score": 0.95},
-            success=True
+            provider="openai",
+            model="gpt-4",
+            metadata={"optimization_score": 0.95}
         )
         mock_provider.optimize_content.return_value = mock_response
         content_generator.provider_manager.get_provider.return_value = mock_provider
@@ -168,8 +168,8 @@ class TestAIContentGenerator:
         result = await content_generator.optimize_content(original_content)
         
         assert result is not None
-        assert result.success is True
         assert "Optimized content" in result.content
+        assert result.provider == "openai"
     
     def test_validate_content_quality(self, content_generator):
         """Test content quality validation."""
