@@ -34,8 +34,10 @@ def sanitize_llm_output(content: str) -> Tuple[str, List[str]]:
     
     patterns = [
         # Preamble patterns (must be at start or after newline)
-        (r"^Here's (?:the |an )?(?:enhanced |revised |updated |improved )?(?:version|content|blog post|article).*?:\s*\n?", "preamble"),
-        (r"^Here is (?:the |an )?(?:enhanced |revised |updated |improved )?(?:version|content|blog post|article).*?:\s*\n?", "preamble"),
+        (r"^Here's (?:the |an )?(?:enhanced |revised |updated |improved )?"
+         r"(?:version|content|blog post|article).*?:\s*\n?", "preamble"),
+        (r"^Here is (?:the |an )?(?:enhanced |revised |updated |improved )?"
+         r"(?:version|content|blog post|article).*?:\s*\n?", "preamble"),
         (r"^I'll provide.*?:\s*\n?", "preamble"),
         (r"^I will provide.*?:\s*\n?", "preamble"),
         (r"^I've (?:created|written|prepared|enhanced).*?:\s*\n?", "preamble"),
@@ -189,7 +191,9 @@ def detect_artifacts(content: str) -> List[dict]:
     detected = []
     
     detection_patterns = [
-        (r"^Here's (?:the |an )?(?:enhanced |revised |updated )?(?:version|content|blog post).*?:", "preamble", "Content starts with LLM preamble phrase"),
+        (r"^Here's (?:the |an )?(?:enhanced |revised |updated )?"
+         r"(?:version|content|blog post).*?:", "preamble",
+         "Content starts with LLM preamble phrase"),
         (r"Enhancements Made:", "meta_commentary", "Contains 'Enhancements Made' section"),
         (r"Key Enhancements:", "meta_commentary", "Contains 'Key Enhancements' section"),
         (r"!\[[^\]]*\]\(\s*\)", "malformed_image", "Contains empty image placeholder"),

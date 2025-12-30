@@ -118,7 +118,11 @@ class EnhancedBlogGenerationRequest(BaseModel):
     # Generation mode: determines which workflow to use
     mode: GenerationMode = Field(
         default=GenerationMode.QUICK_GENERATE,
-        description="Generation mode: 'quick_generate' uses DataForSEO (fast, cost-effective), 'multi_phase' uses comprehensive pipeline (premium quality)"
+        description=(
+            "Generation mode: 'quick_generate' uses DataForSEO (fast, "
+            "cost-effective), 'multi_phase' uses comprehensive pipeline "
+            "(premium quality)"
+        )
     )
     
     # Blog type for DataForSEO Content Generation
@@ -169,12 +173,21 @@ class EnhancedBlogGenerationRequest(BaseModel):
     
     # Additional context
     target_audience: Optional[str] = Field(None, description="Target audience")
-    custom_instructions: Optional[str] = Field(None, max_length=5000, description="Additional instructions for content generation")
+    custom_instructions: Optional[str] = Field(
+        None, max_length=5000,
+        description="Additional instructions for content generation"
+    )
     template_type: Optional[str] = Field(None, description="Prompt template type (expert_authority, how_to_guide, etc.)")
     word_count_target: Optional[int] = Field(None, ge=100, le=10000, description="Specific word count target")
     
     # Product research options (for product review/comparison content)
-    include_product_research: bool = Field(default=False, description="Enable comprehensive product research (brands, models, prices, features)")
+    include_product_research: bool = Field(
+        default=False,
+        description=(
+            "Enable comprehensive product research "
+            "(brands, models, prices, features)"
+        )
+    )
     include_brands: bool = Field(default=True, description="Include specific brand recommendations")
     include_models: bool = Field(default=True, description="Include specific product models")
     include_prices: bool = Field(default=False, description="Include current pricing information")
@@ -189,12 +202,19 @@ class EnhancedBlogGenerationRequest(BaseModel):
     include_faq_section: bool = Field(default=True, description="Include FAQ section based on common questions")
     
     # Research depth
-    research_depth: Optional[str] = Field(default="standard", description="Research depth: 'basic', 'standard', or 'comprehensive'")
+    research_depth: Optional[str] = Field(
+        default="standard",
+        description="Research depth: 'basic', 'standard', or 'comprehensive'"
+    )
     
     # Google Search Console site URL (optional, for multi-site support)
     gsc_site_url: Optional[str] = Field(
         None,
-        description="Google Search Console site URL (optional). If not provided, uses default GSC_SITE_URL from environment. Format: 'https://example.com' or 'sc-domain:example.com'"
+        description=(
+            "Google Search Console site URL (optional). If not provided, "
+            "uses default GSC_SITE_URL from environment. Format: "
+            "'https://example.com' or 'sc-domain:example.com'"
+        )
     )
     
     # Multi-site support (December 2025)
@@ -214,7 +234,10 @@ class EnhancedBlogGenerationRequest(BaseModel):
     # Internal linking options
     internal_link_targets: Optional[List[InternalLinkTarget]] = Field(
         None,
-        description="List of available internal link targets from the site. If not provided, backend will generate placeholder links."
+        description=(
+            "List of available internal link targets from the site. "
+            "If not provided, backend will generate placeholder links."
+        )
     )
     max_internal_links: int = Field(
         default=5,
@@ -253,7 +276,10 @@ class EnhancedBlogGenerationResponse(BaseModel):
     
     # SEO metadata
     seo_metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional SEO metadata")
-    internal_links: List[Dict[str, str]] = Field(default_factory=list, description="Internal linking suggestions (legacy format)")
+    internal_links: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Internal linking suggestions (legacy format)"
+    )
     
     # Enhanced internal links (December 2025)
     internal_links_metadata: Optional[InternalLinksMetadata] = Field(
