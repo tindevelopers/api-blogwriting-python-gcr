@@ -1,0 +1,11 @@
+# Google Search Console Sites List
+# Add your 25 site URLs here, one per line
+# Format: https://example.com or sc-domain:example.com
+# Remove the # comment lines and add your actual sites
+
+# Example:
+# https://site1.com
+# https://site2.com
+# sc-domain:example.com
+
+# Add your sites below:

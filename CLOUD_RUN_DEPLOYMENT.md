@@ -483,6 +483,23 @@ gcloud run services update-traffic blog-writer-sdk \
     --to-tags=blue=100
 ```
 
+## V2 Standardized API Endpoints in Deployment
+
+Ensure deployments include the new endpoint structure for multi-tenant support.
+
+### Standardized Endpoint Template
+- **Base Path:** `/api/{provider_id}`
+- **Common Operations:**
+  - GET `/api/{provider_id}`: Provider info
+  - POST `/api/{provider_id}/credentials`: Add credentials
+  - PUT `/api/{provider_id}/credentials`: Update credentials
+  - DELETE `/api/{provider_id}/credentials`: Remove credentials
+  - POST `/api/{provider_id}/credentials/test`: Validate credentials
+
+## API Security in Deployments
+
+Deploy with JWT authentication and Google Cloud API Gateway for protection.
+
 ## 📞 Support and Resources
 
 - **Documentation**: [Cloud Run Docs](https://cloud.google.com/run/docs)

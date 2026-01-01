@@ -199,6 +199,37 @@ class AuthService:
                 detail="Admin access required"
             )
         return user
+    
+    def is_admin(self, user: Dict[str, Any]) -> bool:
+        """
+        Check if user has admin privileges.
+        
+        Args:
+            user: User information dict
+            
+        Returns:
+            True if user is admin, False otherwise
+        """
+        user_role = user.get("role", "").lower()
+        return user_role in ["system_admin", "admin"]
+    
+    async def require_admin_async(self, credentials: HTTPAuthorizationCredentials = security) -> Dict[str, Any]:
+        """
+        Async dependency for requiring admin access.
+        
+        This can be used as a FastAPI dependency to protect admin endpoints.
+        
+        Args:
+            credentials: HTTP Bearer credentials
+            
+        Returns:
+            Admin user information dict
+            
+        Raises:
+            HTTPException: If not authenticated or not admin
+        """
+        user = await self.get_current_user(credentials)
+        return self.require_admin(user)
 
 
 # Global auth service instance

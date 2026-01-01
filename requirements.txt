@@ -24,7 +24,8 @@ anthropic>=0.18.0
 asyncio-throttle>=1.0.2
 tenacity>=8.2.0
 
-# LiteLLM removed - using direct AI provider integrations
+# LiteLLM for AI Gateway proxy integration
+litellm>=1.50.0
 pyyaml>=6.0.0
 
 # V1.0 Enterprise Features

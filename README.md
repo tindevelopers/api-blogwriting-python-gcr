@@ -642,6 +642,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📚 Documentation
 
+- **Project Docs (served by backend)**: `https://<deployment-url>/project-docs/`
+  - OpenAPI JSON: `https://<deployment-url>/openapi.json`
+  - Swagger UI: `https://<deployment-url>/docs`
+  - ReDoc: `https://<deployment-url>/redoc`
 - **[AI Provider Integration](src/blog_writer_sdk/ai/)**: Direct AI provider integrations
 - **[UI Examples](examples/ui-examples/README.md)**: React and Next.js dashboard templates
 - **[Deployment Guide](CLOUD_RUN_DEPLOYMENT.md)**: Deploy to Google Cloud Run
@@ -664,6 +668,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🗺️ Roadmap
 
 ### Version 0.2.0
+- [x] GitHub Actions CI/CD Pipeline (Completed)
 - [ ] WordPress plugin integration
 - [ ] Advanced analytics dashboard
 - [ ] Multi-language support
@@ -694,4 +699,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Ready to revolutionize your content creation process? Get started with the Blog Writer SDK today!
 
-**Last deployment test**: 2025-11-16 (staging branch - Supabase integration merged)
+**Last deployment test**: 2025-11-16 (main branch - SERP analysis fixes merged)
