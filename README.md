@@ -642,6 +642,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📚 Documentation
 
+- **Project Docs (served by backend)**: `https://<deployment-url>/project-docs/`
+  - OpenAPI JSON: `https://<deployment-url>/openapi.json`
+  - Swagger UI: `https://<deployment-url>/docs`
+  - ReDoc: `https://<deployment-url>/redoc`
 - **[AI Provider Integration](src/blog_writer_sdk/ai/)**: Direct AI provider integrations
 - **[UI Examples](examples/ui-examples/README.md)**: React and Next.js dashboard templates
 - **[Deployment Guide](CLOUD_RUN_DEPLOYMENT.md)**: Deploy to Google Cloud Run

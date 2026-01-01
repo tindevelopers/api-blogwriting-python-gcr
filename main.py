@@ -842,6 +842,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Project docs (static) for frontend/backend alignment
+# Note: We keep FastAPI Swagger UI at `/docs` and serve project docs at `/project-docs/`.
+from pathlib import Path
+
+from fastapi.staticfiles import StaticFiles
+
+PROJECT_DOCS_PATH = "/project-docs"
+_project_docs_dir = Path(__file__).resolve().parent / "docs"
+if _project_docs_dir.exists():
+    app.mount(
+        PROJECT_DOCS_PATH,
+        StaticFiles(directory=str(_project_docs_dir), html=True),
+        name="project-docs",
+    )
+
 # Configure CORS
 # Note: FastAPI CORSMiddleware doesn't support wildcard patterns
 # Use allow_origin_regex for pattern matching or list exact origins
