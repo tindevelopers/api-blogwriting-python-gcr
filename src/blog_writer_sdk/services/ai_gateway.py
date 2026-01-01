@@ -875,7 +875,7 @@ Return ONLY valid JSON, no markdown code blocks, no explanations."""
         
         keywords_str = ', '.join(keywords[:5]) if keywords else 'none specified'
         
-        system_prompt = f"""You are an expert blog writer creating high-quality, SEO-optimized content.
+        system_prompt = f"""You are an expert blog writer creating high-quality, SEO-optimized content that sounds natural and human-written.
 
 Write a comprehensive, {tone} blog post about: {topic}
 
@@ -893,6 +893,14 @@ Requirements:
 - Write in a {tone} tone
 - Make it engaging, informative, and valuable to readers
 - Include specific examples, data, or actionable advice where relevant
+
+NATURAL WRITING STYLE (CRITICAL):
+- Write conversationally, like explaining to a friend
+- Use contractions naturally (it's, don't, we'll, can't)
+- Vary sentence length - mix short punchy sentences with longer ones
+- AVOID obvious AI transition words: "Moreover", "Furthermore", "Additionally", "In conclusion", "In summary"
+- Instead use natural transitions: "Here's the thing", "So", "Now", "The bottom line", or continue naturally
+- Start conclusions naturally, NOT with "In conclusion" or "To sum up"
 
 {f"Additional instructions: {custom_instructions}" if custom_instructions else ""}
 

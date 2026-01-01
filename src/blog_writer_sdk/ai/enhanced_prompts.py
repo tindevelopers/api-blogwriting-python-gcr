@@ -232,24 +232,39 @@ WRITING REQUIREMENTS:
 6. Use clear, scannable formatting with proper headings (H2, H3)
 7. Keep paragraphs to 3-4 sentences maximum
 8. Use bullet points and numbered lists where appropriate
-9. Include natural transitions between sections
+9. Include natural transitions between sections - AVOID obvious transition words
 10. End each section with a clear takeaway or summary point
 
+NATURAL WRITING & CONVERSATIONAL FLOW (CRITICAL):
+- Write like you're explaining to a friend over coffee
+- Use contractions naturally (it's, don't, we'll, can't, won't)
+- Vary sentence length - mix short punchy sentences with longer explanatory ones
+- Allow occasional incomplete sentences for emphasis
+- Use natural transitions, NOT obvious AI phrases
+- Start conclusions naturally, NOT with "In conclusion" or "In summary"
+
+TRANSITION WORDS TO AVOID (BLOCKLIST):
+❌ NEVER use: "In conclusion", "Moreover", "Furthermore", "Additionally", "In summary"
+❌ NEVER use: "It is important to note that", "It should be mentioned that"
+❌ NEVER use: "Last but not least", "To sum up", "In closing"
+✅ Instead use: "Here's the thing", "So", "Now", "The bottom line", "What this means"
+✅ Or simply continue naturally without transition words
+
 ENGAGEMENT REQUIREMENTS (CRITICAL):
-- Include 3-5 rhetorical questions throughout the content to engage readers
+- Include 3-5 rhetorical questions throughout - make them natural, not formulaic
 - Add compelling call-to-action phrases: "Learn more", "Get started", "Discover", "Try this", "Explore"
 - Include 5+ examples using "for example", "such as", "like", "for instance"
 - Use storytelling elements and personal anecdotes where appropriate
-- Add interactive elements: "Try this", "Consider this", "Imagine", "Think about"
+- Add interactive elements naturally: "Try this", "Consider this", "Imagine", "Think about"
 - Include thought-provoking statements that encourage reader engagement
 - End sections with questions or prompts that encourage reflection
 
-ENGAGEMENT EXAMPLES:
-✅ Good: "Have you ever wondered why Python is so popular among developers?"
+ENGAGEMENT EXAMPLES (Natural, not formulaic):
+✅ Good: "Python's popularity isn't just hype. Let me show you why."
 ✅ Good: "Try this simple exercise to see the difference..."
 ✅ Good: "For example, when building a web application, Python's simplicity..."
-✅ Good: "Consider this: What if you could automate your entire workflow?"
-✅ Good: "Imagine being able to build complex applications in just a few lines..."
+✅ Good: "Think about it: What if you could automate your entire workflow?"
+✅ Good: "You can build complex applications in just a few lines. Seriously."
 
 ACCESSIBILITY REQUIREMENTS (CRITICAL):
 - Use proper heading hierarchy: H1 (title only), H2 (main sections), H3 (subsections)
@@ -332,8 +347,10 @@ STRUCTURE REQUIREMENTS (MANDATORY):
    - Use lists for key points, steps, or features
    - Keep list items concise but informative
    
-7. End with H2 Conclusion section: ## Conclusion
-   - Summarize key points
+7. End with H2 Conclusion section: ## Conclusion (or natural variation)
+   - Heading can be "Conclusion", "Final Thoughts", "The Bottom Line", etc.
+   - Wrap up naturally - DON'T start with "In conclusion" or "To sum up"
+   - Summarize key points conversationally
    - Provide actionable next steps
    - Include a call-to-action if appropriate
 
@@ -486,21 +503,29 @@ ENHANCEMENT TASKS:
 9. Optimize for featured snippets - ensure key sections can serve as featured snippet answers
 10. Improve conclusion - make it more actionable and memorable
 
+NATURAL WRITING & CONVERSATIONAL FLOW (CRITICAL):
+- Ensure writing sounds natural, like explaining to a friend
+- Use contractions naturally (it's, don't, we'll, can't, won't)
+- Vary sentence length - mix short punchy sentences with longer ones
+- Remove obvious AI-sounding transitions
+- NEVER use: "In conclusion", "Moreover", "Furthermore", "Additionally", "In summary"
+- Instead use: "Here's the thing", "So", "Now", "The bottom line", or no transition at all
+
 ENGAGEMENT REQUIREMENTS (CRITICAL):
-- Ensure content includes 3-5 rhetorical questions throughout to engage readers
+- Ensure content includes 3-5 rhetorical questions throughout - make them natural, not formulaic
 - Add compelling call-to-action phrases: "Learn more", "Get started", "Discover", "Try this", "Explore"
 - Include 5+ examples using "for example", "such as", "like", "for instance"
 - Use storytelling elements and personal anecdotes where appropriate
-- Add interactive elements: "Try this", "Consider this", "Imagine", "Think about"
+- Add interactive elements naturally: "Try this", "Consider this", "Imagine", "Think about"
 - Include thought-provoking statements that encourage reader engagement
 - End sections with questions or prompts that encourage reflection
 
-ENGAGEMENT EXAMPLES:
-✅ Good: "Have you ever wondered why Python is so popular among developers?"
+ENGAGEMENT EXAMPLES (Natural, not formulaic):
+✅ Good: "Python's popularity isn't just hype. Let me show you why."
 ✅ Good: "Try this simple exercise to see the difference..."
 ✅ Good: "For example, when building a web application, Python's simplicity..."
-✅ Good: "Consider this: What if you could automate your entire workflow?"
-✅ Good: "Imagine being able to build complex applications in just a few lines..."
+✅ Good: "Think about it: What if you could automate your entire workflow?"
+✅ Good: "You can build complex applications in just a few lines. Seriously."
 
 ACCESSIBILITY REQUIREMENTS (CRITICAL):
 - Verify proper heading hierarchy: H1 (title only), H2 (main sections), H3 (subsections)

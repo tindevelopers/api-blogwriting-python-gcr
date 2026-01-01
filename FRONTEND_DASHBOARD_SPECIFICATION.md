@@ -33,6 +33,21 @@ Create a production-ready Next.js admin dashboard to control, monitor, and test 
 - **Monitoring:** View real-time logs, system health, and error tracking
 - **Type Safety:** 100% TypeScript coverage using OpenAPI schema from backend
 
+---
+
+## Cost, LLM Usage, and GCR Monitoring
+*Share this anchor with the dashboard team: `#cost-llm-usage-and-gcr-monitoring`*
+
+- **Data sources**
+  - Primary: `GET /api/v1/metrics` (cost/model breakdowns, request counts, latency, cache rate).
+  - Cloud Run (GCR) ops: Cloud Monitoring metrics for project `api-ai-blog-writer`, service `blog-writer-api-dev-613248238610` (CPU/memory, request count, 5xx rate, cold starts, autoscaling events).
+  - Optional: LiteLLM metrics if enabled (`/litellm/spend/logs`, `/litellm/model/metrics`) via backend/proxy.
+- **UI placements**
+  - `/analytics`: cards for **Total cost (24h/7d)**, **Cost by model**, **Requests by model**, **Token usage**, **Cache hit rate**, **Avg latency**; charts for cost over time and model usage; table export (CSV) for cost/model data.
+  - `/monitoring`: Cloud Run health (uptime, error rate, CPU/Memory), LLM routing status (current provider/gateway, last switch), and alert badges for cache_rate < 80% or 5xx_rate > 1%.
+- **Pull cadence**
+  - Metrics poll every 60s; allow manual refresh. Prefer backend aggregation for Cloud Run to avoid client-side credentials.
+
 ### Target Users
 - Internal administrators
 - Product team members

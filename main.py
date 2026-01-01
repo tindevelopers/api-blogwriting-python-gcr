@@ -98,6 +98,9 @@ from src.blog_writer_sdk.api.ai_provider_management import router as ai_provider
 from src.blog_writer_sdk.api.image_generation import router as image_generation_router, initialize_image_providers_from_env
 from src.blog_writer_sdk.api.integration_management import router as integrations_router
 from src.blog_writer_sdk.api.user_management import router as user_management_router
+from src.blog_writer_sdk.api.prompt_management import router as prompt_management_router
+from src.blog_writer_sdk.services.prompt_config_service import get_prompt_config_service, initialize_prompt_config_service
+from src.blog_writer_sdk.integrations.firebase_config_client import initialize_firebase_config_client
 from src.blog_writer_sdk.api.field_enhancement import router as field_enhancement_router
 from src.blog_writer_sdk.api.publishing_management import router as publishing_router
 from src.blog_writer_sdk.api.admin_management import router as admin_router
@@ -690,6 +693,18 @@ async def lifespan(app: FastAPI):
             print(f"⚠️ Supabase server client not initialized: {supabase_exc}")
     else:
         print("⚠️ Supabase credentials not found. Supabase client not initialized.")
+    
+    # Initialize Firebase/Firestore for prompt configuration
+    try:
+        firebase_project_id = os.getenv("FIREBASE_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        if firebase_project_id:
+            initialize_firebase_config_client(project_id=firebase_project_id)
+            initialize_prompt_config_service()
+            print("✅ Firebase config client and prompt config service initialized.")
+        else:
+            print("⚠️ Firebase not configured (FIREBASE_PROJECT_ID not set)")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize Firebase config client: {e}")
 
     # Initialize Google Secret Manager client
     global secret_manager_client
@@ -987,6 +1002,8 @@ app.include_router(publishing_router)
 app.include_router(admin_router)
 # Include content validation router
 app.include_router(content_validation_router)
+# Include prompt management router
+app.include_router(prompt_management_router)
 # Add rate limiting middleware (disabled for development)
 # app.middleware("http")(rate_limit_middleware)
 
@@ -1825,8 +1842,33 @@ async def generate_blog_enhanced(
         additional_context = {}
         if request.target_audience:
             additional_context["target_audience"] = request.target_audience
-        if request.custom_instructions:
-            additional_context["custom_instructions"] = request.custom_instructions
+        
+        # Load writing configuration from Firestore and merge with custom instructions
+        try:
+            config_service = get_prompt_config_service()
+            org_id = getattr(request, 'org_id', None)
+            blog_id = getattr(request, 'blog_id', None)
+            template_id = getattr(request, 'template_id', None)
+            
+            # Get merged instruction text from Firestore config
+            config_instruction_text = config_service.get_instruction_text(
+                org_id=org_id,
+                blog_id=blog_id,
+                template_id=template_id
+            )
+            
+            # Merge with custom instructions from request
+            if request.custom_instructions:
+                additional_context["custom_instructions"] = f"{config_instruction_text}\n\n{request.custom_instructions}"
+            else:
+                additional_context["custom_instructions"] = config_instruction_text
+            
+            logger.info(f"Loaded writing config from Firestore: org={org_id}, blog={blog_id}")
+        except Exception as e:
+            # Fallback to request custom instructions if config loading fails
+            logger.warning(f"Failed to load writing config from Firestore: {e}")
+            if request.custom_instructions:
+                additional_context["custom_instructions"] = request.custom_instructions
         
         # Add multi-site support parameters (December 2025)
         if request.site_id:

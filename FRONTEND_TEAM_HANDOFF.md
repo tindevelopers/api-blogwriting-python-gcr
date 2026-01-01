@@ -6,6 +6,13 @@
 
 ---
 
+## 🔗 Shareable Links for Each Team
+
+- **Frontend implementation (copy to FE team):** `./FRONTEND_CATALYST_IMPLEMENTATION_GUIDE.md` — end‑to‑end UI patterns, pages, and component wiring for the current scope.
+- **Dashboard cost/LLM/GCR monitoring (copy to dashboard team):** `./FRONTEND_DASHBOARD_SPECIFICATION.md#cost-llm-usage-and-gcr-monitoring` — required analytics/monitoring changes for costs, model usage, and Cloud Run (GCR) stats.
+
+---
+
 ## 🎯 Clear Requirements
 
 ### What You're Building

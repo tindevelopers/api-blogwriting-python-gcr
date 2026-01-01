@@ -233,6 +233,16 @@ class EnhancedBlogGenerationRequest(BaseModel):
         description="Site domain URL (e.g., 'https://example.com'). Used for internal link URL generation."
     )
     
+    # Writing style configuration (January 2026)
+    blog_id: Optional[str] = Field(
+        None,
+        description="Blog generation job ID for per-blog configuration overrides"
+    )
+    template_id: Optional[str] = Field(
+        None,
+        description="Specific prompt template ID to use from Firestore"
+    )
+    
     # Internal linking options
     internal_link_targets: Optional[List[InternalLinkTarget]] = Field(
         None,

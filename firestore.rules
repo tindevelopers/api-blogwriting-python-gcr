@@ -1,0 +1,125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isOrgMember(orgId) {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid));
+    }
+    
+    function isServiceAccount() {
+      // Service account auth will have custom claims
+      return request.auth != null && 
+             request.auth.token.service_account == true;
+    }
+    
+    // ===================================================================
+    // PROMPT TEMPLATES - Global instruction templates
+    // ===================================================================
+    match /prompt_templates/{templateId} {
+      // Admins can read/write all templates
+      allow read: if isAdmin() || isServiceAccount();
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+      
+      // Service accounts (backend GCR) can read templates
+      // Consumer frontends cannot access directly
+    }
+    
+    // ===================================================================
+    // ORGANIZATIONS - Organization data and configs
+    // ===================================================================
+    match /organizations/{orgId} {
+      // Organization members can read org data
+      allow read: if isOrgMember(orgId) || isServiceAccount();
+      allow write: if isAdmin();
+      
+      // Writing configuration subcollection
+      match /writing_config/{configId} {
+        // Org members can read/write their own config
+        allow read: if isOrgMember(orgId) || isServiceAccount();
+        allow create, update: if isOrgMember(orgId);
+        allow delete: if isAdmin() || isOrgMember(orgId);
+      }
+      
+      // Organization members subcollection
+      match /members/{userId} {
+        allow read: if isOrgMember(orgId);
+        allow write: if isAdmin();
+      }
+    }
+    
+    // ===================================================================
+    // BLOG GENERATIONS - Per-blog configuration overrides
+    // ===================================================================
+    match /blog_generations/{blogId} {
+      // Service accounts can read blog generation data
+      allow read: if isServiceAccount();
+      allow write: if isAuthenticated();
+      
+      // Configuration overrides for specific blog generations
+      match /config_override {
+        // Only service accounts and authenticated users can access
+        allow read: if isAuthenticated() || isServiceAccount();
+        allow create, update: if isAuthenticated();
+        allow delete: if isAuthenticated() || isServiceAccount();
+      }
+    }
+    
+    // ===================================================================
+    // USERS - User profiles and preferences
+    // ===================================================================
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Admins can read all users
+      allow read: if isAdmin();
+    }
+    
+    // ===================================================================
+    // SYSTEM CONFIG - Global system settings (admin only)
+    // ===================================================================
+    match /system_config/{configId} {
+      allow read: if isAdmin() || isServiceAccount();
+      allow write: if isAdmin();
+    }
+    
+    // ===================================================================
+    // AI PROVIDER CONFIGS - API keys and provider settings
+    // ===================================================================
+    match /ai_providers/{providerId} {
+      // Only admins and service accounts can access provider configs
+      allow read: if isAdmin() || isServiceAccount();
+      allow write: if isAdmin();
+    }
+    
+    // ===================================================================
+    // AUDIT LOGS - System activity logs (read-only for non-admins)
+    // ===================================================================
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isServiceAccount();
+      allow update, delete: if false; // Logs are immutable
+    }
+    
+    // ===================================================================
+    // DEFAULT - Deny all other access
+    // ===================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
