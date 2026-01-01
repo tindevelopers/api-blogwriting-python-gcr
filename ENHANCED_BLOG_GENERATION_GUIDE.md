@@ -27,6 +27,12 @@ POST /api/v1/blog/generate-enhanced
   topic: string;                    // Main topic (3-200 characters)
   keywords: string[];               // Target SEO keywords (min 1)
   
+  // Mode (Phase)
+  // Phase 1: "quick_generate" (DataForSEO-only, cost-efficient)
+  // Phase 2: "enhanced_dataforseo" (DataForSEO-only + research payload)
+  // Phase 3: "multi_phase" (AI-first pipeline + LiteLLM polish)
+  mode?: "quick_generate" | "enhanced_dataforseo" | "multi_phase";
+  
   // Optional - Content Settings
   tone?: "professional" | "casual" | "academic" | "conversational" | "instructional";
   length?: "short" | "medium" | "long";
@@ -96,6 +102,12 @@ POST /api/v1/blog/generate-enhanced
   
   // SEO Metadata
   seo_metadata: {
+    research?: {
+      traditionalSeo?: object;       // SERP, competition, top domains (Phase 2/3)
+      aiOptimization?: object;       // AI search volume / mentions (Phase 2/3)
+      contentAnalysis?: object;      // Content Analysis summary (Phase 2/3)
+      backlinks?: object;            // Backlink summary (Phase 2/3)
+    };
     search_intent?: {                 // Intent analysis results
       primary_intent: "informational" | "commercial" | "transactional" | "navigational";
       confidence: number;             // 0-1
@@ -119,6 +131,11 @@ POST /api/v1/blog/generate-enhanced
   total_tokens: number;
   total_cost: number;                // USD
   generation_time: number;           // Seconds
+  cost_breakdown: {
+    dataforseo: Record<string, number>;
+    llm: Record<string, number>;
+    total: number;
+  };
   
   // Status
   success: boolean;

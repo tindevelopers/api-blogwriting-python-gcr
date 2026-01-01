@@ -37,6 +37,11 @@ POST /api/v1/blog/generate-enhanced
 interface EnhancedBlogGenerationRequest {
   topic: string;
   keywords: string[];
+  // Phase selector:
+  // 'quick_generate' (Phase 1: DataForSEO-only, cost-efficient)
+  // 'enhanced_dataforseo' (Phase 2: DataForSEO-only + research payload)
+  // 'multi_phase' (Phase 3: AI-first pipeline + LiteLLM polish)
+  mode?: 'quick_generate' | 'enhanced_dataforseo' | 'multi_phase';
   tone?: 'professional' | 'casual' | 'friendly' | 'authoritative' | 'conversational' | 'technical' | 'creative';
   length?: 'short' | 'medium' | 'long' | 'extended';
   use_google_search?: boolean;
@@ -77,7 +82,14 @@ interface EnhancedBlogGenerationResponse {
   total_tokens: number;
   total_cost: number;
   generation_time: number;
+  cost_breakdown: {
+    dataforseo: Record<string, number>;
+    llm: Record<string, number>;
+    total: number;
+  };
   seo_metadata: Record<string, any>;
+  // When present (Phase 2/3) these power frontend charts
+  // seo_metadata.research.traditionalSeo | aiOptimization | contentAnalysis | backlinks
   quality_score?: number;
   quality_dimensions: Record<string, number>;
   structured_data?: Record<string, any>;

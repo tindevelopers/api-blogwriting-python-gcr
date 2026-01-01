@@ -65,7 +65,8 @@ class ImagePosition(BaseModel):
 class GenerationMode(str, Enum):
     """Blog generation mode."""
     QUICK_GENERATE = "quick_generate"  # Fast, DataForSEO only
-    MULTI_PHASE = "multi_phase"        # Comprehensive, Pipeline with enhancements
+    ENHANCED_DATAFORSEO = "enhanced_dataforseo"  # DataForSEO-only with enriched research
+    MULTI_PHASE = "multi_phase"        # Comprehensive, Pipeline with enhancements (AI-first)
 
 
 class BlogContentType(str, Enum):
@@ -119,9 +120,10 @@ class EnhancedBlogGenerationRequest(BaseModel):
     mode: GenerationMode = Field(
         default=GenerationMode.QUICK_GENERATE,
         description=(
-            "Generation mode: 'quick_generate' uses DataForSEO (fast, "
-            "cost-effective), 'multi_phase' uses comprehensive pipeline "
-            "(premium quality)"
+            "Generation mode: "
+            "'quick_generate' = Phase 1 (DataForSEO-only, cost-efficient), "
+            "'enhanced_dataforseo' = Phase 2 (DataForSEO-only with research), "
+            "'multi_phase' = Phase 3 (AI-first pipeline + LiteLLM polish)"
         )
     )
     
@@ -273,6 +275,10 @@ class EnhancedBlogGenerationResponse(BaseModel):
     total_tokens: int = Field(..., ge=0, description="Total tokens used")
     total_cost: float = Field(..., ge=0, description="Total cost in USD")
     generation_time: float = Field(..., ge=0, description="Generation time in seconds")
+    cost_breakdown: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Detailed cost breakdown by provider/stage (DataForSEO, LLM stages)"
+    )
     
     # SEO metadata
     seo_metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional SEO metadata")

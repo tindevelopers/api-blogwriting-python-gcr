@@ -153,6 +153,100 @@ from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
 from src.blog_writer_sdk.utils.text_utils import extract_excerpt
 
 
+# ------------------------------------------------------------------------------
+# Helpers: sanitization + Phase 2 research bundle
+# ------------------------------------------------------------------------------
+from src.blog_writer_sdk.utils.content_sanitizer import sanitize_llm_output, sanitize_excerpt
+
+
+async def build_phase2_research(
+    dataforseo_client: DataForSEOClient,
+    keywords: List[str],
+    tenant_id: str = "default",
+    location_name: str = "United States",
+    language_code: str = "en",
+) -> (Dict[str, Any], List[str]):
+    """
+    Minimal Phase 2 research bundle (DataForSEO-only).
+    Returns research payload + warnings; keeps calls bounded for cost efficiency.
+    """
+    research: Dict[str, Any] = {
+        "aiOptimization": {},
+        "traditionalSeo": {},
+        "contentAnalysis": {},
+        "backlinks": {},
+    }
+    warnings: List[str] = []
+
+    if not dataforseo_client or not getattr(dataforseo_client, "is_configured", False):
+        warnings.append("DataForSEO client not configured; skipping Phase 2 research.")
+        return research, warnings
+
+    limited_keywords = (keywords or [])[:5]
+    primary_keyword = limited_keywords[0] if limited_keywords else None
+
+    # AI search volume (AI Optimization)
+    try:
+        research["aiOptimization"]["ai_search_volume"] = await dataforseo_client.get_ai_search_volume(
+            limited_keywords, location_name, language_code, tenant_id
+        )
+    except Exception as e:
+        warnings.append(f"AI search volume lookup failed: {e}")
+
+    # SERP snapshot (traditional SEO signals)
+    if primary_keyword:
+        try:
+            serp = await dataforseo_client.get_serp_analysis(
+                keyword=primary_keyword,
+                location_name=location_name,
+                language_code=language_code,
+                tenant_id=tenant_id,
+                depth=10,
+                include_people_also_ask=False,
+                include_featured_snippets=True,
+            )
+            research["traditionalSeo"]["serp"] = {
+                "keyword": primary_keyword,
+                "top_domains": serp.get("top_domains", []),
+                "serp_features": serp.get("serp_features", {}),
+                "competition_level": serp.get("competition_level"),
+            }
+        except Exception as e:
+            warnings.append(f"SERP analysis failed: {e}")
+
+    return research, warnings
+
+
+def sanitize_fields(
+    content: str,
+    meta_title: str,
+    meta_description: str,
+    excerpt: Optional[str],
+    primary_keyword: Optional[str],
+) -> Dict[str, Any]:
+    """Apply consistent artifact cleanup to all text fields."""
+    cleaned_content, content_artifacts = sanitize_llm_output(content or "")
+    cleaned_meta_title, meta_title_artifacts = sanitize_llm_output(meta_title or "")
+    cleaned_meta_description, meta_desc_artifacts = sanitize_llm_output(meta_description or "")
+    cleaned_excerpt = None
+    if excerpt:
+        cleaned_excerpt = sanitize_excerpt(excerpt, primary_keyword)
+
+    artifacts = []
+    artifacts.extend(content_artifacts)
+    artifacts.extend(meta_title_artifacts)
+    artifacts.extend(meta_desc_artifacts)
+
+    return {
+        "content": cleaned_content,
+        "meta_title": cleaned_meta_title,
+        "meta_description": cleaned_meta_description,
+        "excerpt": cleaned_excerpt,
+        "artifacts_removed": artifacts,
+        "sanitization_applied": len(artifacts) > 0,
+    }
+
+
 # API Request/Response Models
 class BlogGenerationRequest(BaseModel):
     """Request model for blog generation API."""
@@ -1383,6 +1477,8 @@ async def generate_blog_enhanced(
                 generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
                 if generation_mode == GenerationMode.QUICK_GENERATE:
                     estimated_time = 60  # 1 minute for Quick Generate (DataForSEO)
+                elif generation_mode == GenerationMode.ENHANCED_DATAFORSEO:
+                    estimated_time = 120  # 2 minutes for Enhanced DataForSEO (Phase 2)
                 else:
                     estimated_time = 240  # 4 minutes for Multi-Phase (Pipeline)
                 
@@ -1406,14 +1502,18 @@ async def generate_blog_enhanced(
                 )
         
         # Route based on generation mode
-        # Quick Generate: Always use DataForSEO (fast, cost-effective)
-        # Multi-Phase: Always use Pipeline (comprehensive, premium quality)
+        # Phase 1 (quick_generate): DataForSEO-only, cost-efficient
+        # Phase 2 (enhanced_dataforseo): DataForSEO-only + research signals
+        # Phase 3 (multi_phase): Pipeline (AI-first + LiteLLM polish)
         generation_mode = getattr(request, 'mode', GenerationMode.QUICK_GENERATE)
         
-        if generation_mode == GenerationMode.QUICK_GENERATE:
-            # Quick Generate mode: Force DataForSEO Content Generation
+        if generation_mode in (GenerationMode.QUICK_GENERATE, GenerationMode.ENHANCED_DATAFORSEO):
+            # Phase 1/2: DataForSEO Content Generation
             USE_DATAFORSEO = True
-            logger.info("⚡ Quick Generate mode: Using DataForSEO Content Generation API")
+            if generation_mode == GenerationMode.QUICK_GENERATE:
+                logger.info("⚡ Phase 1 (quick_generate): Using DataForSEO Content Generation API")
+            else:
+                logger.info("⚡ Phase 2 (enhanced_dataforseo): Using DataForSEO Content Generation API + research signals")
             
             # Disable expensive pipeline features for Quick Generate
             # These are not needed as DataForSEO handles SEO optimization internally
@@ -1585,20 +1685,56 @@ async def generate_blog_enhanced(
                     logger.info(f"Returning successful response: title={result.get('title', '')[:50]}, content_length={len(generated_content)}")
                     
                     excerpt = extract_excerpt(generated_content, max_length=250)
-                    
-                    # Build response
-                    return EnhancedBlogGenerationResponse(
-                        title=result.get("title", request.topic),
+
+                    research_payload: Dict[str, Any] = {}
+                    research_warnings: List[str] = []
+                    if generation_mode == GenerationMode.ENHANCED_DATAFORSEO:
+                        research_payload, research_warnings = await build_phase2_research(
+                            dataforseo_client=dataforseo_client_global,
+                            keywords=request.keywords,
+                            tenant_id="default",
+                            location_name=os.getenv("DATAFORSEO_LOCATION", "United States"),
+                            language_code=os.getenv("DATAFORSEO_LANGUAGE", "en"),
+                        )
+                        seo_metadata["research"] = research_payload
+
+                    # Apply universal sanitization for DataForSEO paths (Phase 1/2)
+                    primary_keyword = request.keywords[0] if request.keywords else None
+                    sanitized = sanitize_fields(
                         content=generated_content,
-                        excerpt=excerpt,
                         meta_title=result.get("meta_title", result.get("title", request.topic)),
                         meta_description=result.get("meta_description", ""),
+                        excerpt=excerpt,
+                        primary_keyword=primary_keyword,
+                    )
+
+                    total_cost = float(result.get("cost", 0.0) or 0.0)
+                    cost_breakdown = {
+                        "dataforseo": {
+                            "content_generation": total_cost
+                        },
+                        "llm": {},
+                        "total": total_cost,
+                    }
+
+                    warnings = []
+                    if not seo_metrics.get("within_tolerance", True):
+                        warnings.append("Content length outside ±25% tolerance")
+                    warnings.extend(research_warnings)
+
+                    # Build response
+                    return EnhancedBlogGenerationResponse(
+                        title=sanitized["meta_title"] or result.get("title", request.topic),
+                        content=sanitized["content"],
+                        excerpt=sanitized["excerpt"],
+                        meta_title=sanitized["meta_title"] or result.get("title", request.topic),
+                        meta_description=sanitized["meta_description"],
                         readability_score=readability_score,
                         seo_score=seo_score,
                         stage_results=[],
                         citations=[],
                         total_tokens=result.get("tokens_used", 0),
-                        total_cost=result.get("cost", 0.0),
+                        total_cost=total_cost,
                         generation_time=generation_time,
                         seo_metadata=seo_metadata,
                         internal_links=[],
@@ -1608,8 +1744,11 @@ async def generate_blog_enhanced(
                         semantic_keywords=result.get("keywords", request.keywords),
                         content_metadata={},
                         success=True,
-                        warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
-                        progress_updates=[]
+                        warnings=warnings,
+                        progress_updates=[],
+                        sanitization_applied=sanitized["sanitization_applied"],
+                        artifacts_removed=sanitized["artifacts_removed"],
+                        cost_breakdown=cost_breakdown,
                     )
                 except HTTPException:
                     raise
@@ -1751,7 +1890,23 @@ async def generate_blog_enhanced(
             
             # Image generation has been moved to a separate endpoint
             # Frontend should call /api/v1/images/generate separately after blog generation
-            final_content = pipeline_result.final_content
+        final_content = pipeline_result.final_content
+
+        # Optional LiteLLM polish/QA for Phase 3 (hybrid routing)
+        polish_metadata: Dict[str, Any] = {}
+        if generation_mode == GenerationMode.MULTI_PHASE:
+            try:
+                ai_gateway = get_ai_gateway()
+                if ai_gateway:
+                    polished = await ai_gateway.polish_content(final_content)
+                    if isinstance(polished, dict):
+                        polished_text = polished.get("text") or polished.get("content")
+                        polish_metadata = polished.get("metadata", {})
+                        if polished_text:
+                            final_content = polished_text
+                            logger.info("Applied LiteLLM polish to final content (Phase 3).")
+            except Exception as e:
+                logger.warning(f"LiteLLM polish skipped due to error: {e}")
             
             # Validate that content was actually generated
             if not final_content or len(final_content.strip()) < 50:
@@ -1854,6 +2009,20 @@ async def generate_blog_enhanced(
                         logger.warning(f"Citation generation failed: {e} - continuing without citations")
                         citation_warnings = [f"Citation generation failed: {error_msg}"]
         
+        # Phase 3: add AI Optimization signals (DataForSEO) for AI-first visibility
+        ai_opt_warnings: List[str] = []
+        if generation_mode == GenerationMode.MULTI_PHASE and dataforseo_client_global and getattr(dataforseo_client_global, "is_configured", False):
+            try:
+                ai_opt_data = await dataforseo_client_global.get_ai_search_volume(
+                    request.keywords[:5],
+                    os.getenv("DATAFORSEO_LOCATION", "United States"),
+                    os.getenv("DATAFORSEO_LANGUAGE", "en"),
+                    "default",
+                )
+                pipeline_result.seo_metadata["ai_optimization"] = {"ai_search_volume": ai_opt_data}
+            except Exception as e:
+                ai_opt_warnings.append(f"AI Optimization signals unavailable: {e}")
+
         # Calculate SEO score (simplified)
         seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
         
@@ -1871,22 +2040,27 @@ async def generate_blog_enhanced(
         if additional_context.get("brand_recommendations"):
             brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
         
-        # Apply content sanitization to remove LLM artifacts (December 2025)
-        from src.blog_writer_sdk.utils.content_sanitizer import sanitize_llm_output
-        final_content, artifacts_removed = sanitize_llm_output(final_content)
-        sanitization_applied = len(artifacts_removed) > 0
+        # Apply universal sanitization to content/meta/excerpt
+        primary_keyword = request.keywords[0] if request.keywords else None
+        sanitized = sanitize_fields(
+            content=final_content,
+            meta_title=pipeline_result.meta_title or request.topic,
+            meta_description=pipeline_result.meta_description or "",
+            excerpt=extract_excerpt(final_content, max_length=250),
+            primary_keyword=primary_keyword,
+        )
+        final_content = sanitized["content"]
+        excerpt = sanitized["excerpt"]
+        artifacts_removed = sanitized["artifacts_removed"]
+        sanitization_applied = sanitized["sanitization_applied"]
         if sanitization_applied:
             logger.info(f"Content sanitization applied, artifacts removed: {artifacts_removed}")
         
+        meta_title_final = sanitized["meta_title"] or pipeline_result.meta_title or request.topic
+        meta_description_final = sanitized["meta_description"] or pipeline_result.meta_description or ""
+        
         # Extract content metadata for frontend processing (unified + remark + rehype support)
         content_metadata = extract_content_metadata(final_content)
-        excerpt = extract_excerpt(final_content, max_length=250)
-        
-        # Sanitize excerpt for meta description quality
-        from src.blog_writer_sdk.utils.content_sanitizer import sanitize_excerpt
-        if excerpt:
-            primary_keyword = request.keywords[0] if request.keywords else None
-            excerpt = sanitize_excerpt(excerpt, primary_keyword)
         
         # Enhance SEO metadata with OG and Twitter tags
         enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
@@ -1903,8 +2077,8 @@ async def generate_blog_enhanced(
         
         # Add OG tags
         enhanced_seo_metadata["og_tags"] = {
-            "title": pipeline_result.meta_title or request.topic,
-            "description": pipeline_result.meta_description or "",
+            "title": meta_title_final,
+            "description": meta_description_final,
             "image": featured_image_url,
             "url": canonical_url,
             "type": "article",
@@ -1914,8 +2088,8 @@ async def generate_blog_enhanced(
         # Add Twitter tags
         enhanced_seo_metadata["twitter_tags"] = {
             "card": "summary_large_image" if featured_image_url else "summary",
-            "title": pipeline_result.meta_title or request.topic,
-            "description": pipeline_result.meta_description or "",
+            "title": meta_title_final,
+            "description": meta_description_final,
             "image": featured_image_url
         }
         
@@ -1966,6 +2140,8 @@ async def generate_blog_enhanced(
             all_warnings.extend(pipeline_result.warnings)
         if 'citation_warnings' in locals() and citation_warnings:
             all_warnings.extend(citation_warnings)
+        if ai_opt_warnings:
+            all_warnings.extend(ai_opt_warnings)
         
         # Log generation
         background_tasks.add_task(
@@ -2004,13 +2180,23 @@ async def generate_blog_enhanced(
                 site_domain=request.site_domain,
                 total_pages=len(request.internal_link_targets) if request.internal_link_targets else 0
             )
+
+        llm_cost = sum(s.get("cost", 0.0) or 0.0 for s in stage_results_data)
+        cost_breakdown = {
+            "dataforseo": pipeline_result.seo_metadata.get("dataforseo_cost", {}),
+            "llm": {
+                "pipeline": llm_cost,
+                "polish_via_litellm": polish_metadata.get("cost", 0.0) if polish_metadata else 0.0,
+            },
+            "total": pipeline_result.total_cost if pipeline_result.total_cost is not None else llm_cost,
+        }
         
         return EnhancedBlogGenerationResponse(
-            title=pipeline_result.meta_title or request.topic,
+            title=meta_title_final or request.topic,
             content=final_content,
             excerpt=excerpt,
-            meta_title=pipeline_result.meta_title,
-            meta_description=pipeline_result.meta_description,
+            meta_title=meta_title_final,
+            meta_description=meta_description_final,
             readability_score=pipeline_result.readability_score,
             seo_score=seo_score,
             stage_results=stage_results_data,
@@ -2034,7 +2220,8 @@ async def generate_blog_enhanced(
             progress_updates=progress_updates,  # Include progress updates for frontend
             sanitization_applied=sanitization_applied,
             artifacts_removed=artifacts_removed,
-            image_positions=[]  # Images handled by frontend; positions can be added via content metadata
+            image_positions=[],  # Images handled by frontend; positions can be added via content metadata
+            cost_breakdown=cost_breakdown,
         )
         
     except Exception as e:
@@ -2097,10 +2284,13 @@ async def blog_generation_worker(request: Dict[str, Any]):
         # Route based on generation mode (same logic as synchronous endpoint)
         generation_mode = getattr(blog_request, 'mode', GenerationMode.QUICK_GENERATE)
         
-        if generation_mode == GenerationMode.QUICK_GENERATE:
-            # Quick Generate mode: Use DataForSEO Content Generation
+        if generation_mode in (GenerationMode.QUICK_GENERATE, GenerationMode.ENHANCED_DATAFORSEO):
+            # Phase 1/2: Use DataForSEO Content Generation
             USE_DATAFORSEO = True
-            logger.info(f"Worker: ⚡ Quick Generate mode - Using DataForSEO Content Generation API for job {job_id}")
+            if generation_mode == GenerationMode.QUICK_GENERATE:
+                logger.info(f"Worker: ⚡ Phase 1 (quick_generate) - Using DataForSEO Content Generation API for job {job_id}")
+            else:
+                logger.info(f"Worker: ⚡ Phase 2 (enhanced_dataforseo) - Using DataForSEO Content Generation API + research for job {job_id}")
             
         elif generation_mode == GenerationMode.MULTI_PHASE:
             # Multi-Phase mode: Use Pipeline
@@ -2271,22 +2461,54 @@ async def blog_generation_worker(request: Dict[str, Any]):
                         }
                         
                         excerpt = extract_excerpt(generated_content, max_length=250)
+
+                        research_payload: Dict[str, Any] = {}
+                        research_warnings: List[str] = []
+                        if generation_mode == GenerationMode.ENHANCED_DATAFORSEO:
+                            research_payload, research_warnings = await build_phase2_research(
+                                dataforseo_client=dataforseo_client_global,
+                                keywords=blog_request.keywords,
+                                tenant_id="default",
+                                location_name=os.getenv("DATAFORSEO_LOCATION", "United States"),
+                                language_code=os.getenv("DATAFORSEO_LANGUAGE", "en"),
+                            )
+                            seo_metadata["research"] = research_payload
+
+                        sanitized = sanitize_fields(
+                            content=generated_content,
+                            meta_title=result.get("meta_title", result.get("title", blog_request.topic)),
+                            meta_description=result.get("meta_description", ""),
+                            excerpt=excerpt,
+                            primary_keyword=blog_request.keywords[0] if blog_request.keywords else None,
+                        )
+
+                        total_cost = float(result.get("cost", 0.0) or 0.0)
+                        cost_breakdown = {
+                            "dataforseo": {"content_generation": total_cost},
+                            "llm": {},
+                            "total": total_cost,
+                        }
+
+                        warnings = []
+                        if not seo_metrics.get("within_tolerance", True):
+                            warnings.append("Content length outside ±25% tolerance")
+                        warnings.extend(research_warnings)
                         
                         # Update job with result
                         job.status = JobStatus.COMPLETED
                         job.completed_at = datetime.utcnow()
                         job.result = EnhancedBlogGenerationResponse(
-                            title=result.get("title", blog_request.topic),
-                            content=generated_content,
-                            excerpt=excerpt,
-                            meta_title=result.get("meta_title", result.get("title", blog_request.topic)),
-                            meta_description=result.get("meta_description", ""),
+                            title=sanitized["meta_title"] or result.get("title", blog_request.topic),
+                            content=sanitized["content"],
+                            excerpt=sanitized["excerpt"],
+                            meta_title=sanitized["meta_title"] or result.get("title", blog_request.topic),
+                            meta_description=sanitized["meta_description"],
                             readability_score=readability_score,
                             seo_score=seo_score,
                             stage_results=[],
                             citations=[],
                             total_tokens=result.get("tokens_used", 0),
-                            total_cost=result.get("cost", 0.0),
+                            total_cost=total_cost,
                             generation_time=(datetime.utcnow() - job.started_at).total_seconds(),
                             seo_metadata=seo_metadata,
                             internal_links=[],
@@ -2296,8 +2518,11 @@ async def blog_generation_worker(request: Dict[str, Any]):
                             semantic_keywords=result.get("keywords", blog_request.keywords),
                             content_metadata={},
                             success=True,
-                            warnings=[] if seo_metrics.get("within_tolerance", True) else ["Content length outside ±25% tolerance"],
-                            progress_updates=progress_updates
+                            warnings=warnings,
+                            progress_updates=progress_updates,
+                            sanitization_applied=sanitized["sanitization_applied"],
+                            artifacts_removed=sanitized["artifacts_removed"],
+                            cost_breakdown=cost_breakdown,
                         )
                         
                         logger.info(f"Worker: DataForSEO generation completed successfully for job {job_id}")
@@ -2431,6 +2656,22 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Image generation has been moved to a separate endpoint
             # Frontend should call /api/v1/images/generate separately after blog generation
             final_content = pipeline_result.final_content
+
+            # Optional LiteLLM polish/QA for Phase 3 (hybrid routing)
+            polish_metadata: Dict[str, Any] = {}
+            if generation_mode == GenerationMode.MULTI_PHASE:
+                try:
+                    ai_gateway = get_ai_gateway()
+                    if ai_gateway:
+                        polished = await ai_gateway.polish_content(final_content)
+                        if isinstance(polished, dict):
+                            polished_text = polished.get("text") or polished.get("content")
+                            polish_metadata = polished.get("metadata", {})
+                            if polished_text:
+                                final_content = polished_text
+                                logger.info("Worker: Applied LiteLLM polish to final content (Phase 3).")
+                except Exception as e:
+                    logger.warning(f"Worker: LiteLLM polish skipped due to error: {e}")
             
             # Add citations if enabled (mandatory for Multi-Phase mode)
             citations = []
@@ -2522,6 +2763,20 @@ async def blog_generation_worker(request: Dict[str, Any]):
                             logger.warning(f"Worker: Citation generation failed: {e} - continuing without citations")
                             citation_warnings.append(f"Citation generation failed: {error_msg}")
             
+            # Phase 3: AI Optimization signals (DataForSEO) to inform AI-first view
+            ai_opt_warnings: List[str] = []
+            if generation_mode == GenerationMode.MULTI_PHASE and dataforseo_client_global and getattr(dataforseo_client_global, "is_configured", False):
+                try:
+                    ai_opt_data = await dataforseo_client_global.get_ai_search_volume(
+                        blog_request.keywords[:5],
+                        os.getenv("DATAFORSEO_LOCATION", "United States"),
+                        os.getenv("DATAFORSEO_LANGUAGE", "en"),
+                        "default",
+                    )
+                    pipeline_result.seo_metadata["ai_optimization"] = {"ai_search_volume": ai_opt_data}
+                except Exception as e:
+                    ai_opt_warnings.append(f"AI Optimization signals unavailable: {e}")
+
             # Calculate SEO score
             seo_score = min(100, pipeline_result.readability_score * 0.4 + 60)
             
@@ -2539,24 +2794,27 @@ async def blog_generation_worker(request: Dict[str, Any]):
             if additional_context.get("brand_recommendations"):
                 brand_recommendations = additional_context["brand_recommendations"].get("brands", [])
             
-            # Apply content sanitization (December 2025)
-            from src.blog_writer_sdk.utils.content_sanitizer import sanitize_llm_output, sanitize_excerpt as _sanitize_excerpt
-            final_content, artifacts_removed = sanitize_llm_output(final_content)
-            sanitization_applied = len(artifacts_removed) > 0
+            sanitized_worker = sanitize_fields(
+                content=final_content,
+                meta_title=pipeline_result.meta_title or blog_request.topic,
+                meta_description=pipeline_result.meta_description or "",
+                excerpt=extract_excerpt(final_content, max_length=250),
+                primary_keyword=blog_request.keywords[0] if blog_request.keywords else None,
+            )
+            final_content = sanitized_worker["content"]
+            excerpt = sanitized_worker["excerpt"]
+            artifacts_removed = sanitized_worker["artifacts_removed"]
+            sanitization_applied = sanitized_worker["sanitization_applied"]
             if sanitization_applied:
                 logger.info(f"Worker: Content sanitization applied, artifacts removed: {artifacts_removed}")
             
             # Extract content metadata
             content_metadata = extract_content_metadata(final_content)
-            excerpt = extract_excerpt(final_content, max_length=250)
-            
-            # Sanitize excerpt
-            if excerpt:
-                primary_keyword = blog_request.keywords[0] if blog_request.keywords else None
-                excerpt = _sanitize_excerpt(excerpt, primary_keyword)
             
             # Enhance SEO metadata
             enhanced_seo_metadata = pipeline_result.seo_metadata.copy()
+            meta_title_final = sanitized_worker["meta_title"] or pipeline_result.meta_title or blog_request.topic
+            meta_description_final = sanitized_worker["meta_description"] or pipeline_result.meta_description or ""
             
             # Get featured image URL if available (from structured data)
             featured_image_url = None
@@ -2570,8 +2828,8 @@ async def blog_generation_worker(request: Dict[str, Any]):
             
             # Add OG tags
             enhanced_seo_metadata["og_tags"] = {
-                "title": pipeline_result.meta_title or blog_request.topic,
-                "description": pipeline_result.meta_description or "",
+                "title": meta_title_final,
+                "description": meta_description_final,
                 "image": featured_image_url,
                 "url": canonical_url,
                 "type": "article",
@@ -2581,8 +2839,8 @@ async def blog_generation_worker(request: Dict[str, Any]):
             # Add Twitter tags
             enhanced_seo_metadata["twitter_tags"] = {
                 "card": "summary_large_image" if featured_image_url else "summary",
-                "title": pipeline_result.meta_title or blog_request.topic,
-                "description": pipeline_result.meta_description or "",
+                "title": meta_title_final,
+                "description": meta_description_final,
                 "image": featured_image_url
             }
             
@@ -2624,6 +2882,8 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 all_warnings.extend(pipeline_result.warnings)
             if citation_warnings:
                 all_warnings.extend(citation_warnings)
+            if ai_opt_warnings:
+                all_warnings.extend(ai_opt_warnings)
             
             # Build internal links metadata (December 2025)
             internal_links_metadata_dict = pipeline_result.seo_metadata.get("internal_links_metadata")
@@ -2653,14 +2913,24 @@ async def blog_generation_worker(request: Dict[str, Any]):
                     site_domain=blog_request.site_domain,
                     total_pages=len(blog_request.internal_link_targets) if blog_request.internal_link_targets else 0
                 )
+
+            llm_cost = sum(s.get("cost", 0.0) or 0.0 for s in stage_results_data)
+            cost_breakdown = {
+                "dataforseo": pipeline_result.seo_metadata.get("dataforseo_cost", {}),
+                "llm": {
+                    "pipeline": llm_cost,
+                    "polish_via_litellm": polish_metadata.get("cost", 0.0) if polish_metadata else 0.0,
+                },
+                "total": pipeline_result.total_cost if pipeline_result.total_cost is not None else llm_cost,
+            }
             
             # Create response
             response = EnhancedBlogGenerationResponse(
-                title=pipeline_result.meta_title or blog_request.topic,
+                title=meta_title_final or blog_request.topic,
                 content=final_content,
                 excerpt=excerpt,
-                meta_title=pipeline_result.meta_title,
-                meta_description=pipeline_result.meta_description,
+                meta_title=meta_title_final,
+                meta_description=meta_description_final,
                 readability_score=pipeline_result.readability_score,
                 seo_score=seo_score,
                 stage_results=stage_results_data,
@@ -2684,7 +2954,8 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 progress_updates=progress_updates,
                 sanitization_applied=sanitization_applied,
                 artifacts_removed=artifacts_removed,
-                image_positions=[]
+                image_positions=[],
+                cost_breakdown=cost_breakdown,
             )
             
             # Update job with result
