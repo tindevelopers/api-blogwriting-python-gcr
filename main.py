@@ -1890,31 +1890,31 @@ async def generate_blog_enhanced(
             
             # Image generation has been moved to a separate endpoint
             # Frontend should call /api/v1/images/generate separately after blog generation
-        final_content = pipeline_result.final_content
+            final_content = pipeline_result.final_content
 
-        # Optional LiteLLM polish/QA for Phase 3 (hybrid routing)
-        polish_metadata: Dict[str, Any] = {}
-        if generation_mode == GenerationMode.MULTI_PHASE:
-            try:
-                ai_gateway = get_ai_gateway()
-                if ai_gateway:
-                    polished = await ai_gateway.polish_content(final_content)
-                    if isinstance(polished, dict):
-                        polished_text = polished.get("text") or polished.get("content")
-                        polish_metadata = polished.get("metadata", {})
-                        if polished_text:
-                            final_content = polished_text
-                            logger.info("Applied LiteLLM polish to final content (Phase 3).")
-            except Exception as e:
-                logger.warning(f"LiteLLM polish skipped due to error: {e}")
+            # Optional LiteLLM polish/QA for Phase 3 (hybrid routing)
+            polish_metadata: Dict[str, Any] = {}
+            if generation_mode == GenerationMode.MULTI_PHASE:
+                try:
+                    ai_gateway = get_ai_gateway()
+                    if ai_gateway:
+                        polished = await ai_gateway.polish_content(final_content)
+                        if isinstance(polished, dict):
+                            polished_text = polished.get("text") or polished.get("content")
+                            polish_metadata = polished.get("metadata", {})
+                            if polished_text:
+                                final_content = polished_text
+                                logger.info("Applied LiteLLM polish to final content (Phase 3).")
+                except Exception as e:
+                    logger.warning(f"LiteLLM polish skipped due to error: {e}")
             
-            # Validate that content was actually generated
-            if not final_content or len(final_content.strip()) < 50:
-                logger.error(f"Pipeline returned empty or insufficient content: length={len(final_content) if final_content else 0}, pipeline_result_keys={dir(pipeline_result)}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Content generation failed: Generated content is empty or too short ({len(final_content) if final_content else 0} chars). AI provider may not be configured correctly (check OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)."
-                )
+                # Validate that content was actually generated
+                if not final_content or len(final_content.strip()) < 50:
+                    logger.error(f"Pipeline returned empty or insufficient content: length={len(final_content) if final_content else 0}, pipeline_result_keys={dir(pipeline_result)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Content generation failed: Generated content is empty or too short ({len(final_content) if final_content else 0} chars). AI provider may not be configured correctly (check OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)."
+                    )
         except HTTPException:
             raise
         except Exception as e:
