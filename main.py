@@ -281,6 +281,15 @@ class ContentAnalysisRequest(BaseModel):
     keywords: List[str] = Field(default_factory=list, max_length=20, description="Keywords to analyze for")
 
 
+class ContentSentimentAnalysisRequest(BaseModel):
+    """Request model for DataForSEO Content Analysis API (sentiment, brand mentions, engagement)."""
+    keyword: str = Field(..., min_length=1, max_length=200, description="Keyword to analyze for content sentiment and brand mentions")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    include_summary: bool = Field(default=True, description="Include summary analysis (brand mentions, top topics)")
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of citations to analyze")
+
+
 class KeywordAnalysisRequest(BaseModel):
     """Request model for keyword analysis."""
     keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200)")
@@ -3369,6 +3378,172 @@ async def analyze_content(
         raise HTTPException(
             status_code=500,
             detail=f"Content analysis failed: {str(e)}"
+        )
+
+
+# Content sentiment analysis endpoint (DataForSEO Content Analysis API)
+@app.post("/api/v1/content/analyze-sentiment")
+async def analyze_content_sentiment(
+    request: ContentSentimentAnalysisRequest,
+    http_request: Request
+):
+    """
+    Analyze content sentiment, brand mentions, and engagement signals using DataForSEO Content Analysis API.
+    
+    This endpoint provides comprehensive content intelligence including:
+    - Sentiment analysis (positive, negative, neutral)
+    - Brand mentions and citations
+    - Engagement signals and scores
+    - Top topics and domains
+    - Content summary with brand awareness metrics
+    
+    Critical for: Understanding how your content/brand is perceived online and identifying
+    opportunities for brand awareness and engagement optimization.
+    
+    Returns:
+    - citations: List of content citations with sentiment
+    - sentiment: Sentiment breakdown (positive, negative, neutral counts)
+    - engagement_signals: Engagement scores for top content
+    - top_domains: Top domains mentioning the keyword
+    - summary: Summary analysis including brand mentions and top topics (if include_summary=True)
+    """
+    try:
+        tenant_id = os.getenv("TENANT_ID", "default")
+        
+        if not enhanced_analyzer or not enhanced_analyzer._df_client:
+            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+        
+        await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+        
+        if not enhanced_analyzer._df_client.is_configured:
+            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+        
+        df_client = enhanced_analyzer._df_client
+        
+        # Get content analysis search (citations, sentiment, engagement)
+        content_search = await df_client.analyze_content_search(
+            keyword=request.keyword,
+            location_name=request.location,
+            language_code=request.language,
+            tenant_id=tenant_id,
+            limit=request.limit
+        )
+        
+        # Get summary analysis (brand mentions, top topics) if requested
+        summary_data = {}
+        if request.include_summary:
+            try:
+                summary_data = await df_client.analyze_content_summary(
+                    keyword=request.keyword,
+                    location_name=request.location,
+                    language_code=request.language,
+                    tenant_id=tenant_id
+                )
+            except Exception as e:
+                logger.warning(f"Content analysis summary failed: {e}")
+                summary_data = {}
+        
+        # Calculate overall sentiment score (0-100)
+        sentiment_counts = content_search.get("sentiment", {})
+        total_sentiment = sum(sentiment_counts.values())
+        sentiment_score = 0.0
+        if total_sentiment > 0:
+            positive_ratio = sentiment_counts.get("positive", 0) / total_sentiment
+            negative_ratio = sentiment_counts.get("negative", 0) / total_sentiment
+            # Score: 50 (neutral) + positive bonus - negative penalty
+            sentiment_score = 50 + (positive_ratio * 50) - (negative_ratio * 50)
+            sentiment_score = max(0, min(100, sentiment_score))
+        
+        # Extract top domains from citations
+        top_domains = {}
+        citations = content_search.get("citations", [])
+        for citation in citations:
+            domain = citation.get("domain", "")
+            if domain:
+                if domain not in top_domains:
+                    top_domains[domain] = {"count": 0, "sentiment": {"positive": 0, "negative": 0, "neutral": 0}}
+                top_domains[domain]["count"] += 1
+                sentiment = citation.get("sentiment", "neutral").lower()
+                if sentiment in top_domains[domain]["sentiment"]:
+                    top_domains[domain]["sentiment"][sentiment] += 1
+        
+        # Sort domains by count
+        top_domains_list = [
+            {
+                "domain": domain,
+                "citation_count": data["count"],
+                "sentiment_breakdown": data["sentiment"]
+            }
+            for domain, data in sorted(top_domains.items(), key=lambda x: x[1]["count"], reverse=True)[:20]
+        ]
+        
+        # Build response
+        response = {
+            "keyword": request.keyword,
+            "location": request.location,
+            "language": request.language,
+            "analysis": {
+                "citations": citations[:request.limit],  # Limit to requested number
+                "total_citations": len(citations),
+                "sentiment": {
+                    "breakdown": sentiment_counts,
+                    "score": round(sentiment_score, 2),
+                    "overall": "positive" if sentiment_score > 60 else "negative" if sentiment_score < 40 else "neutral"
+                },
+                "engagement_signals": content_search.get("engagement_signals", [])[:20],  # Top 20
+                "top_domains": top_domains_list,
+                "metadata": content_search.get("metadata", {})
+            }
+        }
+        
+        # Add summary data if available
+        if summary_data:
+            response["summary"] = {
+                "total_citations": summary_data.get("total_citations", 0),
+                "sentiment_breakdown": summary_data.get("sentiment_breakdown", {}),
+                "top_topics": summary_data.get("top_topics", []),
+                "brand_mentions": summary_data.get("brand_mentions", []),
+                "engagement_score": summary_data.get("engagement_score", 0.0),
+                "metadata": summary_data.get("metadata", {})
+            }
+        
+        # Add recommendations
+        recommendations = []
+        
+        # Sentiment recommendations
+        if sentiment_score < 40:
+            recommendations.append("Consider addressing negative sentiment by improving content quality and addressing concerns")
+        elif sentiment_score > 70:
+            recommendations.append("Strong positive sentiment detected - leverage this for brand awareness campaigns")
+        
+        # Engagement recommendations
+        engagement_signals = content_search.get("engagement_signals", [])
+        if engagement_signals:
+            avg_engagement = sum(s.get("score", 0) for s in engagement_signals) / len(engagement_signals) if engagement_signals else 0
+            if avg_engagement > 0.7:
+                recommendations.append("High engagement signals detected - analyze top-performing content for best practices")
+            elif avg_engagement < 0.3:
+                recommendations.append("Low engagement signals - consider creating more engaging, shareable content")
+        
+        # Brand mentions recommendations
+        if summary_data and summary_data.get("brand_mentions"):
+            brand_mentions_count = len(summary_data.get("brand_mentions", []))
+            if brand_mentions_count > 0:
+                recommendations.append(f"Brand mentioned in {brand_mentions_count} contexts - monitor and engage with discussions")
+            else:
+                recommendations.append("Limited brand mentions detected - consider brand awareness campaigns")
+        
+        response["recommendations"] = recommendations
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Content sentiment analysis failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Content sentiment analysis failed: {str(e)}"
         )
 
 

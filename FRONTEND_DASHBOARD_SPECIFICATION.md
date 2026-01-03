@@ -1666,6 +1666,9 @@ Your backend exposes the following endpoints (automatically typed via OpenAPI):
 - `POST /api/v1/keywords/ai-optimization` - AI optimization
 - `POST /api/v1/keywords/difficulty` - Keyword difficulty
 
+#### Content Analysis
+- `POST /api/v1/content/analyze-sentiment` - Content sentiment analysis (sentiment, brand mentions, engagement)
+
 #### Jobs (Async Operations)
 - `GET /api/v1/blog/jobs/{job_id}` - Get job status
 - `POST /api/v1/batch/generate` - Batch generation

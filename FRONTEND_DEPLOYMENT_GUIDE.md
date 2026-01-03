@@ -69,6 +69,7 @@ async function checkHealth(): Promise<boolean> {
 |----------|--------|-------------|
 | `/api/v1/analyze` | POST | Analyze existing content |
 | `/api/v1/optimize` | POST | Optimize content for SEO |
+| `/api/v1/content/analyze-sentiment` | POST | Content sentiment analysis (sentiment, brand mentions, engagement) |
 | `/api/v1/keywords/suggest` | POST | Get keyword suggestions |
 | `/api/v1/topics/recommend` | POST | Recommend blog topics |
 
