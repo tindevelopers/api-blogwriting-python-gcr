@@ -1,9 +1,17 @@
 # API Documentation v1.3.6
 
 **Version:** 1.3.6  
-**Date:** 2025-11-23  
-**Base URL:** `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app`  
-**Interactive Docs:** `/docs` (Swagger UI) | `/redoc` (ReDoc)
+**Date:** 2025-12-20  
+
+### Environment Endpoints
+
+| Environment | Base URL | Interactive Docs |
+|------------|----------|------------------|
+| **Development** | `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app` | [/docs](https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/docs) \| [/redoc](https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/redoc) |
+| **Staging** | `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app` | [/docs](https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/docs) \| [/redoc](https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/redoc) |
+| **Production** | `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app` | [/docs](https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/docs) \| [/redoc](https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/redoc) |
+
+**Note:** All examples in this documentation use the development endpoint. Replace the base URL with your target environment.
 
 ---
 
@@ -46,23 +54,56 @@ Currently using environment-based authentication. JWT token support coming soon.
 
 ### ✨ Major Enhancements
 
-1. **Expanded Blog Types** - 28 content types (top 80% of popular formats)
+1. **Firestore Usage Logging with Attribution** - Comprehensive AI usage tracking
+   - Automatic usage logging to Firestore with attribution (usage_source, usage_client, request_id)
+   - Request context tracking for usage attribution
+   - Environment-based collection naming (ai_usage_logs_{env})
+   - Cost tracking and analytics support
+
+2. **Premium Evidence-Tier Endpoints** - High-quality evidence-backed content generation
+   - Evidence-backed review generation (`POST /api/v1/reviews/{review_type}/evidence`)
+   - Evidence-backed social content generation (`POST /api/v1/social/generate-evidence`)
+   - DataForSEO integration for reviews, social signals, and sentiment
+
+3. **Category-Based Content Analysis** - Advanced content analysis with evidence caching
+   - Content analysis with evidence storage (`POST /api/v1/content/analyze`)
+   - Evidence refresh for delta updates (`POST /api/v1/content/refresh`)
+   - Analysis retrieval (`GET /api/v1/content/analysis/{analysis_id}`)
+   - Supports multiple content categories (entity_review, service_review, product_comparison)
+
+4. **Content Sentiment Analysis** - Brand perception and engagement insights
+   - Sentiment analysis endpoint (`POST /api/v1/content/analyze-sentiment`)
+   - Brand mentions and citations
+   - Engagement signals and scores
+   - Top topics and domains analysis
+
+5. **URL Analysis** - Quick content extraction and analysis
+   - URL analysis endpoint (`POST /api/v1/content/analyze-url`)
+   - Text extraction and summarization
+   - Content research support
+
+6. **Natural Blog Writing** - Dashboard-controlled prompts
+   - Enhanced prompt customization from dashboard
+   - Natural writing style options
+   - Phase modes for different generation strategies
+
+7. **Expanded Blog Types** - 28 content types (top 80% of popular formats)
    - Added 21 new blog types: tutorial, listicle, case_study, news, opinion, interview, faq, checklist, tips, definition, benefits, problem_solution, trend_analysis, statistics, resource_list, timeline, myth_busting, best_practices, getting_started, advanced, troubleshooting
 
-2. **Word Count Tolerance** - ±25% flexibility for natural content
+8. **Word Count Tolerance** - ±25% flexibility for natural content
    - Quality prioritized over exact word count
    - Automatic validation and reporting
 
-3. **SEO Post-Processing** - Automatic traffic optimization
+9. **SEO Post-Processing** - Automatic traffic optimization
    - Keyword density analysis (optimal: 1-2%)
    - Heading structure optimization
    - Readability scoring
    - Comprehensive SEO score (0-100)
 
-4. **Backlink Analysis** - Extract keywords from premium blogs
-   - Analyze backlinks from URLs
-   - Extract keywords from anchor texts
-   - Merge with provided keywords
+10. **Backlink Analysis** - Extract keywords from premium blogs
+    - Analyze backlinks from URLs
+    - Extract keywords from anchor texts
+    - Merge with provided keywords
 
 ---
 
@@ -192,7 +233,12 @@ Available blog types (28 total):
 ### Example Request
 
 ```bash
-curl -X POST "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/blog/generate-enhanced" \
+# Example using Production endpoint (replace with your target environment)
+BASE_URL="https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app"
+# Development: https://blog-writer-api-dev-kq42l26tuq-od.a.run.app
+# Staging: https://blog-writer-api-staging-kq42l26tuq-od.a.run.app
+
+curl -X POST "${BASE_URL}/api/v1/blog/generate-enhanced" \
   -H "Content-Type: application/json" \
   -d '{
     "topic": "Introduction to Python Programming",
@@ -315,6 +361,250 @@ Extracted keywords are included in `seo_metadata.backlink_keywords`:
     "backlink_keywords": ["extracted", "keywords", "from", "backlinks"]
   }
 }
+```
+
+---
+
+## Content Analysis & Sentiment
+
+### Content Analysis with Evidence Caching
+
+**POST** `/api/v1/content/analyze`
+
+Analyze content and fetch evidence from DataForSEO, storing results for reuse.
+
+**Request Body:**
+```json
+{
+  "content": "article body text...",
+  "org_id": "org123",
+  "user_id": "user456",
+  "content_format": "review",
+  "content_category": "entity_review",
+  "entity_name": "Hotel Example",
+  "google_cid": "123456789",
+  "tripadvisor_url_path": "/Hotel_Review-...",
+  "trustpilot_domain": "example.com",
+  "canonical_url": "https://example.com/hotel"
+}
+```
+
+**Response:**
+```json
+{
+  "analysis_id": "abc123",
+  "content_id": "content456",
+  "evidence_count": 15,
+  "bundle": "entity_review"
+}
+```
+
+### Refresh Evidence Sources
+
+**POST** `/api/v1/content/refresh?analysis_id={analysis_id}`
+
+Refresh evidence sources for existing analysis (delta updates).
+
+**Request Body:** Same as `/api/v1/content/analyze`
+
+**Response:**
+```json
+{
+  "analysis_id": "abc123",
+  "new_evidence": 3
+}
+```
+
+### Get Analysis and Evidence
+
+**GET** `/api/v1/content/analysis/{analysis_id}`
+
+Retrieve stored analysis and evidence.
+
+**Response:**
+```json
+{
+  "analysis": {
+    "analysis_id": "abc123",
+    "content_id": "content456",
+    "content_category": "entity_review",
+    "created_at": "2025-12-20T10:00:00Z"
+  },
+  "evidence": [
+    {
+      "source": "google_reviews",
+      "payload": {...},
+      "collected_at": "2025-12-20T10:00:00Z"
+    }
+  ]
+}
+```
+
+### Content Sentiment Analysis
+
+**POST** `/api/v1/content/analyze-sentiment`
+
+Analyze content sentiment, brand mentions, and engagement signals.
+
+**Request Body:**
+```json
+{
+  "keyword": "your brand or topic",
+  "location": "United States",
+  "language": "en",
+  "limit": 10,
+  "include_summary": true
+}
+```
+
+**Response:**
+```json
+{
+  "citations": [
+    {
+      "text": "Citation text...",
+      "sentiment": "positive",
+      "url": "https://example.com",
+      "title": "Source Title"
+    }
+  ],
+  "sentiment": {
+    "positive": 8,
+    "negative": 1,
+    "neutral": 1
+  },
+  "engagement_signals": [...],
+  "top_domains": [...],
+  "summary": "Brand awareness summary..." // if include_summary=true
+}
+```
+
+### URL Analysis
+
+**POST** `/api/v1/content/analyze-url`
+
+Quick URL analysis and content extraction.
+
+**Request Body:**
+```json
+{
+  "url": "https://example.com/article"
+}
+```
+
+**Response:**
+```json
+{
+  "url": "https://example.com/article",
+  "text": "Extracted text content...",
+  "summary": "Content summary..."
+}
+```
+
+---
+
+## Premium Evidence-Tier Endpoints
+
+### Evidence-Backed Review Generation
+
+**POST** `/api/v1/reviews/{review_type}/evidence`
+
+Generate high-quality reviews with DataForSEO-backed evidence.
+
+**Path Parameters:**
+- `review_type`: `hotel` | `restaurant` | `product` | `service`
+
+**Request Body:**
+```json
+{
+  "entity_name": "Hotel Example",
+  "google_cid": "123456789",
+  "tripadvisor_url_path": "/Hotel_Review-...",
+  "trustpilot_domain": "example.com",
+  "canonical_url": "https://example.com/hotel",
+  "focus_keywords": ["luxury hotel", "spa resort"]
+}
+```
+
+**Response:**
+```json
+{
+  "title": "Review Title",
+  "content": "Review content with evidence citations...",
+  "rating": 4.5,
+  "evidence_sources": [
+    "google_reviews",
+    "tripadvisor",
+    "trustpilot"
+  ]
+}
+```
+
+### Evidence-Backed Social Content Generation
+
+**POST** `/api/v1/social/generate-evidence`
+
+Generate social posts grounded in fetched signals.
+
+**Request Body:**
+```json
+{
+  "topic": "Your campaign topic",
+  "platforms": ["twitter", "linkedin", "facebook"],
+  "entity_name": "Your Brand",
+  "canonical_url": "https://example.com",
+  "campaign_goal": "engagement",
+  "variants": 3,
+  "max_chars": 280,
+  "include_hashtags": true
+}
+```
+
+**Response:**
+```json
+{
+  "posts": [
+    {
+      "platform": "twitter",
+      "text": "Post content...",
+      "hashtags": ["#hashtag1", "#hashtag2"]
+    }
+  ],
+  "warnings": []
+}
+```
+
+---
+
+## Usage Logging & Attribution
+
+All AI operations automatically log usage to Firestore (when configured).
+
+**Collection:** `ai_usage_logs_{environment}` (e.g., `ai_usage_logs_dev`, `ai_usage_logs_prod`)
+
+**Usage Log Fields:**
+- `org_id`: Organization identifier
+- `user_id`: User identifier
+- `operation`: Operation type (e.g., "blog_generation", "keyword_analysis")
+- `model`: AI model used
+- `prompt_tokens`: Input tokens
+- `completion_tokens`: Output tokens
+- `cost_usd`: Cost in USD
+- `latency_ms`: Request latency
+- `cached`: Whether result was cached
+- `usage_source`: Attribution source (from header `x-usage-source` or context)
+- `usage_client`: Attribution client (from header `x-usage-client` or context)
+- `request_id`: Request identifier (from header `x-request-id` or context)
+- `created_at`: Timestamp
+
+**Setting Attribution Headers:**
+```bash
+curl -X POST "$BASE/api/v1/blog/generate-enhanced" \
+  -H "Content-Type: application/json" \
+  -H "x-usage-source: dashboard" \
+  -H "x-usage-client: web-app" \
+  -H "x-request-id: req-12345" \
+  -d '{"primary_keyword": "example"}'
 ```
 
 ---

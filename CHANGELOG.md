@@ -1,3 +1,111 @@
+## 1.3.6 (2025-12-20)
+
+### Added
+- **Firestore Usage Logging with Attribution**: Comprehensive AI usage tracking system
+  - **FirestoreUsageLogger**: New service for logging AI usage to Firestore
+    - Tracks usage_source, usage_client, and request_id for attribution
+    - Environment-based collection naming (ai_usage_logs_{env})
+    - Automatic attribution from request context or metadata headers
+    - Query support for usage analytics and cost tracking
+  - **Request Context Monitoring**: New request_context module for tracking usage attribution
+    - Thread-local storage for request context
+    - Automatic extraction from HTTP headers (x-usage-source, x-usage-client, x-request-id)
+    - Fallback to UNKNOWN_BUCKET when attribution unavailable
+  - Usage logs include: org_id, user_id, operation, model, tokens, cost, latency, cached status, and attribution fields
+- **Premium Evidence-Tier Endpoints**: High-quality evidence-backed content generation
+  - **Review Generation**: `POST /api/v1/reviews/{review_type}/evidence`
+    - Forces evidence-tier quality with DataForSEO integration
+    - Supports hotel, restaurant, product, and service reviews
+    - Uses Google Reviews, Tripadvisor, Trustpilot, and social signals
+  - **Social Content Generation**: `POST /api/v1/social/generate-evidence`
+    - Generates social posts grounded in fetched signals
+    - Uses DataForSEO social signals, sentiment analysis, and LLM responses
+    - Supports multiple platforms with evidence-backed content
+- **Category-Based Content Analysis**: Advanced content analysis with evidence caching
+  - **Content Analysis**: `POST /api/v1/content/analyze`
+    - Analyzes content and fetches evidence from DataForSEO
+    - Supports multiple content categories (entity_review, service_review, product_comparison)
+    - Returns analysis_id for reuse and evidence retrieval
+    - Caches evidence to avoid redundant DataForSEO calls
+  - **Evidence Refresh**: `POST /api/v1/content/refresh`
+    - Delta updates for existing analysis
+    - Scheduled refresh support for keeping evidence current
+  - **Analysis Retrieval**: `GET /api/v1/content/analysis/{analysis_id}`
+    - Retrieve stored analysis and evidence
+    - Dashboard/frontend integration support
+- **Content Sentiment Analysis**: `POST /api/v1/content/analyze-sentiment`
+  - Sentiment analysis (positive, negative, neutral)
+  - Brand mentions and citations
+  - Engagement signals and scores
+  - Top topics and domains
+  - Content summary with brand awareness metrics
+- **URL Analysis**: `POST /api/v1/content/analyze-url`
+  - Quick URL analysis and content extraction
+  - Text extraction and summarization
+- **Natural Blog Writing**: Dashboard-controlled prompts and natural writing modes
+  - Enhanced prompt customization from dashboard
+  - Natural writing style options
+  - Phase modes for different generation strategies
+- **Universal Sanitization**: Content sanitization improvements
+  - Enhanced content cleaning and formatting
+  - Cost breakdown tracking
+
+### Changed
+- Enhanced usage logging to support Firestore as primary storage (with Supabase fallback)
+- Improved request attribution tracking across all endpoints
+- Enhanced content analysis service with evidence caching
+- Updated review and social generation to support evidence-tier quality
+
+### Infrastructure
+- Firestore integration for usage logging (when Firebase credentials available)
+- Enhanced monitoring with request context tracking
+- Improved cost tracking and attribution
+
+### Notes
+- Firestore usage logging requires Firebase Admin SDK credentials
+- Premium evidence endpoints require DataForSEO API credentials
+- Content analysis endpoints support evidence caching to reduce API costs
+- Usage attribution automatically extracted from headers or request context
+
+---
+
+## 1.3.5 (2025-12-15)
+
+### Added
+- **Project Documentation Serving**: `GET /project-docs/`
+  - Serves project documentation at dedicated endpoint
+  - Improved documentation accessibility
+
+### Changed
+- Enhanced documentation serving capabilities
+
+---
+
+## 1.3.4 (2025-12-10)
+
+### Added
+- **Phase Modes**: Different generation strategies for blog content
+- **Cost Breakdown**: Detailed cost tracking per operation
+
+### Changed
+- Improved content sanitization across all endpoints
+- Enhanced error handling and validation
+
+---
+
+## 1.3.3 (2025-12-05)
+
+### Added
+- **Natural Blog Writing**: Dashboard-controlled prompts
+  - Enhanced prompt customization
+  - Natural writing style options
+
+### Changed
+- Improved prompt handling and customization
+- Enhanced blog generation quality
+
+---
+
 ## 1.3.2 (2025-11-15)
 
 ### Added

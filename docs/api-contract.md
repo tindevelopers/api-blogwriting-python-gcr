@@ -5,6 +5,24 @@ For the full, machine-readable contract:
 - OpenAPI JSON: `/openapi.json`
 - Swagger UI: `/docs`
 
+## Environment Endpoints
+
+| Environment | Base URL | Interactive Docs |
+|------------|----------|------------------|
+| **Development** | `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app` | [/docs](https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/docs) |
+| **Staging** | `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app` | [/docs](https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/docs) |
+| **Production** | `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app` | [/docs](https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/docs) |
+
+**Health Check Endpoints:**
+- Development: `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/health`
+- Staging: `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/health`
+- Production: `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/health`
+
+**OpenAPI JSON:**
+- Development: `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/openapi.json`
+- Staging: `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/openapi.json`
+- Production: `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/openapi.json`
+
 ## Base conventions
 
 - JSON request/response
@@ -22,6 +40,8 @@ For the full, machine-readable contract:
   - Analyze + persist evidence: `POST /api/v1/content/analyze`
   - Refresh sources (deltas): `POST /api/v1/content/refresh?analysis_id=...`
   - Get analysis + evidence: `GET /api/v1/content/analysis/{analysis_id}`
+  - Content sentiment analysis: `POST /api/v1/content/analyze-sentiment`
+  - URL analysis: `POST /api/v1/content/analyze-url`
 - Enhanced keyword analysis: `POST /api/v1/keywords/enhanced`
 - Field enhancement (SEO title/meta/slug/alt text): `POST /api/v1/content/enhance-fields`
 - Image generation: `POST /api/v1/images/generate`
@@ -75,9 +95,33 @@ Purpose: fetch and cache review/listing/social/sentiment evidence per content ca
 - Hooks in `frontend-starter/lib/api/hooks.ts`: `useAnalyzeContent`, `useRefreshContentSources`, `useContentAnalysis`.
 - Include the category/entity identifiers so the correct sources are hit (Tripadvisor `url_path`, Trustpilot `domain`, Google `cid`/`hotel_identifier`, `canonical_url` for social).
 
+## Content sentiment analysis
+
+- `POST /api/v1/content/analyze-sentiment` — analyzes content sentiment, brand mentions, and engagement signals
+  - Sentiment analysis (positive, negative, neutral)
+  - Brand mentions and citations
+  - Engagement signals and scores
+  - Top topics and domains
+  - Content summary with brand awareness metrics (if `include_summary=True`)
+
+## URL analysis
+
+- `POST /api/v1/content/analyze-url` — quick URL analysis and content extraction
+  - Fetches URL and extracts text content
+  - Provides quick analysis summary
+  - Useful for content research and analysis
+
+## Usage logging and attribution
+
+- All AI operations automatically log usage to Firestore (when configured)
+- Usage logs include attribution fields: `usage_source`, `usage_client`, `request_id`
+- Attribution extracted from HTTP headers (`x-usage-source`, `x-usage-client`, `x-request-id`) or request context
+- Collection naming: `ai_usage_logs_{environment}` (e.g., `ai_usage_logs_dev`, `ai_usage_logs_prod`)
+
 ## Env/config notes
 
 - Required for DataForSEO: `DATAFORSEO_API_KEY`, `DATAFORSEO_API_SECRET`.
-- Storage: code currently supports Supabase (if configured) or in-memory fallback; Firestore can be added as an alternative store if desired.
+- Storage: code currently supports Supabase (if configured) or in-memory fallback; Firestore is supported for usage logging and evidence storage.
+- Firestore usage logging: requires Firebase Admin SDK credentials (via `GOOGLE_APPLICATION_CREDENTIALS` or `FIREBASE_SERVICE_ACCOUNT_KEY_PATH`).
 - Monitoring: schedule refresh via `POST /api/v1/content/refresh` per `analysis_id` to avoid re-spending credits.
 

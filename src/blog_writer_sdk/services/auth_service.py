@@ -1,7 +1,7 @@
 """
 Authentication Service for JWT Token Verification
 
-This module provides JWT token verification using Supabase Auth.
+This module provides JWT token verification using Supabase Auth and Firebase Auth.
 """
 
 import os
@@ -16,6 +16,14 @@ try:
 except ImportError:
     create_client = None
     Client = None
+
+try:
+    import firebase_admin
+    from firebase_admin import auth as firebase_auth
+    FIREBASE_AUTH_AVAILABLE = True
+except ImportError:
+    FIREBASE_AUTH_AVAILABLE = False
+    firebase_auth = None
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
@@ -75,12 +83,52 @@ class AuthService:
         """
         Verify JWT token and return user information.
         
+        Supports both Firebase ID tokens and Supabase tokens.
+        Tries Firebase first, then falls back to Supabase.
+        
         Args:
-            token: JWT token string
+            token: JWT token string (Firebase ID token or Supabase token)
             
         Returns:
             User information dict with 'id', 'email', 'role', etc., or None if invalid
         """
+        # Try Firebase token verification first
+        if FIREBASE_AUTH_AVAILABLE and firebase_auth:
+            try:
+                decoded_token = firebase_auth.verify_id_token(token)
+                user_id = decoded_token['uid']
+                email = decoded_token.get('email', '')
+                
+                # Get user role from Firestore
+                profile = await self._get_firebase_user_profile(user_id)
+                
+                if profile:
+                    role = profile.get('role', 'admin').lower()  # Default to admin for Firebase users
+                    return {
+                        'id': user_id,
+                        'email': email,
+                        'role': role,
+                        'name': profile.get('name'),
+                        'status': profile.get('status', 'active')
+                    }
+                else:
+                    # Default to admin if no profile found (for backward compatibility)
+                    logger.info(f"Firebase user {user_id} has no profile, defaulting to admin role")
+                    return {
+                        'id': user_id,
+                        'email': email,
+                        'role': 'admin',  # Default for Firebase users without profile
+                        'name': decoded_token.get('name'),
+                        'status': 'active'
+                    }
+            except ValueError as e:
+                # Invalid Firebase token format, try Supabase
+                logger.debug(f"Firebase token verification failed (invalid format): {e}, trying Supabase...")
+            except Exception as e:
+                # Other Firebase errors, try Supabase
+                logger.debug(f"Firebase token verification failed: {e}, trying Supabase...")
+        
+        # Fall back to Supabase verification
         if not self.supabase_client:
             # Fallback to placeholder for development
             logger.warning("Supabase not configured, using placeholder authentication")
@@ -124,6 +172,29 @@ class AuthService:
             return None
         except Exception as e:
             logger.error(f"Token verification failed: {e}")
+            return None
+    
+    async def _get_firebase_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user profile from Firestore."""
+        if not FIREBASE_AUTH_AVAILABLE:
+            return None
+        
+        try:
+            from ..integrations.firebase_config_client import get_firebase_config_client
+            
+            db = get_firebase_config_client().db
+            if not db:
+                return None
+            
+            doc_ref = db.collection('users').document(user_id)
+            doc = doc_ref.get()
+            
+            if doc.exists:
+                data = doc.to_dict()
+                return data
+            return None
+        except Exception as e:
+            logger.debug(f"Failed to get Firebase user profile: {e}")
             return None
     
     def _get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:

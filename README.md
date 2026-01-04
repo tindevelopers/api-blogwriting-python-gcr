@@ -6,9 +6,9 @@ A comprehensive Python API for AI-driven blog writing with advanced SEO optimiza
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Version**: 1.3.2  
-**Publish date**: 2025-11-15  
-**Last deployment test**: 2025-11-16 (develop branch - permissions fixed)  
+**Version**: 1.3.6  
+**Publish date**: 2025-12-20  
+**Last deployment test**: 2025-12-20 (staging merged to develop and main)  
 See the full [CHANGELOG](CHANGELOG.md) for details.
 
 ## 🚀 Features
@@ -25,6 +25,10 @@ See the full [CHANGELOG](CHANGELOG.md) for details.
 - **🏷️ Meta Tag Generation**: Automatic SEO meta tags and Open Graph tags
 - **🏗️ Content Structure Optimization**: Heading hierarchy and internal linking
 - **🔄 Provider Fallback**: Automatic failover between AI providers for reliability
+- **📊 Firestore Usage Logging**: Comprehensive AI usage tracking with attribution (usage_source, usage_client, request_id)
+- **💎 Premium Evidence-Tier Endpoints**: Evidence-backed review and social content generation with DataForSEO integration
+- **🔬 Content Analysis & Sentiment**: Category-based content analysis with evidence caching and sentiment analysis
+- **📝 Natural Blog Writing**: Dashboard-controlled prompts and natural writing modes
 
 ### Technical Excellence
 - **Modern Python**: Built with Python 3.9+ and modern async/await patterns
@@ -100,13 +104,20 @@ else:
 
 ### Using the REST API
 
+**Environment Endpoints:**
+- **Development**: `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app`
+- **Staging**: `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app`
+- **Production**: `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app`
+
 ```python
 import httpx
 
-# Generate a blog post via API
+# Generate a blog post via API (using production endpoint)
+BASE_URL = "https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app"
+
 async with httpx.AsyncClient() as client:
     response = await client.post(
-        "https://api-ai-blog-writer-613248238610.us-central1.run.app/api/v1/generate",
+        f"{BASE_URL}/api/v1/generate",
         json={
             "topic": "The Future of AI in Content Creation",
             "keywords": ["AI content", "automation", "writing tools"],
@@ -431,6 +442,31 @@ See [Enhanced Blog Generation Guide](PHASE1_PHASE2_IMPLEMENTATION.md) for detail
   - Categorizes topics: high priority, trending, low competition
   - Includes content gaps, related keywords, and estimated traffic potential
 
+### Content Analysis & Sentiment
+- `POST /api/v1/content/analyze` - **NEW**: Category-based content analysis with evidence caching
+  - Analyzes content and fetches evidence from DataForSEO (reviews, social signals, sentiment)
+  - Supports multiple content categories (entity_review, service_review, product_comparison)
+  - Returns analysis_id for reuse and evidence retrieval
+  - Caches evidence to avoid redundant DataForSEO calls
+- `POST /api/v1/content/refresh` - **NEW**: Refresh evidence sources for existing analysis (delta updates)
+- `GET /api/v1/content/analysis/{analysis_id}` - **NEW**: Retrieve stored analysis and evidence
+- `POST /api/v1/content/analyze-sentiment` - **NEW**: Content sentiment analysis with brand mentions and engagement signals
+  - Sentiment analysis (positive, negative, neutral)
+  - Brand mentions and citations
+  - Engagement signals and scores
+  - Top topics and domains
+- `POST /api/v1/content/analyze-url` - **NEW**: Quick URL analysis and content extraction
+
+### Premium Evidence-Tier Endpoints
+- `POST /api/v1/reviews/{review_type}/evidence` - **NEW**: Premium evidence-backed review generation
+  - Forces evidence-tier quality with DataForSEO integration
+  - Supports hotel, restaurant, product, and service reviews
+  - Uses Google Reviews, Tripadvisor, Trustpilot, and social signals
+- `POST /api/v1/social/generate-evidence` - **NEW**: Premium evidence-backed social content generation
+  - Generates social posts grounded in fetched signals
+  - Uses DataForSEO social signals, sentiment analysis, and LLM responses
+  - Supports multiple platforms (Twitter, LinkedIn, Facebook, Instagram)
+
 ### Integrations (Target-Agnostic)
 - `POST /api/v1/integrations/connect-and-recommend`  
   Accepts a `provider` label (e.g., `webflow`, `wordpress`, `medium`, `shopify`, `custom`), an opaque `connection` object, and a set of `keywords`.  
@@ -514,6 +550,19 @@ Deployments now run **only** through Cloud Build triggers:
 Manual scripts such as `deploy.sh`/`scripts/deploy.sh` are intentionally disabled.
 See [CLOUD_RUN_REGION_POLICY.md](CLOUD_RUN_REGION_POLICY.md) for details and
 instructions on manually retriggering a build if needed.
+
+### Environment Endpoints
+
+| Environment | Service Name | Region | Base URL | Documentation |
+|------------|--------------|--------|----------|---------------|
+| **Development** | `blog-writer-api-dev` | `europe-west9` | `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app` | [/docs](https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/docs) |
+| **Staging** | `blog-writer-api-staging` | `europe-west9` | `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app` | [/docs](https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/docs) |
+| **Production** | `blog-writer-api-prod` | `us-east1` | `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app` | [/docs](https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/docs) |
+
+**Health Check Endpoints:**
+- Development: `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/health`
+- Staging: `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/health`
+- Production: `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/health`
 
 **Benefits of Cloud Run:**
 - **Serverless & Auto-scaling**: Pay only when generating content
@@ -661,7 +710,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-- **Documentation**: [Full API Docs](https://api-ai-blog-writer-613248238610.us-central1.run.app/docs)
+### API Documentation (Interactive)
+- **Development**: [Dev API Docs](https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/docs)
+- **Staging**: [Staging API Docs](https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/docs)
+- **Production**: [Production API Docs](https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/docs)
+
+### Resources
 - **Issues**: [GitHub Issues](https://github.com/tindevelopers/api-blogwriting-python-gcr/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/tindevelopers/api-blogwriting-python-gcr/discussions)
 
@@ -699,4 +753,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Ready to revolutionize your content creation process? Get started with the Blog Writer SDK today!
 
-**Last deployment test**: 2025-11-16 (main branch - SERP analysis fixes merged)
+**Last deployment test**: 2025-12-20 (staging merged to develop and main - Firestore usage logging, premium evidence endpoints, content analysis)

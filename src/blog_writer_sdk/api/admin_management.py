@@ -47,6 +47,9 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Admin Management"])
 class SecretMetadata(BaseModel):
     """Secret metadata (without value)."""
     name: str
+    type: Optional[str] = Field(default="api_key", description="Secret type: api_key, connection_string, password, token, other")
+    last_updated: Optional[str] = None
+    synced: bool = Field(default=True, description="Whether secret is synced from GCP")
     create_time: Optional[str] = None
     labels: Dict[str, str] = Field(default_factory=dict)
     version_count: int = 0
@@ -227,40 +230,75 @@ def get_project_id() -> str:
     return project_id
 
 
-@router.get("/secrets", response_model=List[SecretMetadata])
+@router.get("/secrets")
 async def list_secrets(
     admin: Dict = Depends(require_admin),
     request: Request = None
 ):
     """
-    List all secrets (names only, not values).
+    List all secrets synced from Google Cloud Secrets Manager.
     
-    Returns a list of secret metadata without exposing secret values.
+    Returns secrets stored in Firestore (synced secrets) in the format expected by the dashboard.
+    Falls back to GCP Secret Manager if Firestore is not available.
     """
     try:
+        # Try to get synced secrets from Firestore first
+        try:
+            from ..integrations.firebase_config_client import get_firebase_config_client
+            
+            db = get_firebase_config_client().db
+            if db:
+                secrets_ref = db.collection('secrets')
+                docs = secrets_ref.stream()
+                
+                secrets = []
+                for doc in docs:
+                    data = doc.to_dict()
+                    secrets.append({
+                        "name": data.get('name', doc.id),
+                        "type": data.get('type', 'api_key'),
+                        "last_updated": data.get('last_updated').isoformat() if hasattr(data.get('last_updated'), 'isoformat') else str(data.get('last_updated', '')),
+                        "synced": data.get('synced_from_gcp', True)
+                    })
+                
+                await log_admin_action(
+                    admin["id"], "read", "secrets", None, None, None, request
+                )
+                
+                return {"secrets": secrets}
+        except Exception as firestore_error:
+            logger.debug(f"Failed to get secrets from Firestore: {firestore_error}, falling back to GCP")
+        
+        # Fallback to GCP Secret Manager
         client = get_secret_manager_client()
         project_id = get_project_id()
         parent = f"projects/{project_id}"
         
         secrets = []
         for secret in client.list_secrets(request={"parent": parent}):
-            # Get version count
-            versions = list(client.list_secret_versions(
-                request={"parent": secret.name, "filter": "state:ENABLED"}
-            ))
+            secret_name = secret.name.split("/")[-1]
             
-            secrets.append(SecretMetadata(
-                name=secret.name.split("/")[-1],
-                create_time=secret.create_time.isoformat() if secret.create_time else None,
-                labels=dict(secret.labels) if secret.labels else {},
-                version_count=len(versions)
-            ))
+            # Determine secret type from name
+            secret_type = "api_key"
+            if "CONNECTION" in secret_name.upper() or "DATABASE" in secret_name.upper():
+                secret_type = "connection_string"
+            elif "PASSWORD" in secret_name.upper():
+                secret_type = "password"
+            elif "TOKEN" in secret_name.upper():
+                secret_type = "token"
+            
+            secrets.append({
+                "name": secret_name,
+                "type": secret_type,
+                "last_updated": secret.create_time.isoformat() if secret.create_time else None,
+                "synced": False  # Not synced to Firestore yet
+            })
         
         await log_admin_action(
             admin["id"], "read", "secrets", None, None, None, request
         )
         
-        return secrets
+        return {"secrets": secrets}
         
     except google_exceptions.PermissionDenied:
         raise HTTPException(status_code=403, detail="Permission denied to access secrets")
@@ -504,7 +542,22 @@ async def sync_secrets(
                     os.environ[secret_name] = value
                     logger.info(f"Synced secret '{secret_name}' version {version} to environment")
                     
-                    # Optional: Save metadata to Firestore (not the value itself)
+                    # Determine secret type from name
+                    secret_type = "api_key"
+                    if "CONNECTION" in secret_name.upper() or "DATABASE" in secret_name.upper():
+                        secret_type = "connection_string"
+                    elif "PASSWORD" in secret_name.upper():
+                        secret_type = "password"
+                    elif "TOKEN" in secret_name.upper():
+                        secret_type = "token"
+                    
+                    # Save to Firestore for dashboard access
+                    try:
+                        await sync_secret_to_firestore(secret_name, value, version, secret_type)
+                    except Exception as firestore_error:
+                        logger.warning(f"Failed to sync secret to Firestore for {secret_name}: {firestore_error}")
+                    
+                    # Also save metadata (for backward compatibility)
                     try:
                         await sync_secret_metadata(secret_name, version)
                     except Exception as meta_error:
@@ -573,6 +626,7 @@ async def sync_secrets(
             f"(dry_run={data.dry_run}) by {admin['email']}"
         )
         
+        # Return response matching dashboard expectations
         return SecretSyncResponse(
             synced_count=len(synced_secrets),
             synced_secrets=synced_secrets,
@@ -589,6 +643,44 @@ async def sync_secrets(
         logger.error(f"Secrets sync failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Secrets sync failed: {str(e)}")
 
+
+async def sync_secret_to_firestore(secret_name: str, secret_value: str, version: str, secret_type: str = "api_key"):
+    """
+    Sync secret to Firestore for dashboard access.
+    
+    Stores both metadata and value in Firestore for backend consumption tracking.
+    
+    Args:
+        secret_name: Name of the secret
+        secret_value: Secret value
+        version: Version number from Secret Manager
+        secret_type: Type of secret (api_key, connection_string, password, token, other)
+    """
+    try:
+        from ..integrations.firebase_config_client import get_firebase_config_client
+        
+        db = get_firebase_config_client().db
+        if not db:
+            logger.warning("Firestore not available, skipping secret sync")
+            return
+        
+        doc_ref = db.collection('secrets').document(secret_name)
+        
+        doc_ref.set({
+            'name': secret_name,
+            'value': secret_value,  # Store value for backend consumption
+            'type': secret_type,
+            'version': version,
+            'last_updated': datetime.utcnow(),
+            'synced_from_gcp': True,
+            'gcp_secret_name': secret_name,
+        }, merge=True)
+        
+        logger.info(f"Synced secret '{secret_name}' to Firestore")
+        
+    except Exception as e:
+        logger.warning(f"Failed to sync secret to Firestore for {secret_name}: {e}")
+        # Don't fail the entire sync if Firestore update fails
 
 async def sync_secret_metadata(secret_name: str, version: str):
     """

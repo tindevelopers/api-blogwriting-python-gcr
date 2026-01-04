@@ -54,28 +54,60 @@ python3 scripts/seed_default_prompts_firestore.py
 
 ### Testing
 
+**Environment Endpoints:**
+- **Development**: `https://blog-writer-api-dev-kq42l26tuq-od.a.run.app`
+- **Staging**: `https://blog-writer-api-staging-kq42l26tuq-od.a.run.app`
+- **Production**: `https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app`
+
 ```bash
-# Get service URL
-SERVICE_URL=$(gcloud run services describe blog-writer-api \
+# Get service URL (Development)
+DEV_URL=$(gcloud run services describe blog-writer-api-dev \
   --region europe-west9 --format="value(status.url)")
 
-# Test health
-curl $SERVICE_URL/health
+# Get service URL (Staging)
+STAGING_URL=$(gcloud run services describe blog-writer-api-staging \
+  --region europe-west9 --format="value(status.url)")
 
-# Test API
-curl $SERVICE_URL/docs
-curl $SERVICE_URL/api/v1/prompts/styles
+# Get service URL (Production)
+PROD_URL=$(gcloud run services describe blog-writer-api-prod \
+  --region us-east1 --format="value(status.url)")
+
+# Test health (all environments)
+curl https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/health
+curl https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/health
+curl https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/health
+
+# Test API documentation
+curl https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/docs
+curl https://blog-writer-api-staging-kq42l26tuq-od.a.run.app/docs
+curl https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/docs
+
+# Test API endpoints
+curl https://blog-writer-api-prod-kq42l26tuq-ue.a.run.app/api/v1/prompts/styles
 ```
 
 ### Monitoring
 
 ```bash
-# View logs
+# View logs (Development)
 gcloud logging tail "resource.type=cloud_run_revision AND \
-  resource.labels.service_name=blog-writer-api"
+  resource.labels.service_name=blog-writer-api-dev" \
+  --project=api-ai-blog-writer
 
-# Check service status
-gcloud run services describe blog-writer-api --region europe-west9
+# View logs (Staging)
+gcloud logging tail "resource.type=cloud_run_revision AND \
+  resource.labels.service_name=blog-writer-api-staging" \
+  --project=api-ai-blog-writer
+
+# View logs (Production)
+gcloud logging tail "resource.type=cloud_run_revision AND \
+  resource.labels.service_name=blog-writer-api-prod" \
+  --project=api-ai-blog-writer
+
+# Check service status (all environments)
+gcloud run services describe blog-writer-api-dev --region europe-west9 --project=api-ai-blog-writer
+gcloud run services describe blog-writer-api-staging --region europe-west9 --project=api-ai-blog-writer
+gcloud run services describe blog-writer-api-prod --region us-east1 --project=api-ai-blog-writer
 ```
 
 ---
@@ -162,6 +194,92 @@ POST /api/v1/blog/generate-enhanced
     "engagement_style": "conversational"
   }
 }
+```
+
+### Content Analysis & Sentiment
+
+```bash
+# Analyze content with evidence caching
+POST /api/v1/content/analyze
+{
+  "content": "article body text...",
+  "org_id": "org123",
+  "user_id": "user456",
+  "content_format": "review",
+  "content_category": "entity_review",
+  "entity_name": "Hotel Example",
+  "google_cid": "123456789",
+  "tripadvisor_url_path": "/Hotel_Review-..."
+}
+
+# Refresh evidence sources (delta updates)
+POST /api/v1/content/refresh?analysis_id=abc123
+{
+  "content": "article body text...",
+  "org_id": "org123",
+  "user_id": "user456",
+  "content_format": "review",
+  "content_category": "entity_review",
+  "entity_name": "Hotel Example"
+}
+
+# Get stored analysis and evidence
+GET /api/v1/content/analysis/{analysis_id}
+
+# Analyze content sentiment
+POST /api/v1/content/analyze-sentiment
+{
+  "keyword": "your brand or topic",
+  "location": "United States",
+  "language": "en",
+  "limit": 10,
+  "include_summary": true
+}
+
+# Analyze URL content
+POST /api/v1/content/analyze-url
+{
+  "url": "https://example.com/article"
+}
+```
+
+### Premium Evidence-Tier Endpoints
+
+```bash
+# Generate evidence-backed review
+POST /api/v1/reviews/{review_type}/evidence
+# review_type: hotel, restaurant, product, service
+{
+  "entity_name": "Hotel Example",
+  "google_cid": "123456789",
+  "tripadvisor_url_path": "/Hotel_Review-...",
+  "trustpilot_domain": "example.com",
+  "canonical_url": "https://example.com/hotel"
+}
+
+# Generate evidence-backed social content
+POST /api/v1/social/generate-evidence
+{
+  "topic": "Your campaign topic",
+  "platforms": ["twitter", "linkedin"],
+  "entity_name": "Your Brand",
+  "canonical_url": "https://example.com",
+  "campaign_goal": "engagement",
+  "variants": 3
+}
+```
+
+### Usage Logging
+
+```bash
+# Usage logs automatically tracked in Firestore
+# Collection: ai_usage_logs_{environment}
+# Includes attribution: usage_source, usage_client, request_id
+
+# Set attribution headers for tracking
+x-usage-source: dashboard
+x-usage-client: web-app
+x-request-id: req-12345
 ```
 
 ---
@@ -459,6 +577,7 @@ Your deployment is successful when:
 **Version:** 1.0  
 **Last Updated:** January 1, 2026  
 **Status:** Production Ready ✅
+
 
 
 
