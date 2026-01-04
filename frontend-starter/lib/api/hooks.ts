@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type BlogGenerateRequest, type BlogGenerateResponse } from './client';
+import { api, type BlogGenerateRequest, type BlogGenerateResponse, type ContentAnalysisRequest } from './client';
 
 // Health check hook
 export function useHealth() {
@@ -79,6 +79,52 @@ export function useCheckQuality() {
       if (error) throw error;
       return data;
     },
+  });
+}
+
+// Content analysis (category routing)
+export function useAnalyzeContent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (request: ContentAnalysisRequest) => {
+      const { data, error } = await api.analyzeContent(request);
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data?.analysis_id) {
+        queryClient.invalidateQueries({ queryKey: ['content-analysis', data.analysis_id] });
+      }
+    },
+  });
+}
+
+export function useRefreshContentSources() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ analysisId, request }: { analysisId: string; request: ContentAnalysisRequest }) => {
+      const { data, error } = await api.refreshContentSources(analysisId, request);
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data?.analysis_id) {
+        queryClient.invalidateQueries({ queryKey: ['content-analysis', data.analysis_id] });
+      }
+    },
+  });
+}
+
+export function useContentAnalysis(analysisId?: string) {
+  return useQuery({
+    queryKey: ['content-analysis', analysisId],
+    queryFn: async () => {
+      if (!analysisId) return null;
+      const { data, error } = await api.getContentAnalysis(analysisId);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!analysisId,
   });
 }
 

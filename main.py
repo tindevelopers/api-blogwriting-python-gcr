@@ -105,6 +105,7 @@ from src.blog_writer_sdk.api.field_enhancement import router as field_enhancemen
 from src.blog_writer_sdk.api.publishing_management import router as publishing_router
 from src.blog_writer_sdk.api.admin_management import router as admin_router
 from src.blog_writer_sdk.api.content_validation import router as content_validation_router
+from src.blog_writer_sdk.api.content_analysis_routing import router as content_analysis_router
 from src.blog_writer_sdk.api.keyword_streaming import (
     KeywordSearchStage,
     create_stage_update,
@@ -1005,6 +1006,8 @@ app.include_router(integrations_router)
 app.include_router(user_management_router)
 # Include field enhancement router
 app.include_router(field_enhancement_router)
+# Include content analysis router (DataForSEO Business Data + CA)
+app.include_router(content_analysis_router)
 # Include publishing management router
 app.include_router(publishing_router)
 # Include admin management router (secrets, logs, usage, jobs)
@@ -1342,7 +1345,8 @@ async def generate_blog_via_gateway(request: AIGatewayBlogRequest):
 async def polish_blog_content(
     content: str = Query(..., description="Content to polish"),
     instructions: str = Query(default="Ensure professional tone, remove artifacts", description="Polishing instructions"),
-    org_id: str = Query(default="default", description="Organization ID")
+    org_id: str = Query(default="default", description="Organization ID"),
+    analysis_id: Optional[str] = Query(default=None, description="Existing analysis_id to reuse evidence (optional)")
 ):
     """
     Polish and clean blog content using AI.
@@ -1352,6 +1356,8 @@ async def polish_blog_content(
     """
     try:
         ai_gateway = get_ai_gateway()
+        if analysis_id:
+            logger.info(f"Polish requested with analysis_id={analysis_id} (evidence reuse handled upstream).")
         result = await ai_gateway.polish_content(
             content=content,
             instructions=instructions,

@@ -64,6 +64,18 @@ export const api = {
     client.DELETE('/api/v1/admin/secrets/{name}', {
       params: { path: { name } }
     }),
+
+  // Content Analysis & Routing
+  analyzeContent: (body: ContentAnalysisRequest) =>
+    client.POST('/api/v1/content/analyze', { body }),
+
+  refreshContentSources: (analysisId: string, body: ContentAnalysisRequest) =>
+    client.POST('/api/v1/content/refresh', { body, params: { query: { analysis_id: analysisId } } }),
+
+  getContentAnalysis: (analysisId: string) =>
+    client.GET('/api/v1/content/analysis/{analysis_id}', {
+      params: { path: { analysis_id: analysisId } }
+    }),
 };
 
 // Type exports
@@ -139,6 +151,45 @@ export type SecretSyncResponse = {
   failed: SecretSyncResult[];
   timestamp: string;
   synced_by: string;
+};
+
+// Content analysis routing types
+export type ContentFormatChoice =
+  | 'blog'
+  | 'listicle'
+  | 'article'
+  | 'how_to'
+  | 'review'
+  | 'rating'
+  | 'todo';
+
+export type ContentCategory =
+  | 'entity_review'
+  | 'service_review'
+  | 'product_comparison';
+
+export type EntityType =
+  | 'hotel'
+  | 'restaurant'
+  | 'attraction'
+  | 'local_business'
+  | 'event'
+  | 'service'
+  | 'product';
+
+export type ContentAnalysisRequest = {
+  content: string;
+  org_id: string;
+  user_id: string;
+  content_format: ContentFormatChoice;
+  content_category: ContentCategory;
+  entity_type?: EntityType;
+  entity_name?: string;
+  google_cid?: string;
+  google_hotel_identifier?: string;
+  tripadvisor_url_path?: string;
+  trustpilot_domain?: string;
+  canonical_url?: string;
 };
 
 export default client;

@@ -16,6 +16,10 @@ For the full, machine-readable contract:
 - Health: `GET /health`
 - Standard generation: `POST /api/v1/generate`
 - Enhanced blog generation: `POST /api/v1/blog/generate-enhanced`
+- Content analysis (category-based, DataForSEO-backed):
+  - Analyze + persist evidence: `POST /api/v1/content/analyze`
+  - Refresh sources (deltas): `POST /api/v1/content/refresh?analysis_id=...`
+  - Get analysis + evidence: `GET /api/v1/content/analysis/{analysis_id}`
 - Enhanced keyword analysis: `POST /api/v1/keywords/enhanced`
 - Field enhancement (SEO title/meta/slug/alt text): `POST /api/v1/content/enhance-fields`
 - Image generation: `POST /api/v1/images/generate`
@@ -25,4 +29,48 @@ For the full, machine-readable contract:
 
 Some routes may require auth depending on environment configuration. Use the OpenAPI schema + backend env config as the source of truth.
 
+
+## Content analysis routes (new)
+
+Purpose: fetch and cache review/listing/social/sentiment evidence per content category (entity reviews, service reviews, product comparisons) using DataForSEO Business Data, Content Analysis, Social, Merchant.
+
+### `POST /api/v1/content/analyze`
+- Body:
+  - `content` (string) – the article body (used for hashing/cache; not re-fetched)
+  - `org_id` (string), `user_id` (string)
+  - `content_format` ("blog" | "listicle" | "article" | "how_to" | "review" | "rating" | "todo")
+  - `content_category` ("entity_review" | "service_review" | "product_comparison")
+  - `entity_type` (optional; "hotel" | "restaurant" | "attraction" | "local_business" | "event" | "service" | "product")
+  - Identifiers as applicable:
+    - `google_cid`, `google_hotel_identifier`, `tripadvisor_url_path`, `trustpilot_domain`, `canonical_url`, `entity_name`
+- Returns: `{ analysis_id, content_id, evidence_count, bundle }`
+- Behavior: pulls category-specific sources, stores evidence + analysis summary for reuse.
+
+### `POST /api/v1/content/refresh?analysis_id=...`
+- Body: same shape as analyze (identifiers required); `analysis_id` in query.
+- Returns: `{ analysis_id, new_evidence }`
+- Use: scheduled refresh (weekly/bi-weekly) to pick up new reviews/social/sentiment without re-analyzing unchanged content.
+
+### `GET /api/v1/content/analysis/{analysis_id}`
+- Returns: `{ analysis, evidence }`
+- Use: dashboard/frontend can display stored evidence and analysis summary.
+
+## Polish reuse
+
+- `POST /api/v1/blog/polish` now accepts optional query `analysis_id` so the caller can signal reuse of existing evidence/analysis context (no extra DataForSEO calls are triggered by polish itself, but the ID lets us correlate runs).
+
+## Frontend usage (Next.js starter)
+
+- New client methods in `frontend-starter/lib/api/client.ts`:
+  - `api.analyzeContent(body: ContentAnalysisRequest)`
+  - `api.refreshContentSources(analysisId, body)`
+  - `api.getContentAnalysis(analysisId)`
+- Hooks in `frontend-starter/lib/api/hooks.ts`: `useAnalyzeContent`, `useRefreshContentSources`, `useContentAnalysis`.
+- Include the category/entity identifiers so the correct sources are hit (Tripadvisor `url_path`, Trustpilot `domain`, Google `cid`/`hotel_identifier`, `canonical_url` for social).
+
+## Env/config notes
+
+- Required for DataForSEO: `DATAFORSEO_API_KEY`, `DATAFORSEO_API_SECRET`.
+- Storage: code currently supports Supabase (if configured) or in-memory fallback; Firestore can be added as an alternative store if desired.
+- Monitoring: schedule refresh via `POST /api/v1/content/refresh` per `analysis_id` to avoid re-spending credits.
 
