@@ -33,6 +33,10 @@ BEGIN
                 cost_usd DECIMAL(10, 6) DEFAULT 0,
                 latency_ms INTEGER DEFAULT 0,
                 cached BOOLEAN DEFAULT false,
+                -- Usage attribution (for dashboard filtering)
+                usage_source TEXT DEFAULT ''unknown'',
+                usage_client TEXT DEFAULT ''unknown'',
+                request_id TEXT DEFAULT ''unknown'',
                 metadata JSONB DEFAULT ''{}''::jsonb,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 
@@ -75,6 +79,16 @@ BEGIN
         EXECUTE format('
             CREATE INDEX IF NOT EXISTS idx_ai_usage_%s_cached 
             ON ai_usage_logs_%s(cached) WHERE cached = true;
+        ', env, env);
+
+        EXECUTE format('
+            CREATE INDEX IF NOT EXISTS idx_ai_usage_%s_usage_source
+            ON ai_usage_logs_%s(usage_source);
+        ', env, env);
+
+        EXECUTE format('
+            CREATE INDEX IF NOT EXISTS idx_ai_usage_%s_usage_client
+            ON ai_usage_logs_%s(usage_client);
         ', env, env);
         
         RAISE NOTICE 'Created ai_usage_logs_% table and indexes', env;

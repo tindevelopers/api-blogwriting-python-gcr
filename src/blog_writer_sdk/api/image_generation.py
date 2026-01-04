@@ -609,6 +609,7 @@ async def generate_image_async(
     """
     
     try:
+        from ..monitoring.request_context import get_usage_attribution
         # Create job
         job_id = str(uuid.uuid4())
         is_draft = request.quality.value == "draft"
@@ -637,7 +638,8 @@ async def generate_image_async(
         task_name = cloud_tasks_service.create_image_generation_task(
             request_data={
                 "job_id": job_id,
-                "request": request.dict()
+                "request": request.dict(),
+                "usage": get_usage_attribution(),
             },
             worker_url=worker_url,
             queue_name=os.getenv("CLOUD_TASKS_IMAGE_QUEUE_NAME", "image-generation-queue")
@@ -717,6 +719,7 @@ async def generate_image_stream(
     async def generate_stream():
         try:
             global image_generation_jobs
+            from ..monitoring.request_context import get_usage_attribution
             
             # Create async job
             job_id = str(uuid.uuid4())
@@ -756,7 +759,8 @@ async def generate_image_stream(
                 task_name = cloud_tasks_service.create_image_generation_task(
                     request_data={
                         "job_id": job_id,
-                        "request": request.dict()
+                        "request": request.dict(),
+                        "usage": get_usage_attribution(),
                     },
                     worker_url=worker_url,
                     queue_name=os.getenv("CLOUD_TASKS_IMAGE_QUEUE_NAME", "image-generation-queue")
@@ -918,7 +922,16 @@ async def image_generation_worker(request: Dict[str, Any]):
     This endpoint should not be called directly by clients.
     """
     try:
+        from ..monitoring.request_context import set_usage_attribution
         global image_generation_jobs
+
+        usage = request.get("usage") if isinstance(request, dict) else None
+        if isinstance(usage, dict):
+            set_usage_attribution(
+                usage_source=usage.get("usage_source"),
+                usage_client=usage.get("usage_client"),
+                request_id=usage.get("request_id"),
+            )
         
         # Extract job_id and request data
         job_id = request.get("job_id")
@@ -1010,6 +1023,7 @@ async def batch_generate_images(request: BatchImageGenerationRequest):
     import uuid
     
     try:
+        from ..monitoring.request_context import get_usage_attribution
         batch_id = str(uuid.uuid4())
         job_ids = []
         
@@ -1043,7 +1057,8 @@ async def batch_generate_images(request: BatchImageGenerationRequest):
             task_name = cloud_tasks_service.create_image_generation_task(
                 request_data={
                     "job_id": job_id,
-                    "request": image_request.dict()
+                    "request": image_request.dict(),
+                    "usage": get_usage_attribution(),
                 },
                 worker_url=worker_url,
                 queue_name=os.getenv("CLOUD_TASKS_IMAGE_QUEUE_NAME", "image-generation-queue")

@@ -35,6 +35,9 @@ psutil>=5.9.0
 # Google Cloud Logging
 google-cloud-logging>=3.8.0
 
+# Firebase Admin SDK (Firestore)
+firebase-admin>=6.5.0
+
 # HTTP client for image generation
 aiohttp>=3.9.0
 

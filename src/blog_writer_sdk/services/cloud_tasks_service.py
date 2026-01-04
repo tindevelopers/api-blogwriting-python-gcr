@@ -80,11 +80,22 @@ class CloudTasksService:
             return "in-memory-task-placeholder"
             
         try:
+            headers = {"Content-Type": "application/json"}
+            # If attribution is present in payload, also send it as headers (useful for proxy logging).
+            usage = request_data.get("usage") if isinstance(request_data, dict) else None
+            if isinstance(usage, dict):
+                if usage.get("usage_source"):
+                    headers["x-usage-source"] = str(usage.get("usage_source"))
+                if usage.get("usage_client"):
+                    headers["x-usage-client"] = str(usage.get("usage_client"))
+                if usage.get("request_id"):
+                    headers["x-request-id"] = str(usage.get("request_id"))
+
             # Prepare HTTP request
             http_request = tasks_v2.HttpRequest(
                 http_method=tasks_v2.HttpMethod.POST,
                 url=worker_url,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 body=json.dumps(request_data).encode()
             )
             
@@ -135,11 +146,21 @@ class CloudTasksService:
             queue_path = self.client.queue_path(self.project_id, self.location, queue_name)
         
         try:
+            headers = {"Content-Type": "application/json"}
+            usage = request_data.get("usage") if isinstance(request_data, dict) else None
+            if isinstance(usage, dict):
+                if usage.get("usage_source"):
+                    headers["x-usage-source"] = str(usage.get("usage_source"))
+                if usage.get("usage_client"):
+                    headers["x-usage-client"] = str(usage.get("usage_client"))
+                if usage.get("request_id"):
+                    headers["x-request-id"] = str(usage.get("request_id"))
+
             # Prepare HTTP request
             http_request = tasks_v2.HttpRequest(
                 http_method=tasks_v2.HttpMethod.POST,
                 url=worker_url,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 body=json.dumps(request_data).encode()
             )
             

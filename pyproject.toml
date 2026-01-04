@@ -59,6 +59,8 @@ dependencies = [
     # Image generation dependencies
     "aiohttp>=3.9.0",
     "google-cloud-logging>=3.8.0",
+    # Firebase Admin SDK (Firestore)
+    "firebase-admin>=6.5.0",
     # New dependencies for credential management
     "google-cloud-secret-manager>=2.16.0",
     "cryptography>=41.0.0",

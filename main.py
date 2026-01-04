@@ -1122,6 +1122,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Capture usage attribution headers for every request (dashboard usage filters).
+from src.blog_writer_sdk.monitoring.request_context import set_usage_attribution_from_headers
+
+
+@app.middleware("http")
+async def usage_attribution_middleware(request: Request, call_next):
+    # Always bucket missing fields as "unknown" so aggregations are stable.
+    set_usage_attribution_from_headers(request.headers)
+    return await call_next(request)
+
 # Include AI provider management router
 app.include_router(ai_provider_router)
 
@@ -1586,6 +1596,8 @@ async def generate_blog_enhanced(
     start_time = time.time()
     
     try:
+        from src.blog_writer_sdk.monitoring.request_context import get_usage_attribution
+
         # Get global clients
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
@@ -1621,7 +1633,8 @@ async def generate_blog_enhanced(
                 task_name = cloud_tasks_service.create_blog_generation_task(
                     request_data={
                         "job_id": job_id,
-                        "request": request.dict()
+                        "request": request.dict(),
+                        "usage": get_usage_attribution(),
                     },
                     worker_url=worker_url
                 )
@@ -2433,10 +2446,20 @@ async def blog_generation_worker(request: Dict[str, Any]):
     This endpoint should not be called directly by clients.
     """
     try:
+        from src.blog_writer_sdk.monitoring.request_context import set_usage_attribution
         global blog_generation_jobs
         global google_custom_search_client, readability_analyzer, citation_generator, serp_analyzer
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
+
+        # If the enqueueing request provided attribution, apply it for all AI logs in this job.
+        usage = request.get("usage") if isinstance(request, dict) else None
+        if isinstance(usage, dict):
+            set_usage_attribution(
+                usage_source=usage.get("usage_source"),
+                usage_client=usage.get("usage_client"),
+                request_id=usage.get("request_id"),
+            )
         
         # Extract job_id and request data
         job_id = request.get("job_id")
@@ -3285,6 +3308,7 @@ async def generate_blog_enhanced_stream(
     async def generate_stream():
         try:
             global blog_generation_jobs
+            from src.blog_writer_sdk.monitoring.request_context import get_usage_attribution
             
             # Stage 1: Create async job
             job_id = str(uuid.uuid4())
@@ -3320,7 +3344,8 @@ async def generate_blog_enhanced_stream(
                 task_name = cloud_tasks_service.create_blog_generation_task(
                     request_data={
                         "job_id": job_id,
-                        "request": request.dict()
+                        "request": request.dict(),
+                        "usage": get_usage_attribution(),
                     },
                     worker_url=worker_url
                 )
@@ -7884,13 +7909,52 @@ async def delete_batch_job(job_id: str):
 
 # Monitoring and Metrics Endpoints
 @app.get("/api/v1/metrics")
-async def get_metrics():
-    """Get comprehensive system metrics."""
+async def get_metrics(
+    org_id: Optional[str] = None,
+    days: int = Query(default=30, le=365),
+):
+    """Get comprehensive system metrics (+ optional AI usage breakdowns)."""
     metrics_collector = get_metrics_collector()
     if not metrics_collector:
         raise HTTPException(status_code=503, detail="Metrics collector not available")
     
-    return metrics_collector.get_metrics_summary()
+    summary = metrics_collector.get_metrics_summary()
+
+    # Optional: include AI usage breakdowns (used by dashboard filtering)
+    usage_logger = get_usage_logger()
+    if usage_logger.enabled and org_id:
+        try:
+            ai_stats = await usage_logger.get_usage_stats(
+                org_id=org_id,
+                start_date=datetime.utcnow() - timedelta(days=days),
+                end_date=datetime.utcnow(),
+            )
+            summary["ai_usage"] = {
+                "org_id": org_id,
+                "days": days,
+                "total_cost": ai_stats.get("total_cost_usd", 0),
+                "requests": ai_stats.get("total_requests", 0),
+                "tokens": ai_stats.get("total_tokens", 0),
+                "usage_by_source": ai_stats.get("usage_by_source", {}) or {},
+                "usage_by_client": ai_stats.get("usage_by_client", {}) or {},
+            }
+        except Exception as e:
+            summary["ai_usage"] = {
+                "org_id": org_id,
+                "days": days,
+                "enabled": usage_logger.enabled,
+                "error": str(e),
+                "usage_by_source": {},
+                "usage_by_client": {},
+            }
+    else:
+        summary["ai_usage"] = {
+            "enabled": bool(getattr(usage_logger, "enabled", False)),
+            "usage_by_source": {},
+            "usage_by_client": {},
+        }
+
+    return summary
 
 
 @app.get("/api/v1/health/detailed")

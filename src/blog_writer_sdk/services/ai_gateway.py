@@ -19,6 +19,8 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
+from ..monitoring.request_context import get_usage_attribution
+
 try:
     from litellm import acompletion
     LITELLM_AVAILABLE = True
@@ -101,7 +103,8 @@ class AIGateway:
         model: str,
         response: Any,
         latency_ms: int,
-        cached: bool = False
+        cached: bool = False,
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """Log usage to database if logger is available."""
         if self._usage_logger and hasattr(response, 'usage'):
@@ -115,7 +118,8 @@ class AIGateway:
                     completion_tokens=response.usage.completion_tokens,
                     cost_usd=calculate_cost(model, response.usage),
                     latency_ms=latency_ms,
-                    cached=cached
+                    cached=cached,
+                    metadata=metadata,
                 )
             except Exception as e:
                 logger.error(f"Failed to log usage: {e}")
@@ -154,6 +158,7 @@ class AIGateway:
                 return await self._fallback_generate(messages, model, temperature, max_tokens)
             
             # Build request kwargs
+            attribution = get_usage_attribution()
             kwargs = {
                 "model": model,
                 "messages": messages,
@@ -167,6 +172,8 @@ class AIGateway:
                     "operation": "content_generation",
                     "tags": ["blog", "generation"],
                     "timestamp": datetime.utcnow().isoformat(),
+                    # Usage attribution (set from incoming request headers)
+                    **attribution,
                     **(metadata or {})
                 }
             }
@@ -185,7 +192,16 @@ class AIGateway:
             cached = getattr(response, '_hidden_params', {}).get('cache_hit', False)
             
             # Log usage
-            await self._log_usage(org_id, user_id, "content_generation", model, response, latency_ms, cached)
+            await self._log_usage(
+                org_id,
+                user_id,
+                "content_generation",
+                model,
+                response,
+                latency_ms,
+                cached,
+                metadata=kwargs.get("metadata"),
+            )
             
             logger.info(f"Generated content: {len(content)} chars, model: {model}, org: {org_id}, latency: {latency_ms}ms")
             
