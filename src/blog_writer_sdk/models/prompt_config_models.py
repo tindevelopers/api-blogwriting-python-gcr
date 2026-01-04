@@ -216,3 +216,6 @@ class WritingStyleUpdateRequest(BaseModel):
     formality_level: Optional[int] = Field(None, ge=1, le=10)
     example_style: Optional[str] = None
 
+
+
+

@@ -12,11 +12,13 @@ import asyncio
 import uuid
 import math
 import json
+import re
 import base64
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
 import jwt
+import httpx
 
 # Track startup time for uptime calculation
 startup_time = time.time()
@@ -155,6 +157,132 @@ from src.blog_writer_sdk.services.quota_manager import QuotaManager
 from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
 from src.blog_writer_sdk.utils.text_utils import extract_excerpt
+
+
+# ------------------------------------------------------------------------------
+# New content-type models (reviews, social, email, competitive analysis)
+# ------------------------------------------------------------------------------
+
+
+class ReviewType(str, Enum):
+    PRODUCT = "product"
+    COMPANY = "company"
+    LOCAL_BUSINESS = "local-business"
+    EVENT = "event"
+
+
+class ReviewQualityTier(str, Enum):
+    """Cost/quality tradeoff for review generation."""
+    BASIC = "basic"          # cheapest: LLM-only (no external evidence)
+    EVIDENCE = "evidence"    # higher quality: pull external evidence (DataForSEO) + cite sources
+
+
+class ReviewRequest(BaseModel):
+    entity_name: str = Field(..., description="Name of the product/company/site being reviewed")
+    entity_url: Optional[str] = Field(None, description="URL of the entity")
+    quality_tier: ReviewQualityTier = Field(
+        default=ReviewQualityTier.BASIC,
+        description="basic = LLM-only, evidence = pull external evidence (DataForSEO) + cite sources",
+    )
+    # Optional tracking (defaults used if omitted)
+    org_id: Optional[str] = Field(None, description="Org id for usage tracking (optional)")
+    user_id: Optional[str] = Field(None, description="User id for usage tracking (optional)")
+    # Optional evidence identifiers (used when quality_tier='evidence')
+    entity_type: Optional[str] = Field(
+        None,
+        description="Optional entity type (e.g., restaurant, hotel, local_business, service, product). Used to pick evidence bundle.",
+    )
+    google_cid: Optional[str] = Field(None, description="Google Business Profile CID (for pulling Google reviews)")
+    tripadvisor_url_path: Optional[str] = Field(None, description="Tripadvisor url_path for reviews endpoint")
+    trustpilot_domain: Optional[str] = Field(None, description="Trustpilot domain for reviews endpoint")
+    canonical_url: Optional[str] = Field(None, description="Canonical URL for social evidence (FB/Pinterest/Reddit)")
+    industry: Optional[str] = None
+    category: Optional[str] = None
+    location: Optional[str] = None
+    target_audience: Optional[str] = None
+    tone: str = Field("professional", description="Tone of voice")
+    word_count: int = Field(800, ge=200, le=3000)
+    include_citations: bool = Field(True, description="Request citations in output")
+    rating_methodology: Optional[str] = Field(None, description="e.g., evidence_based, hands_on, aggregated_reviews")
+    comparison_entities: Optional[List[str]] = Field(None, description="Optional list of other entities to contrast against")
+    keywords: Optional[List[str]] = Field(None, description="Optional keywords to weave in")
+
+
+class ReviewSection(BaseModel):
+    title: str
+    content_markdown: str
+    excerpt: Optional[str] = None
+    schema_org: Optional[Dict[str, Any]] = None
+    citations: Optional[List[Dict[str, str]]] = None
+    comparison_table_md: Optional[str] = None
+    warnings: List[str] = []
+
+
+class SocialRequest(BaseModel):
+    platforms: List[str] = Field(..., description="e.g., ['twitter','linkedin','instagram']")
+    campaign_goal: Optional[str] = None
+    cta_url: Optional[str] = None
+    brand_voice: Optional[str] = "friendly"
+    variants: int = Field(3, ge=1, le=10)
+    max_chars: Optional[int] = Field(None, ge=40, le=1000)
+    include_hashtags: bool = True
+    topic: str = Field(..., description="Topic or offer to promote")
+    target_audience: Optional[str] = None
+    # Optional tracking/evidence hints (used by premium route)
+    org_id: Optional[str] = None
+    user_id: Optional[str] = None
+    entity_name: Optional[str] = Field(None, description="Entity or brand name for evidence lookup")
+    canonical_url: Optional[str] = Field(None, description="Canonical URL to fetch social signals (FB/Pinterest/Reddit)")
+
+
+class SocialPost(BaseModel):
+    platform: str
+    text: str
+    hashtags: Optional[List[str]] = None
+    hook: Optional[str] = None
+
+
+class EmailCampaignRequest(BaseModel):
+    campaign_type: str = Field("newsletter", description="newsletter | promo | drip")
+    emails_count: int = Field(3, ge=1, le=10)
+    offer: Optional[str] = None
+    audience_segment: Optional[str] = None
+    personalization_tokens: Optional[List[str]] = None
+    tone: str = Field("friendly", description="Tone of voice")
+    topic: str = Field(..., description="Campaign topic or theme")
+    include_subject_variants: bool = True
+
+
+class EmailMessage(BaseModel):
+    subject_lines: List[str]
+    preview_text: Optional[str] = None
+    html_body: str
+    markdown_body: str
+
+
+class EmailCampaignResponse(BaseModel):
+    sequence: List[EmailMessage]
+    warnings: List[str] = []
+
+
+class AnalyzeUrlRequest(BaseModel):
+    url: str
+    target_audience: Optional[str] = None
+    keywords: Optional[List[str]] = None
+
+
+class CompetitiveGapRequest(BaseModel):
+    keyword: str
+    location: Optional[str] = "United States"
+    language: Optional[str] = "en"
+    top_n: int = Field(5, ge=1, le=20)
+
+
+class DomainSummaryRequest(BaseModel):
+    domain: str
+    location: Optional[str] = "United States"
+    language: Optional[str] = "en"
+    top_n: int = Field(5, ge=1, le=20)
 
 
 # ------------------------------------------------------------------------------
@@ -7799,6 +7927,609 @@ async def clear_cache(pattern: Optional[str] = None):
         # Clear all cache
         count = await cache_manager.clear_pattern("blogwriter:*")
         return {"success": True, "cleared_items": count, "message": "All cache cleared"}
+
+
+# ------------------------------------------------------------------------------
+# New content-type endpoints: reviews, social, email, analysis
+# ------------------------------------------------------------------------------
+
+
+def _default_org_user() -> Dict[str, str]:
+    """Return default org/user for unauthenticated flows."""
+    return {"org_id": "default", "user_id": "system"}
+
+
+def _org_user_from_request(maybe_org_id: Optional[str], maybe_user_id: Optional[str]) -> Dict[str, str]:
+    """Resolve org/user for tracking (fallback to defaults)."""
+    ids = _default_org_user()
+    if maybe_org_id:
+        ids["org_id"] = maybe_org_id
+    if maybe_user_id:
+        ids["user_id"] = maybe_user_id
+    return ids
+
+
+def _source_links_from_review_request(req: "ReviewRequest") -> List[Dict[str, str]]:
+    """Best-effort source links from known identifiers (used both for prompting + response citations)."""
+    sources: List[Dict[str, str]] = []
+    if req.google_cid:
+        sources.append(
+            {
+                "source": "google",
+                "title": f"Google reviews for {req.entity_name}",
+                "url": f"https://www.google.com/maps?cid={req.google_cid}",
+            }
+        )
+    if req.tripadvisor_url_path:
+        path = req.tripadvisor_url_path.lstrip("/")
+        sources.append(
+            {
+                "source": "tripadvisor",
+                "title": f"Tripadvisor reviews for {req.entity_name}",
+                "url": f"https://www.tripadvisor.com/{path}",
+            }
+        )
+    if req.trustpilot_domain:
+        sources.append(
+            {
+                "source": "trustpilot",
+                "title": f"Trustpilot reviews for {req.entity_name}",
+                "url": f"https://www.trustpilot.com/review/{req.trustpilot_domain}",
+            }
+        )
+    if req.canonical_url:
+        sources.append({"source": "canonical", "title": f"Canonical page for {req.entity_name}", "url": req.canonical_url})
+    elif req.entity_url:
+        sources.append({"source": "canonical", "title": f"Official page for {req.entity_name}", "url": req.entity_url})
+    return sources
+
+
+def _parse_sources_section(markdown: str) -> List[Dict[str, str]]:
+    """
+    Parse a trailing '## Sources' section with bullets:
+    - Title — https://...
+    """
+    if not markdown:
+        return []
+    m = re.search(r"^##\s+Sources\s*$([\s\S]+)$", markdown, flags=re.IGNORECASE | re.MULTILINE)
+    if not m:
+        return []
+    section = m.group(1)
+    citations: List[Dict[str, str]] = []
+    for line in section.splitlines():
+        line = line.strip()
+        if not line.startswith("-"):
+            continue
+        mm = re.match(r"^-\s*(.+?)\s+[—-]\s+(https?://\S+)\s*$", line)
+        if not mm:
+            continue
+        title = mm.group(1).strip()
+        url = mm.group(2).strip().rstrip(").,")
+        citations.append({"source": "external", "title": title, "url": url})
+    return citations
+
+
+def _make_excerpt(text: str, length: int = 240) -> str:
+    """Create a short excerpt from text."""
+    if not text:
+        return ""
+    clean = re.sub(r"\s+", " ", text).strip()
+    return clean[: length] + ("..." if len(clean) > length else "")
+
+
+@app.post("/api/v1/reviews/{review_type}", response_model=ReviewSection)
+async def generate_review(review_type: ReviewType, request: ReviewRequest):
+    """
+    Generate review-style content for product/company/local-business/event.
+    """
+    ai_gateway = get_ai_gateway()
+    ids = _org_user_from_request(request.org_id, request.user_id)
+
+    comparison_hint = ""
+    if request.comparison_entities:
+        comparison_hint = f"\nCompare against: {', '.join(request.comparison_entities[:5])}."
+
+    citation_hint = "Include citations with source title + URL." if request.include_citations else "Citations optional; focus on clarity."
+    keywords = ", ".join(request.keywords or [])
+
+    system_prompt = (
+        "You are an expert reviewer. Write fair, evidence-based reviews with clear pros/cons. "
+        "Use markdown with H2/H3 structure. Keep tone concise and trustworthy."
+    )
+
+    evidence_block = ""
+    warnings: List[str] = []
+    if request.quality_tier == ReviewQualityTier.EVIDENCE:
+        try:
+            from src.blog_writer_sdk.services.content_analysis_service import ContentAnalysisService
+            from src.blog_writer_sdk.models.content_routing_models import (
+                ContentAnalysisRequest as RoutedContentAnalysisRequest,
+                ContentFormatChoice,
+                ContentCategory,
+                EntityType,
+            )
+
+            category_map = {
+                ReviewType.PRODUCT: ContentCategory.PRODUCT_COMPARISON,
+                ReviewType.COMPANY: ContentCategory.SERVICE_REVIEW,
+                ReviewType.LOCAL_BUSINESS: ContentCategory.ENTITY_REVIEW,
+                ReviewType.EVENT: ContentCategory.ENTITY_REVIEW,
+            }
+            content_category = category_map.get(review_type, ContentCategory.ENTITY_REVIEW)
+
+            entity_type_enum = None
+            if request.entity_type:
+                try:
+                    entity_type_enum = EntityType(request.entity_type.lower())
+                except Exception:
+                    warnings.append(
+                        f"Unknown entity_type '{request.entity_type}', ignoring (supported: {', '.join([e.value for e in EntityType])})."
+                    )
+
+            analysis_req = RoutedContentAnalysisRequest(
+                content=f"Review: {request.entity_name}\nURL: {request.entity_url or 'n/a'}",
+                org_id=ids["org_id"],
+                user_id=ids["user_id"],
+                content_format=ContentFormatChoice.REVIEW,
+                content_category=content_category,
+                entity_type=entity_type_enum,
+                entity_name=request.entity_name,
+                google_cid=request.google_cid,
+                tripadvisor_url_path=request.tripadvisor_url_path,
+                trustpilot_domain=request.trustpilot_domain,
+                canonical_url=request.canonical_url or request.entity_url,
+            )
+            service = ContentAnalysisService()
+            analysis_result = await service.analyze(analysis_req)
+            analysis_id = analysis_result.get("analysis_id")
+            evidence = await service.evidence_store.list_evidence(analysis_id) if analysis_id else []
+
+            compact = []
+            for ev in (evidence or [])[:20]:
+                payload = ev.get("payload", {})
+                compact.append(
+                    {
+                        "source": ev.get("source"),
+                        "endpoint": ev.get("endpoint"),
+                        "entity_ref": ev.get("entity_ref"),
+                        "payload_preview": json.dumps(payload, default=str)[:2500],
+                    }
+                )
+
+            source_links = _source_links_from_review_request(request)
+            evidence_payload = {"analysis_id": analysis_id, "sources": source_links, "evidence": compact}
+            evidence_block = "\n\nEVIDENCE (external sources; do not invent beyond this):\n" + json.dumps(
+                evidence_payload, indent=2
+            )[:12000]
+
+            if request.include_citations and not source_links:
+                warnings.append(
+                    "quality_tier='evidence' enabled but no source identifiers were provided (google_cid/tripadvisor_url_path/trustpilot_domain/canonical_url)."
+                )
+        except Exception as e:
+            warnings.append(f"Evidence enrichment failed; falling back to basic generation: {e}")
+            evidence_block = ""
+    user_prompt = f"""Review Type: {review_type.value}
+Entity: {request.entity_name}
+URL: {request.entity_url or 'n/a'}
+Industry/Category: {request.industry or request.category or 'n/a'}
+Location: {request.location or 'n/a'}
+Target Audience: {request.target_audience or 'general'}
+Tone: {request.tone}
+Word Count Target: {request.word_count}
+Keywords: {keywords}
+Rating methodology: {request.rating_methodology or 'balanced, evidence-based'}
+{comparison_hint}
+
+Content requirements:
+- Start with an H1 title.
+- Provide an overview, key features, pros/cons, pricing/value, best-for.
+- If multiple entities, add a comparison table (markdown) with clear rows/columns.
+- {citation_hint}
+- If you include citations, add a final '## Sources' section with bullet lines formatted exactly as: `- Title — https://example.com`.
+- Return ONLY markdown content (no code fences)."""
+
+    user_prompt += evidence_block
+
+    content = await ai_gateway.generate_content(
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        org_id=ids["org_id"],
+        user_id=ids["user_id"],
+        max_tokens=min(6000, int(request.word_count * 6)),
+        temperature=0.5,
+    )
+
+    excerpt = _make_excerpt(content)
+    citations = _parse_sources_section(content)
+    if request.include_citations and not citations:
+        citations = _source_links_from_review_request(request)
+    response = ReviewSection(
+        title=request.entity_name,
+        content_markdown=content,
+        excerpt=excerpt,
+        schema_org=None,
+        citations=citations,
+        comparison_table_md=None,
+        warnings=warnings,
+    )
+    return response
+
+
+@app.post("/api/v1/reviews/{review_type}/evidence", response_model=ReviewSection)
+async def generate_review_premium(review_type: ReviewType, request: ReviewRequest):
+    """
+    Premium review route: forces evidence-backed generation.
+    """
+    request.quality_tier = ReviewQualityTier.EVIDENCE
+    return await generate_review(review_type, request)
+
+
+@app.post("/api/v1/social/generate")
+async def generate_social_posts(request: SocialRequest) -> Dict[str, Any]:
+    """
+    Generate social media posts across platforms.
+    """
+    ai_gateway = get_ai_gateway()
+    ids = _default_org_user()
+    warnings: List[str] = []
+    posts: List[SocialPost] = []
+
+    for platform in request.platforms:
+        for idx in range(request.variants):
+            system_prompt = (
+                f"You are a social media copywriter for {platform}. Keep it engaging and concise. "
+                f"Use the brand voice: {request.brand_voice or 'friendly'}."
+            )
+            hashtag_note = "Include 2-4 relevant hashtags." if request.include_hashtags else "Do not include hashtags."
+            user_prompt = f"""Platform: {platform}
+Campaign goal: {request.campaign_goal or 'engagement'}
+CTA URL: {request.cta_url or 'n/a'}
+Target audience: {request.target_audience or 'general'}
+Topic: {request.topic}
+Max characters: {request.max_chars or 'default'}
+{hashtag_note}
+
+Write ONE post. If hashtags are included, put them at the end."""
+
+            text = await ai_gateway.generate_content(
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                org_id=ids["org_id"],
+                user_id=ids["user_id"],
+                max_tokens=400,
+                temperature=0.7,
+            )
+
+            if request.max_chars and len(text) > request.max_chars:
+                text = text[: request.max_chars - 1] + "…"
+                warnings.append(f"Truncated to max_chars for {platform}.")
+
+            hashtags = None
+            if request.include_hashtags:
+                hashtags = [tag for tag in re.findall(r"#\w+", text)]
+
+            posts.append(SocialPost(platform=platform, text=text.strip(), hashtags=hashtags, hook=None))
+
+    return {"posts": [p.dict() for p in posts], "warnings": warnings}
+
+
+@app.post("/api/v1/social/generate-evidence")
+async def generate_social_posts_evidence(request: SocialRequest) -> Dict[str, Any]:
+    """
+    Premium social: inject external evidence (DataForSEO social signals + sentiment/LLM responses) before generation.
+    """
+    ai_gateway = get_ai_gateway()
+    ids = _org_user_from_request(request.org_id, request.user_id)
+    warnings: List[str] = []
+    posts: List[SocialPost] = []
+
+    evidence_block = ""
+    try:
+        from src.blog_writer_sdk.services.content_analysis_service import ContentAnalysisService
+        from src.blog_writer_sdk.models.content_routing_models import (
+            ContentAnalysisRequest as RoutedContentAnalysisRequest,
+            ContentFormatChoice,
+            ContentCategory,
+        )
+
+        # Use ENTITY_REVIEW bundle to pick up social signals; entity_name/topic drives sentiment/LLM sources.
+        analysis_req = RoutedContentAnalysisRequest(
+            content=f"Social campaign: {request.topic}",
+            org_id=ids["org_id"],
+            user_id=ids["user_id"],
+            content_format=ContentFormatChoice.REVIEW,
+            content_category=ContentCategory.ENTITY_REVIEW,
+            entity_type=None,
+            entity_name=request.entity_name or request.topic,
+            google_cid=None,
+            tripadvisor_url_path=None,
+            trustpilot_domain=None,
+            canonical_url=request.canonical_url or request.cta_url,
+        )
+        service = ContentAnalysisService()
+        analysis_result = await service.analyze(analysis_req)
+        analysis_id = analysis_result.get("analysis_id")
+        evidence = await service.evidence_store.list_evidence(analysis_id) if analysis_id else []
+
+        compact = []
+        for ev in (evidence or [])[:20]:
+            payload = ev.get("payload", {})
+            compact.append(
+                {
+                    "source": ev.get("source"),
+                    "endpoint": ev.get("endpoint"),
+                    "entity_ref": ev.get("entity_ref"),
+                    "payload_preview": json.dumps(payload, default=str)[:2000],
+                }
+            )
+        evidence_block = "\n\nEVIDENCE (external signals; do not invent beyond this):\n" + json.dumps(
+            {"analysis_id": analysis_id, "evidence": compact}, indent=2
+        )[:8000]
+
+        if not request.canonical_url and not request.cta_url:
+            warnings.append("No canonical_url/cta_url provided; social signals may be limited.")
+    except Exception as e:
+        warnings.append(f"Evidence enrichment failed; proceeding without evidence: {e}")
+        evidence_block = ""
+
+    for platform in request.platforms:
+        for idx in range(request.variants):
+            system_prompt = (
+                f"You are a social media copywriter for {platform}. Keep it engaging and concise. "
+                f"Use the brand voice: {request.brand_voice or 'friendly'}."
+            )
+            hashtag_note = "Include 2-4 relevant hashtags." if request.include_hashtags else "Do not include hashtags."
+            user_prompt = f"""Platform: {platform}
+Campaign goal: {request.campaign_goal or 'engagement'}
+CTA URL: {request.cta_url or 'n/a'}
+Target audience: {request.target_audience or 'general'}
+Topic: {request.topic}
+Max characters: {request.max_chars or 'default'}
+{hashtag_note}
+
+Use the evidence below to ground the post. Do not fabricate sources.
+{evidence_block}
+
+Write ONE post. If hashtags are included, put them at the end."""
+
+            text = await ai_gateway.generate_content(
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                org_id=ids["org_id"],
+                user_id=ids["user_id"],
+                max_tokens=400,
+                temperature=0.7,
+            )
+
+            if request.max_chars and len(text) > request.max_chars:
+                text = text[: request.max_chars - 1] + "…"
+                warnings.append(f"Truncated to max_chars for {platform}.")
+
+            hashtags = None
+            if request.include_hashtags:
+                hashtags = [tag for tag in re.findall(r"#\w+", text)]
+
+            posts.append(SocialPost(platform=platform, text=text.strip(), hashtags=hashtags, hook=None))
+
+    return {"posts": [p.dict() for p in posts], "warnings": warnings}
+
+@app.post("/api/v1/email/generate-campaign", response_model=EmailCampaignResponse)
+async def generate_email_campaign(request: EmailCampaignRequest) -> EmailCampaignResponse:
+    """
+    Generate a multi-email campaign (subject, preview, body).
+    """
+    ai_gateway = get_ai_gateway()
+    ids = _default_org_user()
+    warnings: List[str] = []
+    sequence: List[EmailMessage] = []
+
+    for idx in range(request.emails_count):
+        system_prompt = (
+            f"You are an expert email copywriter. Campaign type: {request.campaign_type}. "
+            f"Tone: {request.tone}. Include clear CTA and concise copy."
+        )
+        user_prompt = f"""Email #{idx+1} of {request.emails_count}
+Topic: {request.topic}
+Offer: {request.offer or 'n/a'}
+Audience: {request.audience_segment or 'general'}
+Personalization tokens: {', '.join(request.personalization_tokens or []) or 'none'}
+Include subject line, preview text, HTML body, and Markdown body.
+Format exactly:
+SUBJECT: <subject>
+PREVIEW: <preview>
+HTML:
+<html>...</html>
+MARKDOWN:
+..."""
+
+        raw = await ai_gateway.generate_content(
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            org_id=ids["org_id"],
+            user_id=ids["user_id"],
+            max_tokens=1200,
+            temperature=0.65,
+        )
+
+        subject_lines: List[str] = []
+        preview_text = ""
+        html_body = ""
+        markdown_body = raw
+
+        subject_match = re.search(r"SUBJECT:\s*(.+)", raw)
+        if subject_match:
+            subject_lines = [subject_match.group(1).strip()]
+        preview_match = re.search(r"PREVIEW:\s*(.+)", raw)
+        if preview_match:
+            preview_text = preview_match.group(1).strip()
+        html_match = re.search(r"HTML:\s*(.*)MARKDOWN:", raw, re.DOTALL | re.IGNORECASE)
+        if html_match:
+            html_body = html_match.group(1).strip()
+        markdown_match = re.search(r"MARKDOWN:\s*(.*)", raw, re.DOTALL | re.IGNORECASE)
+        if markdown_match:
+            markdown_body = markdown_match.group(1).strip()
+
+        if request.include_subject_variants and subject_lines:
+            try:
+                extra = await ai_gateway.generate_content(
+                    messages=[
+                        {"role": "system", "content": "Generate 2 alternative subject lines. Return as bullet list."},
+                        {"role": "user", "content": f"Base subject: {subject_lines[0]}"},
+                    ],
+                    org_id=ids["org_id"],
+                    user_id=ids["user_id"],
+                    max_tokens=200,
+                    temperature=0.8,
+                )
+                for line in extra.splitlines():
+                    cleaned = line.strip(" -•").strip()
+                    if cleaned:
+                        subject_lines.append(cleaned)
+            except Exception as e:
+                warnings.append(f"Subject variants generation failed: {e}")
+
+        sequence.append(
+            EmailMessage(
+                subject_lines=subject_lines or ["(no subject)"],
+                preview_text=preview_text,
+                html_body=html_body or "<html><body>" + markdown_body + "</body></html>",
+                markdown_body=markdown_body,
+            )
+        )
+
+    return EmailCampaignResponse(sequence=sequence, warnings=warnings)
+
+
+@app.post("/api/v1/content/analyze-url")
+async def analyze_url(request: AnalyzeUrlRequest) -> Dict[str, Any]:
+    """
+    Fetch a URL, extract text, and provide a quick analysis summary.
+    """
+    ai_gateway = get_ai_gateway()
+    ids = _default_org_user()
+    warnings: List[str] = []
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(request.url)
+            resp.raise_for_status()
+            html = resp.text
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch URL: {e}")
+
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="No extractable text found at URL.")
+
+    preview = text[:8000]  # limit tokens
+    summary = await ai_gateway.generate_content(
+        messages=[
+            {"role": "system", "content": "You are an SEO/content auditor. Summarize and score content."},
+            {
+                "role": "user",
+                "content": f"""URL: {request.url}
+Target audience: {request.target_audience or 'general'}
+Keywords: {', '.join(request.keywords or [])}
+
+Content:
+{preview}
+
+Provide:
+- 2 sentence summary
+- 3 improvement recommendations
+- Approximate quality/readability/seo scores (0-100)""",
+            },
+        ],
+        org_id=ids["org_id"],
+        user_id=ids["user_id"],
+        max_tokens=500,
+        temperature=0.3,
+    )
+
+    return {
+        "url": request.url,
+        "word_count": len(text.split()),
+        "content_preview": preview[:500],
+        "analysis": summary,
+        "warnings": warnings,
+    }
+
+
+@app.post("/api/v1/seo/competitive-gap")
+async def competitive_gap(request: CompetitiveGapRequest) -> Dict[str, Any]:
+    """
+    Lightweight competitive gap analysis via DataForSEO (if configured).
+    """
+    if not dataforseo_client_global or not getattr(dataforseo_client_global, "is_configured", False):
+        return {
+            "keyword": request.keyword,
+            "serp": {},
+            "warnings": ["DataForSEO client not configured; cannot run competitive gap analysis."],
+        }
+
+    warnings: List[str] = []
+    serp_data: Dict[str, Any] = {}
+    try:
+        serp = await dataforseo_client_global.get_serp_analysis(
+            keyword=request.keyword,
+            location_name=request.location or "United States",
+            language_code=request.language or "en",
+            tenant_id="default",
+            depth=max(10, request.top_n),
+            include_people_also_ask=True,
+            include_featured_snippets=True,
+        )
+        serp_data = serp or {}
+    except Exception as e:
+        warnings.append(f"SERP analysis failed: {e}")
+
+    return {"keyword": request.keyword, "serp": serp_data, "warnings": warnings}
+
+
+@app.post("/api/v1/seo/top-pages")
+async def seo_top_pages(request: DomainSummaryRequest) -> Dict[str, Any]:
+    """
+    Placeholder top-pages summary. Returns warning if DataForSEO not configured.
+    """
+    if not dataforseo_client_global or not getattr(dataforseo_client_global, "is_configured", False):
+        return {
+            "domain": request.domain,
+            "pages": [],
+            "warnings": ["DataForSEO client not configured; cannot fetch top pages."],
+        }
+
+    warnings: List[str] = []
+    # If DataForSEO provides domain endpoints in your environment, plug them here.
+    try:
+        # Placeholder: actual implementation depends on available client methods.
+        pages = []  # type: List[Dict[str, Any]]
+    except Exception as e:
+        warnings.append(f"Top pages lookup failed: {e}")
+        pages = []
+
+    return {"domain": request.domain, "pages": pages, "warnings": warnings}
+
+
+@app.post("/api/v1/seo/domain-summary")
+async def seo_domain_summary(request: DomainSummaryRequest) -> Dict[str, Any]:
+    """
+    Placeholder domain summary. Returns warning if DataForSEO not configured.
+    """
+    if not dataforseo_client_global or not getattr(dataforseo_client_global, "is_configured", False):
+        return {
+            "domain": request.domain,
+            "summary": {},
+            "warnings": ["DataForSEO client not configured; cannot fetch domain summary."],
+        }
+
+    warnings: List[str] = []
+    summary: Dict[str, Any] = {}
+    try:
+        # Placeholder: actual implementation depends on available client methods.
+        summary = {}
+    except Exception as e:
+        warnings.append(f"Domain summary failed: {e}")
+        summary = {}
+
+    return {"domain": request.domain, "summary": summary, "warnings": warnings}
 
 
 # Cloud Run specific monitoring endpoint

@@ -16,6 +16,8 @@ For the full, machine-readable contract:
 - Health: `GET /health`
 - Standard generation: `POST /api/v1/generate`
 - Enhanced blog generation: `POST /api/v1/blog/generate-enhanced`
+- Premium review (evidence-backed): `POST /api/v1/reviews/{review_type}/evidence`
+- Premium social (evidence-backed): `POST /api/v1/social/generate-evidence`
 - Content analysis (category-based, DataForSEO-backed):
   - Analyze + persist evidence: `POST /api/v1/content/analyze`
   - Refresh sources (deltas): `POST /api/v1/content/refresh?analysis_id=...`
@@ -54,6 +56,11 @@ Purpose: fetch and cache review/listing/social/sentiment evidence per content ca
 ### `GET /api/v1/content/analysis/{analysis_id}`
 - Returns: `{ analysis, evidence }`
 - Use: dashboard/frontend can display stored evidence and analysis summary.
+
+## Premium evidence-backed generation
+
+- `POST /api/v1/reviews/{review_type}/evidence` — runs the review generator with DataForSEO-backed evidence (Google/Tripadvisor/Trustpilot/social + AI Optimization LLM Responses). Provide identifiers for best results: `google_cid`, `tripadvisor_url_path`, `trustpilot_domain`, `canonical_url`, `entity_name`.
+- `POST /api/v1/social/generate-evidence` — generates social copy grounded in fetched signals. Provide `canonical_url` (or at least `cta_url`) and `entity_name`/`topic` to improve evidence quality.
 
 ## Polish reuse
 

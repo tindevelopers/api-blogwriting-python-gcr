@@ -171,6 +171,37 @@ class DataForSEOClient:
         except Exception as e:
             logger.error(f"Error getting search intent: {e}")
             return {}
+
+    @monitor_performance("dataforseo_ai_opt_llm_responses_live")
+    async def llm_responses_live(
+        self,
+        platform: str,
+        prompt: str,
+        tenant_id: str,
+        model: Optional[str] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Call DataForSEO AI Optimization LLM Responses (Live).
+
+        platform: one of chat_gpt | claude | gemini | perplexity (per docs)
+        prompt: the user/system prompt to send
+        model: optional model name (platform-specific)
+        extra: optional extra parameters forwarded as-is
+        """
+        try:
+            payload_entry: Dict[str, Any] = {"prompt": prompt}
+            if model:
+                payload_entry["model"] = model
+            if extra:
+                payload_entry.update(extra)
+
+            payload = [payload_entry]
+            endpoint = f"ai_optimization/{platform}/llm_responses/live"
+            return await self._make_request(endpoint, payload, tenant_id, use_ai_format=False)
+        except Exception as e:
+            logger.error(f"Error calling AI Optimization LLM Responses (platform={platform}): {e}")
+            return {}
     
     async def _make_request(
         self,

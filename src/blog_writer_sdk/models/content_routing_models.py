@@ -196,6 +196,12 @@ ENTITY_REVIEW_BUNDLE = SourceBundle(
             identifier_keys=["entity_name"],
             live=True,
         ),
+        SourceEndpoint(
+            source=SourceName.AI_OPTIMIZATION,
+            endpoint="ai_optimization/perplexity/llm_responses/live",
+            identifier_keys=["entity_name"],
+            live=True,
+        ),
     ],
     notes="Best for hotels/restaurants/attractions entity reviews.",
 )
@@ -249,6 +255,12 @@ SERVICE_REVIEW_BUNDLE = SourceBundle(
         SourceEndpoint(
             source=SourceName.CONTENT_ANALYSIS,
             endpoint="content_analysis/sentiment_analysis/live",
+            identifier_keys=["entity_name"],
+            live=True,
+        ),
+        SourceEndpoint(
+            source=SourceName.AI_OPTIMIZATION,
+            endpoint="ai_optimization/perplexity/llm_responses/live",
             identifier_keys=["entity_name"],
             live=True,
         ),

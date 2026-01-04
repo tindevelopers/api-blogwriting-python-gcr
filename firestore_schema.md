@@ -232,3 +232,6 @@ If migrating from Supabase or existing system:
 5. Test configuration merge logic
 6. Update backend to read from Firestore
 
+
+
+

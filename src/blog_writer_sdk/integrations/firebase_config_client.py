@@ -535,3 +535,6 @@ def initialize_firebase_config_client(
     )
     return _firebase_client
 
+
+
+

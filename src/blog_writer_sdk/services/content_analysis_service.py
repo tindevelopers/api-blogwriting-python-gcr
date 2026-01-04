@@ -207,8 +207,19 @@ class ContentAnalysisService:
                     return await self.client.merchant_amazon_products(query, request.org_id)
 
             if endpoint.source == SourceName.AI_OPTIMIZATION:
-                # Placeholder: calling LLM Responses would require prompts; skip here
-                return {}
+                # Use AI Optimization LLM Responses (Live) as evidence (e.g., Perplexity/Claude/Gemini/ChatGPT)
+                platform = "perplexity"
+                try:
+                    parts = endpoint.endpoint.split("/")
+                    # expected: ai_optimization/<platform>/llm_responses/live
+                    if len(parts) >= 3:
+                        platform = parts[1] or platform
+                except Exception:
+                    pass
+                query = request.entity_name or request.canonical_url or ""
+                if not query:
+                    return {}
+                return await self.client.llm_responses_live(platform=platform, prompt=query, tenant_id=request.org_id)
 
             return {}
         except Exception as e:
