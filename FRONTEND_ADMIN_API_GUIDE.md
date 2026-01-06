@@ -306,12 +306,25 @@ export const adminApi = {
   /**
    * Get AI cost breakdown for an organization
    * 
-   * @param orgId - Organization ID (e.g., 'default')
+   * @param orgId - Organization ID (required, e.g., 'default')
    * @param days - Number of days to look back (default: 30, max: 365)
+   * @param includeRequests - Include request-level rows (default: false)
+   * @param limit - Cap request rows when includeRequests=true (default: 100, max: 1000)
    */
-  getAICosts: async (orgId: string, days: number = 30) => {
+  getAICosts: async (
+    orgId: string, 
+    days: number = 30,
+    includeRequests: boolean = false,
+    limit: number = 100
+  ) => {
+    const params = new URLSearchParams({
+      org_id: orgId,
+      days: days.toString(),
+      include_requests: includeRequests.toString(),
+      limit: limit.toString()
+    })
     return adminRequest<AICostBreakdown>(
-      `/api/v1/admin/ai/costs?org_id=${orgId}&days=${days}`
+      `/api/v1/admin/ai/costs?${params.toString()}`
     )
   },
 
@@ -458,11 +471,60 @@ Create `types/admin.ts`:
 
 export interface AICostBreakdown {
   org_id: string
-  days: number
-  total_cost: number
-  by_source: Record<string, number>
-  by_client: Record<string, number>
-  daily_costs?: DailyCost[]
+  period: {
+    start_date: string
+    end_date: string
+    days: number
+  }
+  summary: {
+    total_cost: number
+    total_requests: number
+    total_tokens: number
+    avg_cost_per_request: number
+    avg_tokens_per_request: number
+  }
+  by_provider: Array<{
+    provider_type: string
+    total_cost: number
+    total_requests: number
+    total_tokens: number
+    avg_cost_per_request: number
+    avg_latency_ms: number
+  }>
+  by_source: Record<string, {
+    total_cost: number
+    total_requests: number
+    total_tokens: number
+  }>
+  by_client: Record<string, {
+    total_cost: number
+    total_requests: number
+    total_tokens: number
+  }>
+  by_date: Array<{
+    date: string
+    total_cost: number
+    total_requests: number
+    total_tokens: number
+  }>
+  requests?: Array<{
+    request_id: string
+    job_id: string | null
+    timestamp: string
+    provider_type: string
+    model: string
+    cost: number
+    tokens: {
+      prompt: number
+      completion: number
+      total: number
+    }
+    latency_ms: number
+    status: string
+    usage_source: string
+    usage_client: string
+    org_id: string
+  }>
 }
 
 export interface DailyCost {

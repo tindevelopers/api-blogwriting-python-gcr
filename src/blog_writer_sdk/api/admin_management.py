@@ -41,6 +41,33 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Admin Management"])
 
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+def extract_provider_type(model: str) -> str:
+    """
+    Extract provider type from model name.
+    
+    Args:
+        model: Model name (e.g., "gpt-4o", "claude-3-5-sonnet")
+    
+    Returns:
+        Provider type string (e.g., "openai", "anthropic")
+    """
+    model_lower = model.lower()
+    if model_lower.startswith("gpt") or model_lower.startswith("o1"):
+        return "openai"
+    elif model_lower.startswith("claude"):
+        return "anthropic"
+    elif model_lower.startswith("gemini") or model_lower.startswith("palm"):
+        return "google"
+    elif model_lower.startswith("command") or model_lower.startswith("rerank"):
+        return "cohere"
+    else:
+        return "unknown"
+
+
+# ============================================================================
 # Request/Response Models
 # ============================================================================
 
@@ -1041,19 +1068,275 @@ async def get_ai_usage(
 
 @router.get("/ai/costs")
 async def get_ai_costs(
-    org_id: str,
-    days: int = Query(default=30, le=365),
+    org_id: str = Query(..., description="Tenant/organization ID"),
+    days: int = Query(default=30, ge=1, le=365, description="Lookback window in days"),
+    include_requests: bool = Query(default=False, description="Include request-level rows"),
+    limit: int = Query(default=100, ge=1, le=1000, description="Cap request rows when include_requests=true"),
     admin: Dict = Depends(require_admin)
 ):
     """
-    Get AI cost breakdown for an organization.
+    Get AI costs and consumption data for an organization.
+    
+    Returns comprehensive cost breakdown with multi-tenant isolation and drill-down
+    to individual requests. Matches BACKEND_COSTS_API_REQUIREMENTS.md contract.
+    
+    Args:
+        org_id: Required tenant/organization ID
+        days: Lookback window (default: 30, max: 365)
+        include_requests: Include request-level rows (default: false)
+        limit: Cap request rows when include_requests=true (default: 100, max: 1000)
+    
+    Returns:
+        Cost data with summary, by_provider, by_source, by_client, by_date, and optionally requests
     """
+    # Validate org_id
+    if not org_id or not org_id.strip():
+        raise HTTPException(status_code=422, detail="org_id is required")
+    
+    # Validate days
+    if days < 1:
+        raise HTTPException(status_code=422, detail="days must be positive")
+    
+    # Validate limit
+    if include_requests and (limit < 1 or limit > 1000):
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 1000")
+    
+    # Check admin access to org_id (basic check - can be enhanced)
+    admin_org_id = admin.get("org_id")
+    if admin_org_id and admin_org_id != org_id:
+        # Allow if admin has system_admin role
+        if admin.get("role", "").lower() != "system_admin":
+            raise HTTPException(status_code=403, detail=f"No access to org_id: {org_id}")
+    
     usage_logger = get_usage_logger()
     
-    if not usage_logger.enabled:
-        return {"error": "Usage logging not enabled", "enabled": False}
+    if not usage_logger.enabled or not usage_logger.client:
+        raise HTTPException(status_code=503, detail="Usage logging not enabled")
     
-    return await usage_logger.get_cost_breakdown(org_id=org_id, days=days)
+    try:
+        # Calculate date range
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days)
+        
+        # Get all records for the org and date range
+        table_name = usage_logger._get_table_name("ai_usage_logs")
+        
+        # Query all records
+        result = usage_logger.client.table(table_name)\
+            .select("*")\
+            .eq("org_id", org_id)\
+            .gte("created_at", start_date.isoformat())\
+            .lte("created_at", end_date.isoformat())\
+            .order("created_at", desc=True)\
+            .execute()
+        
+        records = result.data or []
+        
+        if not records:
+            # Return empty structure with zeroed totals
+            empty_response = {
+                "org_id": org_id,
+                "period": {
+                    "start_date": start_date.isoformat() + "Z",
+                    "end_date": end_date.isoformat() + "Z",
+                    "days": days
+                },
+                "summary": {
+                    "total_cost": 0.0,
+                    "total_requests": 0,
+                    "total_tokens": 0,
+                    "avg_cost_per_request": 0.0,
+                    "avg_tokens_per_request": 0
+                },
+                "by_provider": [],
+                "by_source": {},
+                "by_client": {},
+                "by_date": []
+            }
+            if include_requests:
+                empty_response["requests"] = []
+            return empty_response
+        
+        # Helper to get attribution value
+        def _get_attr(record: Dict, key: str, default: str = "unknown") -> str:
+            value = record.get(key)
+            if not value and isinstance(record.get("metadata"), dict):
+                value = record["metadata"].get(key)
+            return str(value).strip() if value else default
+        
+        # Aggregate by provider
+        by_provider_dict: Dict[str, Dict] = {}
+        for r in records:
+            model = r.get("model", "unknown")
+            provider_type = extract_provider_type(model)
+            
+            if provider_type not in by_provider_dict:
+                by_provider_dict[provider_type] = {
+                    "total_cost": 0.0,
+                    "total_requests": 0,
+                    "total_tokens": 0,
+                    "latency_sum": 0
+                }
+            
+            by_provider_dict[provider_type]["total_cost"] += float(r.get("cost_usd", 0) or 0)
+            by_provider_dict[provider_type]["total_requests"] += 1
+            by_provider_dict[provider_type]["total_tokens"] += int(r.get("total_tokens", 0) or 0)
+            by_provider_dict[provider_type]["latency_sum"] += int(r.get("latency_ms", 0) or 0)
+        
+        by_provider = [
+            {
+                "provider_type": provider_type,
+                "total_cost": round(data["total_cost"], 6),
+                "total_requests": data["total_requests"],
+                "total_tokens": data["total_tokens"],
+                "avg_cost_per_request": round(data["total_cost"] / max(data["total_requests"], 1), 6),
+                "avg_latency_ms": round(data["latency_sum"] / max(data["total_requests"], 1), 2)
+            }
+            for provider_type, data in sorted(by_provider_dict.items())
+        ]
+        
+        # Aggregate by source
+        by_source_dict: Dict[str, Dict] = {}
+        for r in records:
+            source = _get_attr(r, "usage_source", "unknown")
+            if source not in by_source_dict:
+                by_source_dict[source] = {"total_cost": 0.0, "total_requests": 0, "total_tokens": 0}
+            by_source_dict[source]["total_cost"] += float(r.get("cost_usd", 0) or 0)
+            by_source_dict[source]["total_requests"] += 1
+            by_source_dict[source]["total_tokens"] += int(r.get("total_tokens", 0) or 0)
+        
+        by_source = {
+            source: {
+                "total_cost": round(data["total_cost"], 6),
+                "total_requests": data["total_requests"],
+                "total_tokens": data["total_tokens"]
+            }
+            for source, data in sorted(by_source_dict.items())
+        }
+        
+        # Aggregate by client
+        by_client_dict: Dict[str, Dict] = {}
+        for r in records:
+            client = _get_attr(r, "usage_client", "unknown")
+            if client not in by_client_dict:
+                by_client_dict[client] = {"total_cost": 0.0, "total_requests": 0, "total_tokens": 0}
+            by_client_dict[client]["total_cost"] += float(r.get("cost_usd", 0) or 0)
+            by_client_dict[client]["total_requests"] += 1
+            by_client_dict[client]["total_tokens"] += int(r.get("total_tokens", 0) or 0)
+        
+        by_client = {
+            client: {
+                "total_cost": round(data["total_cost"], 6),
+                "total_requests": data["total_requests"],
+                "total_tokens": data["total_tokens"]
+            }
+            for client, data in sorted(by_client_dict.items())
+        }
+        
+        # Aggregate by date
+        by_date_dict: Dict[str, Dict] = {}
+        for r in records:
+            created_at = r.get("created_at", "")
+            date_str = created_at[:10] if len(created_at) >= 10 else str(datetime.utcnow().date())
+            
+            if date_str not in by_date_dict:
+                by_date_dict[date_str] = {"total_cost": 0.0, "total_requests": 0, "total_tokens": 0}
+            by_date_dict[date_str]["total_cost"] += float(r.get("cost_usd", 0) or 0)
+            by_date_dict[date_str]["total_requests"] += 1
+            by_date_dict[date_str]["total_tokens"] += int(r.get("total_tokens", 0) or 0)
+        
+        by_date = [
+            {
+                "date": date,
+                "total_cost": round(data["total_cost"], 6),
+                "total_requests": data["total_requests"],
+                "total_tokens": data["total_tokens"]
+            }
+            for date, data in sorted(by_date_dict.items(), reverse=True)
+        ]
+        
+        # Calculate summary
+        total_cost = sum(float(r.get("cost_usd", 0) or 0) for r in records)
+        total_requests = len(records)
+        total_tokens = sum(int(r.get("total_tokens", 0) or 0) for r in records)
+        avg_cost_per_request = total_cost / max(total_requests, 1)
+        avg_tokens_per_request = total_tokens // max(total_requests, 1)
+        
+        # Build requests array if requested
+        requests = None
+        if include_requests:
+            requests = []
+            for r in records[:limit]:
+                created_at = r.get("created_at", "")
+                # Parse timestamp
+                try:
+                    if "T" in created_at:
+                        timestamp = created_at.replace("+00:00", "Z").replace("Z", "Z") if not created_at.endswith("Z") else created_at
+                    else:
+                        timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00")).isoformat().replace("+00:00", "Z")
+                except Exception:
+                    timestamp = datetime.utcnow().isoformat() + "Z"
+                
+                model = r.get("model", "unknown")
+                provider_type = extract_provider_type(model)
+                
+                # Extract job_id from metadata if available
+                metadata = r.get("metadata", {})
+                job_id = None
+                if isinstance(metadata, dict):
+                    job_id = metadata.get("job_id")
+                
+                request_entry = {
+                    "request_id": _get_attr(r, "request_id", "unknown"),
+                    "job_id": job_id if job_id else None,
+                    "timestamp": timestamp,
+                    "provider_type": provider_type,
+                    "model": model,
+                    "cost": round(float(r.get("cost_usd", 0) or 0), 6),
+                    "tokens": {
+                        "prompt": int(r.get("prompt_tokens", 0) or 0),
+                        "completion": int(r.get("completion_tokens", 0) or 0),
+                        "total": int(r.get("total_tokens", 0) or 0)
+                    },
+                    "latency_ms": int(r.get("latency_ms", 0) or 0),
+                    "status": "completed" if not r.get("cached") else "cached",
+                    "usage_source": _get_attr(r, "usage_source", "unknown"),
+                    "usage_client": _get_attr(r, "usage_client", "unknown"),
+                    "org_id": org_id
+                }
+                requests.append(request_entry)
+        
+        # Build response matching exact requirements
+        response = {
+            "org_id": org_id,
+            "period": {
+                "start_date": start_date.isoformat() + "Z",
+                "end_date": end_date.isoformat() + "Z",
+                "days": days
+            },
+            "summary": {
+                "total_cost": round(total_cost, 6),
+                "total_requests": total_requests,
+                "total_tokens": total_tokens,
+                "avg_cost_per_request": round(avg_cost_per_request, 6),
+                "avg_tokens_per_request": avg_tokens_per_request
+            },
+            "by_provider": by_provider,
+            "by_source": by_source,
+            "by_client": by_client,
+            "by_date": by_date
+        }
+        
+        if include_requests:
+            response["requests"] = requests
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get AI costs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve cost data: {str(e)}")
 
 
 @router.get("/ai/cache-stats")
