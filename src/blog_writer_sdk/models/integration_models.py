@@ -31,6 +31,10 @@ class IntegrationConnectAndRecommendRequest(BaseModel):
     provider: ContentSystemProvider
     connection: Dict[str, Any]
     keywords: List[str]
+    interlinking_settings: Optional[InterlinkingSettings] = Field(
+        default=None,
+        description="Optional settings to control interlinking analysis (relevance threshold, authority weight, allow low-value links)"
+    )
 
 
 class IntegrationRecommendationResponse(BaseModel):
@@ -42,6 +46,26 @@ class IntegrationRecommendationResponse(BaseModel):
     recommended_interlinks: int = 0
     per_keyword: List[KeywordRecommendation]
     notes: Optional[str] = None
+
+
+class InterlinkingSettings(BaseModel):
+    """Settings for controlling interlinking analysis."""
+    relevance_threshold: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Minimum relevance score threshold (0.0 to 1.0). Links below this score will be filtered out unless allow_low_value_links is true."
+    )
+    authority_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight for authority score in relevance calculation (0.0 to 1.0). Higher values prioritize authoritative content."
+    )
+    allow_low_value_links: bool = Field(
+        default=False,
+        description="If true, include links even if they fall below the relevance threshold. Useful for strategic linking despite lower relevance."
+    )
 
 
 class InterlinkOpportunity(BaseModel):
@@ -80,6 +104,10 @@ class ConnectAndRecommendRequest(BaseModel):
         min_items=1,
         max_items=50,
         description="Keywords for interlinking analysis (1-50 keywords)"
+    )
+    interlinking_settings: Optional[InterlinkingSettings] = Field(
+        default=None,
+        description="Optional settings to control interlinking analysis (relevance threshold, authority weight, allow low-value links)"
     )
 
     @validator('keywords')
@@ -127,3 +155,21 @@ class ExistingContentItem(BaseModel):
     categories: Optional[List[str]] = Field(None, description="Categories for the content")
     published_at: Optional[str] = Field(None, description="Publication date (ISO format)")
     excerpt: Optional[str] = Field(None, description="Content excerpt or summary")
+    # SEO metadata (used for richer matching)
+    meta_description: Optional[str] = Field(None, description="SEO meta description for the page")
+    title_tag: Optional[str] = Field(None, description="SEO title tag if different from display title")
+    short_description: Optional[str] = Field(None, description="Short description/summary from CMS")
+    # Collection and page type awareness
+    collection_slug: Optional[str] = Field(None, description="Collection slug (e.g., solutions, blog-posts, projects)")
+    collection_name: Optional[str] = Field(None, description="Collection name (e.g., Solutions, Blog Posts, Projects)")
+    page_type: Optional[str] = Field(
+        None,
+        description="Normalized page type (solution, blog, case-study, static, project, etc.)"
+    )
+    # Strategic priority score supplied by provider or mapping (0.0-2.0, higher = more important)
+    strategic_priority: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=2.0,
+        description="Strategic importance weight (0.0-2.0). Higher values prioritized for interlinking."
+    )

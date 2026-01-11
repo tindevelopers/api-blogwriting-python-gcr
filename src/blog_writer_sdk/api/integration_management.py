@@ -123,10 +123,14 @@ async def connect_and_recommend(
             logger.info(f"Using interlinking analyzer with {len(existing_content)} existing content items")
             interlinking_analyzer = InterlinkingAnalyzer()
             
+            # Get interlinking settings from request (if provided)
+            interlinking_settings = request.interlinking_settings
+            
             # Analyze interlinking opportunities
             analysis_result = interlinking_analyzer.analyze_interlinking_opportunities(
                 keywords=request.keywords,
-                existing_content=existing_content
+                existing_content=existing_content,
+                settings=interlinking_settings
             )
             
             # Convert to response format
@@ -319,10 +323,14 @@ async def connect_and_recommend_v2(
         logger.info(f"Analyzing interlinking opportunities for {len(request.keywords)} keywords against {len(existing_content)} content items")
         interlinking_analyzer = InterlinkingAnalyzer()
         
+        # Get interlinking settings from request (if provided)
+        interlinking_settings = request.interlinking_settings
+        
         # Analyze interlinking opportunities
         analysis_result = interlinking_analyzer.analyze_interlinking_opportunities(
             keywords=request.keywords,
-            existing_content=existing_content
+            existing_content=existing_content,
+            settings=interlinking_settings
         )
         
         # Convert to response format with full interlink opportunities
