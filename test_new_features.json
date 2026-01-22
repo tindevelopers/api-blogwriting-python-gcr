@@ -1,0 +1,21 @@
+{
+  "topic": "Python Programming Basics",
+  "keywords": ["python", "programming", "coding"],
+  "tone": "professional",
+  "length": "short",
+  "word_count_target": 800,
+  "blog_type": "tutorial",
+  "include_eeat": false,
+  "additional_resources": [
+    {
+      "title": "Python Official Documentation",
+      "url": "https://docs.python.org",
+      "description": "Official Python documentation"
+    },
+    {
+      "title": "Real Python",
+      "url": "https://realpython.com",
+      "description": "Python tutorials and articles"
+    }
+  ]
+}

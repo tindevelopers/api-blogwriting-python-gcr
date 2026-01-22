@@ -88,7 +88,8 @@ class ContentQualityScorer:
         title: str = "",
         keywords: List[str] = None,
         meta_description: str = "",
-        citations: List[Dict[str, str]] = None
+        citations: List[Dict[str, str]] = None,
+        include_eeat: bool = True
     ) -> ContentQualityReport:
         """
         Score content quality across all dimensions.
@@ -134,7 +135,7 @@ class ContentQualityScorer:
         dimension_scores[QualityDimension.ENGAGEMENT.value] = engagement_score
         
         # E-E-A-T score
-        eeat_score = self._score_eeat(content, citations, title, keywords)
+        eeat_score = self._score_eeat(content, citations, title, keywords, include_eeat=include_eeat)
         dimension_scores[QualityDimension.EEAT.value] = eeat_score
         
         # Accessibility score
@@ -654,7 +655,8 @@ class ContentQualityScorer:
         content: str,
         citations: List[Dict[str, str]],
         title: str = "",
-        keywords: List[str] = None
+        keywords: List[str] = None,
+        include_eeat: bool = True
     ) -> QualityScore:
         """
         Score E-E-A-T (Experience, Expertise, Authoritativeness, Trustworthiness).
@@ -664,7 +666,30 @@ class ContentQualityScorer:
         - Expertise: Author credentials, qualifications
         - Authoritativeness: Domain authority, citations from authoritative sources
         - Trustworthiness: Fact-checking, source quality, transparency
+        
+        Args:
+            include_eeat: If False, returns neutral scores and no issues
         """
+        # If E-E-A-T is disabled, return neutral scores
+        if not include_eeat:
+            return QualityScore(
+                dimension=QualityDimension.EEAT,
+                score=50.0,  # Neutral score
+                weight=self.dimension_weights[QualityDimension.EEAT],
+                issues=[],
+                recommendations=[],
+                metadata={
+                    "experience_score": 50.0,
+                    "expertise_score": 50.0,
+                    "authoritativeness_score": 50.0,
+                    "trustworthiness_score": 50.0,
+                    "overall_eeat": 0.5,
+                    "yyml_topic": False,
+                    "yyml_compliant": True,
+                    "eeat_disabled": True
+                }
+            )
+        
         issues = []
         recommendations = []
         scores = {

@@ -257,6 +257,18 @@ class EnhancedBlogGenerationRequest(BaseModel):
         le=10,
         description="Maximum number of internal links to insert (0-10)"
     )
+    
+    # E-E-A-T options
+    include_eeat: bool = Field(
+        default=False,
+        description="Include E-E-A-T signals (experience indicators, first-person phrases). Default: false"
+    )
+    
+    # Additional resources for Additional Resources section
+    additional_resources: Optional[List[Dict[str, str]]] = Field(
+        None,
+        description="Optional list of resources for Additional Resources section. Format: [{'title': '...', 'url': '...', 'description': '...'}]"
+    )
 
 
 class EnhancedBlogGenerationResponse(BaseModel):

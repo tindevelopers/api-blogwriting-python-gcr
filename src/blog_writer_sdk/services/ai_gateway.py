@@ -905,7 +905,8 @@ Requirements:
 - Structure:
   - Engaging introduction that hooks the reader
   - Well-organized body with clear sections
-  - Strong conclusion with key takeaways or call to action
+  - Strong conclusion with key takeaways or call to action (NO links in conclusion)
+  - Additional Resources section with 6-8 external authoritative links
 - Write in a {tone} tone
 - Make it engaging, informative, and valuable to readers
 - Include specific examples, data, or actionable advice where relevant
@@ -918,18 +919,41 @@ NATURAL WRITING STYLE (CRITICAL):
 - Instead use natural transitions: "Here's the thing", "So", "Now", "The bottom line", or continue naturally
 - Start conclusions naturally, NOT with "In conclusion" or "To sum up"
 
+SECTION-BY-SECTION WRITING WITH LINK PLACEMENT:
+- Plan link distribution before writing (6-7 links total in main body)
+- Write section by section, placing links strategically
+- Distribute links across at least 4 different H2 sections
+- For internal links, use placeholder format: [descriptive anchor text](/related-topic-slug)
+- For external links, use full URLs: [source name](https://authoritative-url.com)
+- NO links in conclusion or additional resources sections
+
+CONCLUSION AND ADDITIONAL RESOURCES SECTIONS:
+- End with H2 Conclusion section: ## Conclusion (or natural variation)
+  - Wrap up naturally - DON'T start with "In conclusion" or "To sum up"
+  - Summarize key points conversationally
+  - Provide actionable next steps
+  - NO LINKS in the conclusion section
+- After Conclusion, include H2 Additional Resources section: ## Additional Resources
+  - Provide 6-8 external authoritative links to valuable resources
+  - Format: [Resource Name](https://authoritative-url.com)
+  - Include brief descriptions for each resource (1 sentence)
+  - Focus on reputable sources, studies, tools, or expert content
+
 {f"Additional instructions: {custom_instructions}" if custom_instructions else ""}
 
 CRITICAL: Return ONLY the blog content in markdown format. 
 - Do NOT include thinking tags, meta-commentary, or explanations.
 - Do NOT wrap the content in code blocks.
-- Start directly with the title heading."""
+- Start directly with the title heading.
+- Include Conclusion section (no links)
+- Include Additional Resources section (6-8 external links)"""
 
         user_prompt = f"""Write a {word_count}-word blog post about: {topic}
 
 Primary keywords to incorporate: {keywords_str}
 
-Begin with an H1 title and structure the content with H2 sections."""
+Begin with an H1 title and structure the content with H2 sections.
+Include a Conclusion section and Additional Resources section at the end."""
 
         return [
             {"role": "system", "content": system_prompt},

@@ -614,6 +614,7 @@ class UnifiedBlogRequest(BaseModel):
     use_quality_scoring: bool = Field(default=True, description="Enable comprehensive quality scoring (enhanced)")
     template_type: Optional[str] = Field(None, description="Prompt template type (enhanced)")
     async_mode: bool = Field(default=False, description="Create async job via Cloud Tasks (enhanced)")
+    include_eeat: bool = Field(default=False, description="Include E-E-A-T signals in content generation")
     
     # Local Business-specific fields
     location: Optional[str] = Field(None, min_length=2, description="Location for local business blogs (required for local_business)")
@@ -1413,6 +1414,7 @@ class AIGatewayBlogRequest(BaseModel):
     include_quality_check: bool = Field(default=True, description="Run quality checks")
     include_meta_tags: bool = Field(default=True, description="Generate SEO meta tags")
     model: str = Field(default="gpt-4o", description="AI model to use")
+    include_eeat: bool = Field(default=False, description="Include E-E-A-T signals in content generation")
 
 
 @app.post("/api/v1/blog/generate-gateway")
@@ -1767,7 +1769,7 @@ async def generate_blog_enhanced(
                 
                 # Calculate word count from length
                 word_count_map = {
-                    ContentLength.SHORT: 500,
+                    ContentLength.SHORT: 800,
                     ContentLength.MEDIUM: 1500,
                     ContentLength.LONG: 2500,
                     ContentLength.EXTENDED: 4000,
@@ -2038,6 +2040,11 @@ async def generate_blog_enhanced(
                 for target in request.internal_link_targets
             ]
         additional_context["max_internal_links"] = request.max_internal_links
+        
+        # Add E-E-A-T and additional resources
+        additional_context["include_eeat"] = request.include_eeat
+        if request.additional_resources:
+            additional_context["additional_resources"] = request.additional_resources
         
         # Add product research requirements if enabled
         if request.include_product_research:
@@ -2822,6 +2829,11 @@ async def blog_generation_worker(request: Dict[str, Any]):
                     for target in blog_request.internal_link_targets
                 ]
             additional_context["max_internal_links"] = blog_request.max_internal_links
+            
+            # Add E-E-A-T and additional resources
+            additional_context["include_eeat"] = blog_request.include_eeat
+            if hasattr(blog_request, 'additional_resources') and blog_request.additional_resources:
+                additional_context["additional_resources"] = blog_request.additional_resources
             
             # Add product research requirements if enabled
             if blog_request.include_product_research:

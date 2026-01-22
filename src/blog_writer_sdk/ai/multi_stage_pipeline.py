@@ -517,12 +517,26 @@ class MultiStageGenerationPipeline:
             draft_content = draft_result.content
         stage_results.append(draft_result)
         
+        # Validate word count after draft generation
+        word_count_target = self.prompt_builder._get_word_count(length)
+        actual_word_count = len(draft_content.split())
+        if actual_word_count < word_count_target * 0.8:  # 80% threshold
+            logger.warning(
+                f"Content too short after draft generation: {actual_word_count} words "
+                f"(target: {word_count_target}, {actual_word_count/word_count_target*100:.1f}%)"
+            )
+        else:
+            logger.info(
+                f"Draft word count: {actual_word_count} words (target: {word_count_target}, "
+                f"{actual_word_count/word_count_target*100:.1f}%)"
+            )
+        
         await self._emit_progress(
             PipelineStage.DRAFT_GENERATION,
             current_stage,
             total_stages,
             "Stage 2 Complete: Draft Generation",
-            f"Generated draft with {len(draft_content.split())} words"
+            f"Generated draft with {actual_word_count} words (target: {word_count_target})"
         )
         
         # Stage 3: Enhancement & Fact-Checking (Claude 3.5 Sonnet)
@@ -631,17 +645,21 @@ class MultiStageGenerationPipeline:
             enhanced_content = engagement_result.content
             logger.info(f"Engagement elements injected: {', '.join(engagement_result.changes_made)}")
         
-        # Phase 2: Experience indicator injection
-        logger.info("Injecting experience indicators")
-        experience_result = content_enhancer.inject_experience_indicators(
-            content=enhanced_content,
-            target_count=3,  # 3 per 1000 words
-            word_count=word_count
-        )
-        
-        if experience_result.changes_made:
-            enhanced_content = experience_result.content
-            logger.info(f"Experience indicators injected: {', '.join(experience_result.changes_made)}")
+        # Phase 2: Experience indicator injection (only if enabled)
+        include_eeat = additional_context.get('include_eeat', False) if additional_context else False
+        if include_eeat:
+            logger.info("Injecting experience indicators")
+            experience_result = content_enhancer.inject_experience_indicators(
+                content=enhanced_content,
+                target_count=3,  # 3 per 1000 words
+                word_count=word_count
+            )
+            
+            if experience_result.changes_made:
+                enhanced_content = experience_result.content
+                logger.info(f"Experience indicators injected: {', '.join(experience_result.changes_made)}")
+        else:
+            logger.info("E-E-A-T disabled, skipping experience indicator injection")
         
         # Extract SEO metadata from stage 4
         seo_metadata = seo_result.metadata.get("seo_metadata", {})
@@ -747,12 +765,14 @@ class MultiStageGenerationPipeline:
             )
             logger.info("Scoring content quality (Phase 3)")
             try:
+                include_eeat = additional_context.get('include_eeat', False) if additional_context else True
                 quality_report = self.quality_scorer.score_content(
                     content=enhanced_content,
                     title=meta_title,
                     keywords=keywords,
                     meta_description=meta_description,
-                    citations=[{"url": "", "title": ""}]  # Citations will be added later
+                    citations=[{"url": "", "title": ""}],  # Citations will be added later
+                    include_eeat=include_eeat
                 )
                 seo_metadata["quality_report"] = {
                     "overall_score": quality_report.overall_score,
@@ -825,6 +845,20 @@ class MultiStageGenerationPipeline:
             if "competitor_analysis" in additional_context:
                 seo_metadata["competitor_analysis"] = additional_context["competitor_analysis"]
         
+        # Final word count validation
+        final_word_count = len(enhanced_content.split())
+        word_count_target = self.prompt_builder._get_word_count(length)
+        if final_word_count < word_count_target * 0.8:  # 80% threshold
+            logger.warning(
+                f"Final content too short: {final_word_count} words "
+                f"(target: {word_count_target}, {final_word_count/word_count_target*100:.1f}%)"
+            )
+        else:
+            logger.info(
+                f"Final word count: {final_word_count} words (target: {word_count_target}, "
+                f"{final_word_count/word_count_target*100:.1f}%)"
+            )
+        
         # Calculate totals
         total_tokens = sum(s.tokens_used for s in stage_results)
         total_cost = sum(s.cost for s in stage_results)
@@ -835,6 +869,13 @@ class MultiStageGenerationPipeline:
         for stage_result in stage_results:
             if stage_result.metadata and stage_result.metadata.get("api_warnings"):
                 all_warnings.extend(stage_result.metadata["api_warnings"])
+        
+        # Add word count warning if below threshold
+        if final_word_count < word_count_target * 0.8:
+            all_warnings.append(
+                f"Content word count ({final_word_count}) is below target ({word_count_target}). "
+                f"Consider expanding sections or adding more detail."
+            )
         
         return PipelineResult(
             final_content=enhanced_content,
@@ -1139,7 +1180,7 @@ class MultiStageGenerationPipeline:
         # Generate with GPT-4o (best for comprehensive generation)
         # Increase max_tokens to ensure we can generate long content
         word_count_target = self.prompt_builder._get_word_count(length)
-        max_tokens = int(word_count_target * 2.0)  # Increased multiplier to ensure enough tokens for long content
+        max_tokens = int(word_count_target * 2.5)  # Increased multiplier to 2.5x to ensure enough tokens for long content
         request = AIRequest(
             prompt=prompt,
             content_type=ContentType.BLOG_POST,
@@ -1474,85 +1515,185 @@ class MultiStageGenerationPipeline:
                 })
             available_count = len(link_sources)
         
-        # Find natural insertion points in content
-        lines = content.split('\n')
-        fixed_lines = []
-        links_inserted = 0
-        target_link_count = min(max_links, len(link_sources))
-        inserted_links = []
-        used_urls = set()  # Avoid duplicate links
+        # First, check if content already has placeholder links from AI generation
+        placeholder_link_pattern = r'\[([^\]]+)\]\(/([^\)]+)\)'
+        existing_placeholder_links = re.findall(placeholder_link_pattern, content)
         
-        # Track content position for metadata
-        current_section = "introduction"
-        h2_count = 0
-        total_lines = len(lines)
-        
-        for i, line in enumerate(lines):
-            fixed_lines.append(line)
+        # If placeholder links exist and we have site_domain or internal_link_targets, replace them
+        if existing_placeholder_links and (site_domain or (internal_link_targets and len(internal_link_targets) > 0)):
+            logger.info(f"Found {len(existing_placeholder_links)} placeholder links, replacing with real URLs")
+            lines = content.split('\n')
+            fixed_lines = []
+            links_inserted = 0
+            inserted_links = []
+            used_urls = set()
             
-            # Track position in content
-            if line.strip().startswith('## '):
-                h2_count += 1
-                if h2_count == 1:
-                    current_section = "body"
-                elif 'conclusion' in line.lower() or i > total_lines * 0.8:
-                    current_section = "conclusion"
+            # Track content position for metadata
+            current_section = "introduction"
+            h2_count = 0
+            total_lines = len(lines)
             
-            # Insert links in paragraphs (not in headings or code blocks)
-            if (links_inserted < target_link_count and 
-                line.strip() and 
-                not line.strip().startswith('#') and
-                not line.strip().startswith('```') and
-                not line.strip().startswith('![') and
-                not line.strip().startswith('|') and  # Skip table rows
-                len(line.strip()) > 50):
+            for i, line in enumerate(lines):
+                # Track position in content
+                if line.strip().startswith('## '):
+                    h2_count += 1
+                    if h2_count == 1:
+                        current_section = "body"
+                    elif 'conclusion' in line.lower() or i > total_lines * 0.8:
+                        current_section = "conclusion"
                 
-                # Check if any link source matches this line
-                for link_info in link_sources:
-                    if link_info['url'] in used_urls:
+                # Replace placeholder links with real URLs
+                for anchor_text, slug in existing_placeholder_links:
+                    if links_inserted >= max_links:
+                        break
+                    
+                    # Skip if in conclusion or resources section
+                    if current_section == "conclusion" or 'resources' in line.lower():
                         continue
                     
-                    # Try to find anchor text in line
-                    anchor_text = link_info['anchor_text']
-                    anchor_lower = anchor_text.lower()
-                    line_lower = line.lower()
+                    placeholder_pattern = f'\\[{re.escape(anchor_text)}\\]\\(/{re.escape(slug)}\\)'
+                    if re.search(placeholder_pattern, line):
+                        # Try to find matching link target
+                        matched = False
+                        for link_info in link_sources:
+                            if link_info['url'] in used_urls:
+                                continue
+                            
+                            # Match by slug or anchor text similarity
+                            link_slug = link_info['url'].split('/')[-1] if '/' in link_info['url'] else link_info['url']
+                            if slug.lower() in link_slug.lower() or anchor_text.lower() in link_info['anchor_text'].lower():
+                                # Replace placeholder with real URL
+                                real_url = link_info['url']
+                                if site_domain and not real_url.startswith('http'):
+                                    if real_url.startswith('/'):
+                                        real_url = site_domain.rstrip('/') + real_url
+                                    else:
+                                        real_url = f"{site_domain.rstrip('/')}/{real_url}"
+                                
+                                line = re.sub(placeholder_pattern, f'[{anchor_text}]({real_url})', line)
+                                links_inserted += 1
+                                used_urls.add(link_info['url'])
+                                inserted_links.append({
+                                    'anchor_text': anchor_text,
+                                    'url': real_url,
+                                    'target_title': link_info.get('target_title', ''),
+                                    'position': current_section,
+                                    'relevance_score': 0.7,
+                                    'text': anchor_text,
+                                })
+                                matched = True
+                                logger.info(f"Replaced placeholder link: {anchor_text} -> {real_url} ({current_section})")
+                                break
+                        
+                        if not matched and site_domain:
+                            # No match found, but we have site_domain - convert to absolute URL
+                            real_url = f"{site_domain.rstrip('/')}/{slug}"
+                            line = re.sub(placeholder_pattern, f'[{anchor_text}]({real_url})', line)
+                            links_inserted += 1
+                            inserted_links.append({
+                                'anchor_text': anchor_text,
+                                'url': real_url,
+                                'target_title': slug.replace('-', ' ').title(),
+                                'position': current_section,
+                                'relevance_score': 0.5,
+                                'text': anchor_text,
+                            })
+                            logger.info(f"Converted placeholder to absolute URL: {anchor_text} -> {real_url}")
+                
+                fixed_lines.append(line)
+        else:
+            # No placeholder links found, use existing insertion logic
+            # Find natural insertion points in content
+            lines = content.split('\n')
+            fixed_lines = []
+            links_inserted = 0
+            target_link_count = min(max_links, len(link_sources))
+            inserted_links = []
+            used_urls = set()  # Avoid duplicate links
+            
+            # Track content position for metadata
+            current_section = "introduction"
+            h2_count = 0
+            total_lines = len(lines)
+            
+            for i, line in enumerate(lines):
+                fixed_lines.append(line)
+                
+                # Track position in content
+                if line.strip().startswith('## '):
+                    h2_count += 1
+                    if h2_count == 1:
+                        current_section = "body"
+                    elif 'conclusion' in line.lower() or i > total_lines * 0.8:
+                        current_section = "conclusion"
+                
+                # Skip conclusion and resources sections
+                if current_section == "conclusion" or 'resources' in line.lower():
+                    continue
+                
+                # Insert links in paragraphs (not in headings or code blocks)
+                if (links_inserted < target_link_count and 
+                    line.strip() and 
+                    not line.strip().startswith('#') and
+                    not line.strip().startswith('```') and
+                    not line.strip().startswith('![') and
+                    not line.strip().startswith('|') and  # Skip table rows
+                    len(line.strip()) > 50):
                     
-                    # Also check keywords associated with this link
-                    keywords_to_check = [anchor_lower] + [k.lower() for k in link_info.get('keywords', [])]
-                    
-                    for keyword in keywords_to_check:
-                        if keyword in line_lower and links_inserted < target_link_count:
-                            idx = line_lower.find(keyword)
-                            if idx != -1:
-                                before = line[:idx]
-                                # Check if already linked
-                                if '[' not in before[-20:] and '](' not in before[-20:]:
-                                    keyword_text = line[idx:idx+len(keyword)]
-                                    after = line[idx+len(keyword):]
-                                    
-                                    linked_keyword = f"[{keyword_text}]({link_info['url']})"
-                                    fixed_lines[-1] = before + linked_keyword + after
-                                    links_inserted += 1
-                                    used_urls.add(link_info['url'])
-                                    
-                                    # Calculate simple relevance score based on keyword match
-                                    relevance = 0.8 if keyword == anchor_lower else 0.6
-                                    
-                                    inserted_links.append({
-                                        'anchor_text': keyword_text,
-                                        'url': link_info['url'],
-                                        'target_title': link_info.get('target_title', ''),
-                                        'position': current_section,
-                                        'relevance_score': relevance,
-                                        # Legacy format fields for backwards compatibility
-                                        'text': keyword_text,
-                                    })
-                                    logger.info(f"Inserted internal link: {keyword_text} -> {link_info['url']} ({current_section})")
-                                    break
+                    # Check if any link source matches this line
+                    for link_info in link_sources:
+                        if link_info['url'] in used_urls:
+                            continue
+                        
+                        # Try to find anchor text in line
+                        anchor_text = link_info['anchor_text']
+                        anchor_lower = anchor_text.lower()
+                        line_lower = line.lower()
+                        
+                        # Also check keywords associated with this link
+                        keywords_to_check = [anchor_lower] + [k.lower() for k in link_info.get('keywords', [])]
+                        
+                        for keyword in keywords_to_check:
+                            if keyword in line_lower and links_inserted < target_link_count:
+                                idx = line_lower.find(keyword)
+                                if idx != -1:
+                                    before = line[:idx]
+                                    # Check if already linked
+                                    if '[' not in before[-20:] and '](' not in before[-20:]:
+                                        keyword_text = line[idx:idx+len(keyword)]
+                                        after = line[idx+len(keyword):]
+                                        
+                                        # Use real URL if available, otherwise placeholder
+                                        url_to_use = link_info['url']
+                                        if site_domain and not url_to_use.startswith('http'):
+                                            if url_to_use.startswith('/'):
+                                                url_to_use = site_domain.rstrip('/') + url_to_use
+                                            else:
+                                                url_to_use = f"{site_domain.rstrip('/')}/{url_to_use}"
+                                        
+                                        linked_keyword = f"[{keyword_text}]({url_to_use})"
+                                        fixed_lines[-1] = before + linked_keyword + after
+                                        links_inserted += 1
+                                        used_urls.add(link_info['url'])
+                                        
+                                        # Calculate simple relevance score based on keyword match
+                                        relevance = 0.8 if keyword == anchor_lower else 0.6
+                                        
+                                        inserted_links.append({
+                                            'anchor_text': keyword_text,
+                                            'url': url_to_use,
+                                            'target_title': link_info.get('target_title', ''),
+                                            'position': current_section,
+                                            'relevance_score': relevance,
+                                            # Legacy format fields for backwards compatibility
+                                            'text': keyword_text,
+                                        })
+                                        logger.info(f"Inserted internal link: {keyword_text} -> {url_to_use} ({current_section})")
+                                        break
+                            if links_inserted >= target_link_count:
+                                break
                         if links_inserted >= target_link_count:
                             break
-                    if links_inserted >= target_link_count:
-                        break
         
         if links_inserted > 0:
             logger.info(f"Inserted {links_inserted} internal links into content")

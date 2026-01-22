@@ -216,12 +216,14 @@ CONTENT OUTLINE:
 
 {template_instructions}
 
-CRITICAL LENGTH REQUIREMENT:
+CRITICAL LENGTH REQUIREMENT (MANDATORY):
 - You MUST generate at least {word_count_target} words of content
-- This is a hard requirement, not a suggestion
+- This is MANDATORY - not a suggestion or target
 - If your initial draft is shorter, expand sections with more detail, examples, and explanations
 - Each H2 section should contribute 400-600 words toward the total
 - Do not stop writing until you reach the target word count
+- Count your words as you write to ensure you reach {word_count_target} words
+- Expand any section that seems too short
 
 WRITING REQUIREMENTS:
 1. Write for human readers first, SEO optimization second
@@ -294,20 +296,6 @@ READABILITY EXAMPLES:
 ❌ Complex: "The utilization of advanced methodologies enables..."
 ✅ Simple: "Using advanced methods helps..."
 
-E-E-A-T REQUIREMENTS (CRITICAL):
-- Add first-hand experience indicators where appropriate (2-3 per 1000 words)
-- Use phrases like "In my experience...", "I've found that...", "Based on my work..."
-- Include personal anecdotes or case studies when relevant
-- Balance first-person experience with third-person authority
-- Don't overuse - keep it natural and authentic
-
-EXPERIENCE INDICATOR EXAMPLES:
-✅ Good: "In my experience running a dog grooming business, I've found that..."
-✅ Good: "Based on my research, I've noticed that..."
-✅ Good: "When I started my business, I learned that..."
-✅ Good: "I've worked with many clients who..."
-✅ Good: "From my own experience, I can say that..."
-
 CONTENT QUALITY STANDARDS:
 - Provide unique insights, not just rehashed information
 - Include specific examples, case studies, or real-world applications
@@ -353,21 +341,65 @@ STRUCTURE REQUIREMENTS (MANDATORY):
    - Summarize key points conversationally
    - Provide actionable next steps
    - Include a call-to-action if appropriate
+   - NO LINKS in the conclusion section
+
+8. After Conclusion, include H2 Additional Resources section: ## Additional Resources
+   - Provide 6-8 external authoritative links to valuable resources
+   - Format: [Resource Name](https://authoritative-url.com)
+   - Include brief descriptions for each resource (1 sentence)
+   - Focus on reputable sources, studies, tools, or expert content
+   - This section helps readers find additional information
+
+SECTION-BY-SECTION WRITING WITH PRE-PLANNED LINK PLACEMENT (CRITICAL):
+BEFORE WRITING:
+1. Count the total H2 sections in your outline
+2. Create a link distribution plan:
+   - First H2 Section: 1 link (external OR internal)
+   - Second H2 Section: 1 link (different type from section 1)
+   - Third H2 Section: 1-2 links (mix of types)
+   - Fourth H2 Section: 1 link (different type)
+   - Fifth+ H2 Sections: Distribute remaining links (1 per section)
+3. Plan contextual placement: Identify specific topic/context in each section where each link will naturally fit
+4. Ensure links are distributed across minimum 4 different H2 sections
+5. Remember: NO links in conclusion or additional resources sections
+
+WHILE WRITING (Section-by-Section):
+1. Write each H2 section completely (3-5 paragraphs)
+2. When you reach the designated link placement point:
+   - Place the link at the most contextually relevant point
+   - Ensure the link adds genuine value to the reader
+   - Use natural, descriptive anchor text
+   - For internal links, use placeholder format: [descriptive anchor text](/related-topic-slug)
+   - For external links, use full URLs: [source name](https://authoritative-url.com)
+3. Ensure spacing: At least 2-3 paragraphs between any two links
+4. Never place multiple links in the same paragraph
+5. Never place links in consecutive paragraphs
+
+LINK DISTRIBUTION RULES:
+- Total links in main body: 6-7 links
+- External links: 2-3 minimum (place in different sections)
+- Internal links: 2-3 minimum (place in different sections, use placeholder format)
+- Links must appear in at least 4 different H2 sections
+- Maximum 1 link per H2 section (unless section is 8+ paragraphs)
+- NO links in conclusion section
+- NO links in additional resources section
 
 LINKING REQUIREMENTS:
-1. Include 3-5 internal links using markdown format: [descriptive anchor text](/related-topic)
-   - Links should be natural and contextual within paragraphs
-   - Use descriptive anchor text (not "click here" or "read more")
-   - Place links where they add value to the reader
-   
-2. Include 2-3 external authoritative links: [source name](https://authoritative-url.com)
+1. Include 2-3 external authoritative links in main body: [source name](https://authoritative-url.com)
    - Link to reputable sources, studies, or expert content
    - Use descriptive anchor text that indicates the source
    - Place external links naturally within relevant paragraphs
    
+2. Include 2-3 internal links in main body: [descriptive anchor text](/related-topic-slug)
+   - Use placeholder format with relative paths (will be converted to full URLs post-generation)
+   - Links should be natural and contextual within paragraphs
+   - Use descriptive anchor text (not "click here" or "read more")
+   - Place links where they add value to the reader
+   
 3. Links should enhance content, not distract
-   - Don't over-link (maximum 1-2 links per paragraph)
+   - Don't over-link (maximum 1 link per paragraph)
    - Ensure links are relevant to the surrounding content
+   - Spread links evenly from beginning to end of main body
 
 IMAGE HANDLING:
 - DO NOT include image placeholders in the content
@@ -389,8 +421,10 @@ CRITICAL OUTPUT RULES - FOLLOW EXACTLY:
 4. DO NOT include sections like "Enhancements Made", "Key Points", or "Summary of Changes" at the end
 5. DO NOT include "Last updated", "Note:", or similar metadata
 6. START DIRECTLY with the blog title (# Title) as the very first line
-7. END DIRECTLY with the conclusion paragraph - no sign-offs, no summaries of changes made
+7. END DIRECTLY with the Additional Resources section - no sign-offs, no summaries of changes made
 8. NO explanations before or after the content
+9. Ensure conclusion section has NO links
+10. Ensure additional resources section includes 6-8 external links with descriptions
 
 Generate comprehensive, well-researched content that readers will find valuable and search engines will recognize as authoritative. Remember: output ONLY the blog content itself."""
         
@@ -418,6 +452,33 @@ Generate comprehensive, well-researched content that readers will find valuable 
                     prompt += f"\n\nPRODUCT BRAND RECOMMENDATIONS:\nInclude detailed information about these brands/models: {', '.join(brands_list[:10])}\n\nFor each brand, include:\n- Key features and specifications\n- Pros and cons\n- Best use cases\n- Price range (if available)\n- User ratings/reviews summary\n- Where to buy\n\nCreate a dedicated comparison section or integrate brand recommendations throughout relevant sections."
             if context.get("custom_instructions"):
                 prompt += f"\n\nADDITIONAL INSTRUCTIONS:\n{context['custom_instructions']}"
+            
+            # E-E-A-T requirements (only if enabled)
+            if context.get("include_eeat", False):
+                prompt += f"""
+
+E-E-A-T REQUIREMENTS (CRITICAL):
+- Add first-hand experience indicators where appropriate (2-3 per 1000 words)
+- Use phrases like "In my experience...", "I've found that...", "Based on my work..."
+- Include personal anecdotes or case studies when relevant
+- Balance first-person experience with third-person authority
+- Don't overuse - keep it natural and authentic
+
+EXPERIENCE INDICATOR EXAMPLES:
+✅ Good: "In my experience running a dog grooming business, I've found that..."
+✅ Good: "Based on my research, I've noticed that..."
+✅ Good: "When I started my business, I learned that..."
+✅ Good: "I've worked with many clients who..."
+✅ Good: "From my own experience, I can say that..."
+"""
+            
+            # Additional Resources section
+            if context.get("additional_resources"):
+                prompt += f"\n\nADDITIONAL RESOURCES TO INCLUDE:\n"
+                for resource in context['additional_resources']:
+                    prompt += f"- [{resource['title']}]({resource['url']}): {resource.get('description', '')}\n"
+            else:
+                prompt += "\n\nGenerate 6-8 appropriate external authoritative resources for the Additional Resources section."
             
             # Priority 1: Apply citation patterns to draft generation
             if context.get("citation_patterns"):
@@ -561,20 +622,6 @@ READABILITY EXAMPLES:
 ❌ Complex: "The utilization of advanced methodologies enables organizations to achieve..."
 ✅ Simple: "Using advanced methods helps businesses achieve..."
 
-E-E-A-T REQUIREMENTS (CRITICAL):
-- Add first-hand experience indicators where appropriate (2-3 per 1000 words)
-- Use natural first-person phrases: "In my experience...", "I've found that...", "Based on my work..."
-- Include personal anecdotes or case studies when relevant
-- Balance first-person experience with third-person authority
-- Don't overuse - keep it natural and authentic (not every paragraph needs first-person)
-
-EXPERIENCE INDICATOR EXAMPLES:
-✅ Good: "In my experience running a dog grooming business, I've found that..."
-✅ Good: "Based on my research, I've noticed that..."
-✅ Good: "When I started my business, I learned that..."
-✅ Good: "I've worked with many clients who..."
-✅ Good: "From my own experience, I can say that..."
-
 IMAGE HANDLING:
 - DO NOT include image placeholders in the content
 - DO NOT use markdown image syntax like ![alt](url) unless a real URL is provided
@@ -598,12 +645,32 @@ CRITICAL OUTPUT RULES - FOLLOW EXACTLY:
 10. Improve without changing the core message
 11. Add citations or source references where appropriate
 12. Ensure the content reads naturally and flows well
+13. Ensure conclusion section has NO links
+14. Ensure additional resources section (if present) has NO links in the resource list itself
 - CRITICAL: Reading ease MUST be 60-70 after enhancement
-- CRITICAL: Include 2-3 first-hand experience indicators per 1000 words
 
 Focus on making the content more authoritative, engaging, and valuable. Output ONLY the enhanced blog content itself - no explanations or commentary."""
         
         if context:
+            # E-E-A-T requirements (only if enabled)
+            if context.get("include_eeat", False):
+                prompt += f"""
+
+E-E-A-T REQUIREMENTS (CRITICAL):
+- Add first-hand experience indicators where appropriate (2-3 per 1000 words)
+- Use natural first-person phrases: "In my experience...", "I've found that...", "Based on my work..."
+- Include personal anecdotes or case studies when relevant
+- Balance first-person experience with third-person authority
+- Don't overuse - keep it natural and authentic (not every paragraph needs first-person)
+
+EXPERIENCE INDICATOR EXAMPLES:
+✅ Good: "In my experience running a dog grooming business, I've found that..."
+✅ Good: "Based on my research, I've noticed that..."
+✅ Good: "When I started my business, I learned that..."
+✅ Good: "I've worked with many clients who..."
+✅ Good: "From my own experience, I can say that..."
+"""
+            
             if context.get("readability_issues"):
                 prompt += f"\n\nREADABILITY ISSUES TO ADDRESS:\n{chr(10).join(f'- {issue}' for issue in context['readability_issues'])}"
             if context.get("fact_check_results"):

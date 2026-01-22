@@ -433,12 +433,12 @@ class AIContentGenerator:
     def _get_word_count_target(self, length: ContentLength) -> int:
         """Get target word count based on content length."""
         targets = {
-            ContentLength.SHORT: 500,
-            ContentLength.MEDIUM: 1000,
-            ContentLength.LONG: 2000,
-            ContentLength.EXTENDED: 3500
+            ContentLength.SHORT: 800,
+            ContentLength.MEDIUM: 1500,
+            ContentLength.LONG: 2500,
+            ContentLength.EXTENDED: 4000
         }
-        return targets.get(length, 1000)
+        return targets.get(length, 1500)
     
     def _get_max_tokens(self, length: ContentLength) -> int:
         """Get max tokens based on content length."""
