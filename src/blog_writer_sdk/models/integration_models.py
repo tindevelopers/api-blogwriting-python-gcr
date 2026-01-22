@@ -25,6 +25,26 @@ class KeywordRecommendation(BaseModel):
     suggested_interlinks: int = 0
 
 
+class InterlinkingSettings(BaseModel):
+    """Settings for controlling interlinking analysis."""
+    relevance_threshold: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description="Minimum relevance score threshold (0.0 to 1.0). Links below this score will be filtered out unless allow_low_value_links is true."
+    )
+    authority_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight for authority score in relevance calculation (0.0 to 1.0). Higher values prioritize authoritative content."
+    )
+    allow_low_value_links: bool = Field(
+        default=False,
+        description="If true, include links even if they fall below the relevance threshold. Useful for strategic linking despite lower relevance."
+    )
+
+
 class IntegrationConnectAndRecommendRequest(BaseModel):
     """Legacy request model (backward compatibility)."""
     tenant_id: Optional[str] = None
@@ -46,26 +66,6 @@ class IntegrationRecommendationResponse(BaseModel):
     recommended_interlinks: int = 0
     per_keyword: List[KeywordRecommendation]
     notes: Optional[str] = None
-
-
-class InterlinkingSettings(BaseModel):
-    """Settings for controlling interlinking analysis."""
-    relevance_threshold: float = Field(
-        default=0.4,
-        ge=0.0,
-        le=1.0,
-        description="Minimum relevance score threshold (0.0 to 1.0). Links below this score will be filtered out unless allow_low_value_links is true."
-    )
-    authority_weight: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        description="Weight for authority score in relevance calculation (0.0 to 1.0). Higher values prioritize authoritative content."
-    )
-    allow_low_value_links: bool = Field(
-        default=False,
-        description="If true, include links even if they fall below the relevance threshold. Useful for strategic linking despite lower relevance."
-    )
 
 
 class InterlinkOpportunity(BaseModel):
