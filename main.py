@@ -153,6 +153,8 @@ from src.blog_writer_sdk.seo.content_length_optimizer import ContentLengthOptimi
 from src.blog_writer_sdk.seo.topic_recommender import TopicRecommendationEngine
 from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchConsoleClient
 from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficultyAnalyzer
+from src.blog_writer_sdk.seo.keyword_categorizer import KeywordCategorizer, KeywordCategory
+from src.blog_writer_sdk.seo.cluster_content_generator import ClusterContentGenerator
 from src.blog_writer_sdk.services.quota_manager import QuotaManager
 from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
@@ -4524,6 +4526,18 @@ async def analyze_keywords_enhanced(
                 "topics": [],
             })
             
+            # Categorize keyword using KeywordCategorizer
+            categorizer = KeywordCategorizer()
+            category_assignment = categorizer.categorize_keyword(
+                keyword=k,
+                search_volume=search_volume,
+                difficulty=float(difficulty_score) if difficulty_score is not None else 50.0,
+                competition=competition_value,
+                cpc=cpc_value,
+                trend_score=trend_score_value,
+                keyword_ideas_count=len(keyword_ideas_enhanced.get("all_ideas", []))
+            )
+            
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
                 "global_search_volume": v.global_search_volume or 0,
@@ -4548,6 +4562,11 @@ async def analyze_keywords_enhanced(
                 "parent_topic": parent_topic,
                 "category_type": category_type,
                 "cluster_score": cluster_score,
+                # Strategic categorization
+                "category": category_assignment.category.value,
+                "category_confidence": category_assignment.confidence,
+                "category_reasoning": category_assignment.reasoning,
+                "priority_score": category_assignment.priority_score,
                 # AI Optimization metrics (critical for AI-optimized content)
                 "ai_search_volume": ai_search_volume,
                 "ai_trend": ai_trend,
@@ -4564,30 +4583,117 @@ async def analyze_keywords_enhanced(
                 "last_updated": v.last_updated,
             }
         
+        # Initialize categorizer and content generator for clusters
+        categorizer = KeywordCategorizer()
+        ai_generator = AIContentGenerator() if hasattr(enhanced_analyzer, '_ai_generator') else None
+        content_generator = ClusterContentGenerator(ai_generator=ai_generator)
+        
+        # Build keywords_data dict for cluster categorization
+        keywords_data = {}
+        for k, v in out.items():
+            keywords_data[k] = {
+                "search_volume": v.get("search_volume", 0),
+                "difficulty_score": v.get("difficulty_score", 50.0),
+                "competition": v.get("competition", 0.5),
+                "cpc": v.get("cpc", 0.0),
+                "trend_score": v.get("trend_score", 0.0),
+                "keyword_ideas": v.get("keyword_ideas", [])
+            }
+        
         # Ensure clusters are always returned, even if empty
-        clusters_list = [
-            {
+        clusters_list = []
+        for c in clustering_result.clusters:
+            cluster_dict = {
                 "parent_topic": c.parent_topic,
                 "keywords": c.keywords,
                 "cluster_score": c.cluster_score,
                 "category_type": c.category_type,
                 "keyword_count": len(c.keywords)
             }
-            for c in clustering_result.clusters
-        ]
+            
+            # Add strategic category
+            try:
+                cluster_category = categorizer.categorize_cluster(
+                    cluster={"keywords": c.keywords},
+                    keywords_data=keywords_data
+                )
+                cluster_dict["category"] = cluster_category.value
+                
+                # Generate priority
+                priority = categorizer.generate_cluster_priority(
+                    cluster={"keywords": c.keywords},
+                    keywords_data=keywords_data
+                )
+                cluster_dict["priority"] = priority
+                
+                # Generate content recommendations (async, but we'll do it synchronously for now)
+                # Note: This could be made async/optional in the future
+                try:
+                    content_rec = await content_generator.generate_cluster_content_recommendations(
+                        cluster={"parent_topic": c.parent_topic, "keywords": c.keywords},
+                        category=cluster_category,
+                        keywords_data=keywords_data,
+                        priority=priority
+                    )
+                    
+                    cluster_dict["content_recommendations"] = {
+                        "pillar_title": content_rec.pillar_title,
+                        "pillar_description": content_rec.pillar_description,
+                        "pillar_url": content_rec.pillar_url,
+                        "sub_pages": content_rec.sub_pages,
+                        "estimated_word_count": content_rec.estimated_word_count
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to generate content recommendations for cluster {c.parent_topic}: {e}")
+                    cluster_dict["content_recommendations"] = None
+                    
+            except Exception as e:
+                logger.warning(f"Failed to categorize cluster {c.parent_topic}: {e}")
+                cluster_dict["category"] = "Semantic Topics"
+                cluster_dict["priority"] = 3
+            
+            clusters_list.append(cluster_dict)
         
         # If no clusters found, create single-keyword clusters from all keywords
         if not clusters_list and all_keywords:
             logger.warning(f"No clusters found for {len(all_keywords)} keywords, creating single-keyword clusters")
             for kw in all_keywords[:50]:  # Limit to first 50 to avoid huge responses
                 parent_topic = clustering._extract_parent_topic_from_keyword(kw)
-                clusters_list.append({
+                cluster_dict = {
                     "parent_topic": parent_topic,
                     "keywords": [kw],
                     "cluster_score": 0.5,
                     "category_type": clustering._classify_keyword_type(kw),
                     "keyword_count": 1
-                })
+                }
+                
+                # Add category if keyword data available
+                if kw in keywords_data:
+                    try:
+                        kw_data = keywords_data[kw]
+                        category_assignment = categorizer.categorize_keyword(
+                            keyword=kw,
+                            search_volume=kw_data.get("search_volume", 0),
+                            difficulty=kw_data.get("difficulty_score", 50.0),
+                            competition=kw_data.get("competition", 0.5),
+                            cpc=kw_data.get("cpc", 0.0),
+                            trend_score=kw_data.get("trend_score", 0.0),
+                            keyword_ideas_count=len(kw_data.get("keyword_ideas", []))
+                        )
+                        cluster_dict["category"] = category_assignment.category.value
+                        cluster_dict["priority"] = categorizer.generate_cluster_priority(
+                            cluster={"keywords": [kw]},
+                            keywords_data=keywords_data
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to categorize single-keyword cluster {kw}: {e}")
+                        cluster_dict["category"] = "Semantic Topics"
+                        cluster_dict["priority"] = 3
+                else:
+                    cluster_dict["category"] = "Semantic Topics"
+                    cluster_dict["priority"] = 3
+                
+                clusters_list.append(cluster_dict)
         
         discovery_data = {}
         serp_analysis_summary = {}
@@ -4648,6 +4754,140 @@ async def analyze_keywords_enhanced(
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
+
+class ClusterContentRequest(BaseModel):
+    """Request model for generating cluster content recommendations."""
+    cluster_name: str = Field(..., description="Name/topic of the cluster")
+    keywords: List[str] = Field(..., min_items=1, description="Keywords in the cluster")
+    keywords_data: Optional[Dict[str, Dict[str, Any]]] = Field(
+        None,
+        description="Optional keyword analysis data (search_volume, difficulty_score, competition, cpc, trend_score, keyword_ideas)"
+    )
+    use_ai: bool = Field(default=True, description="Use AI to generate titles and descriptions")
+
+
+@app.post("/api/v1/keywords/cluster-content")
+async def generate_cluster_content(
+    request: ClusterContentRequest,
+    http_request: Request
+):
+    """
+    Generate content recommendations (titles, descriptions, URLs) for a keyword cluster.
+    
+    Returns:
+    - Pillar article title, description, and URL
+    - Sub-page article recommendations
+    - Strategic category (Quick Wins, Authority Builders, etc.)
+    - Priority score (1-5)
+    - Estimated word count
+    """
+    try:
+        # Initialize categorizer and content generator
+        categorizer = KeywordCategorizer()
+        ai_generator = AIContentGenerator() if request.use_ai else None
+        content_generator = ClusterContentGenerator(ai_generator=ai_generator)
+        
+        # Build keywords_data if not provided
+        if not request.keywords_data:
+            # Try to get keyword data from enhanced analyzer if available
+            keywords_data = {}
+            # Use global enhanced_analyzer (defined at module level)
+            global enhanced_analyzer
+            if enhanced_analyzer:
+                try:
+                    # Analyze keywords to get metrics
+                    analysis_results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                        keywords=request.keywords,
+                        tenant_id=os.getenv("TENANT_ID", "default")
+                    )
+                    
+                    for kw in request.keywords:
+                        if kw in analysis_results:
+                            kw_result = analysis_results[kw]
+                            keywords_data[kw] = {
+                                "search_volume": kw_result.search_volume or 0,
+                                "difficulty_score": getattr(kw_result, 'difficulty_score', 50.0) or 50.0,
+                                "competition": kw_result.competition or 0.5,
+                                "cpc": kw_result.cpc or 0.0,
+                                "trend_score": kw_result.trend_score or 0.0,
+                                "keyword_ideas": getattr(kw_result, 'keyword_ideas', []) or []
+                            }
+                except Exception as e:
+                    logger.warning(f"Failed to get keyword data from analyzer: {e}")
+                    # Use defaults
+                    keywords_data = {
+                        kw: {
+                            "search_volume": 0,
+                            "difficulty_score": 50.0,
+                            "competition": 0.5,
+                            "cpc": 0.0,
+                            "trend_score": 0.0,
+                            "keyword_ideas": []
+                        }
+                        for kw in request.keywords
+                    }
+            else:
+                # Use defaults
+                keywords_data = {
+                    kw: {
+                        "search_volume": 0,
+                        "difficulty_score": 50.0,
+                        "competition": 0.5,
+                        "cpc": 0.0,
+                        "trend_score": 0.0,
+                        "keyword_ideas": []
+                    }
+                    for kw in request.keywords
+                }
+        else:
+            keywords_data = request.keywords_data
+        
+        # Categorize cluster
+        cluster_category = categorizer.categorize_cluster(
+            cluster={"keywords": request.keywords},
+            keywords_data=keywords_data
+        )
+        
+        # Generate priority
+        priority = categorizer.generate_cluster_priority(
+            cluster={"keywords": request.keywords},
+            keywords_data=keywords_data
+        )
+        
+        # Generate content recommendations
+        content_rec = await content_generator.generate_cluster_content_recommendations(
+            cluster={"parent_topic": request.cluster_name, "keywords": request.keywords},
+            category=cluster_category,
+            keywords_data=keywords_data,
+            priority=priority
+        )
+        
+        # Build response
+        response = {
+            "cluster_name": request.cluster_name,
+            "category": cluster_category.value,
+            "priority": priority,
+            "pillar_article": {
+                "title": content_rec.pillar_title,
+                "description": content_rec.pillar_description,
+                "url": content_rec.pillar_url
+            },
+            "sub_pages": content_rec.sub_pages,
+            "estimated_word_count": content_rec.estimated_word_count,
+            "keyword_count": len(request.keywords)
+        }
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cluster content generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cluster content generation failed: {str(e)}"
         )
 
 
