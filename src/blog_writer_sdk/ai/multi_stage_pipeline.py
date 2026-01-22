@@ -765,7 +765,7 @@ class MultiStageGenerationPipeline:
             )
             logger.info("Scoring content quality (Phase 3)")
             try:
-                include_eeat = additional_context.get('include_eeat', False) if additional_context else True
+                include_eeat = additional_context.get('include_eeat', False) if additional_context else False
                 quality_report = self.quality_scorer.score_content(
                     content=enhanced_content,
                     title=meta_title,
