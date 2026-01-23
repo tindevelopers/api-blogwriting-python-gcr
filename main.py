@@ -155,6 +155,7 @@ from src.blog_writer_sdk.integrations.google_search_console import GoogleSearchC
 from src.blog_writer_sdk.seo.keyword_difficulty_analyzer import KeywordDifficultyAnalyzer
 from src.blog_writer_sdk.seo.keyword_categorizer import KeywordCategorizer, KeywordCategory
 from src.blog_writer_sdk.seo.cluster_content_generator import ClusterContentGenerator
+from src.blog_writer_sdk.seo.keyword_validator import KeywordValidator
 from src.blog_writer_sdk.services.quota_manager import QuotaManager
 from src.blog_writer_sdk.middleware.rate_limiter import RateLimitTier
 from src.blog_writer_sdk.utils.content_metadata import extract_content_metadata
@@ -4208,6 +4209,13 @@ async def analyze_keywords_enhanced(
         
         # Get additional keyword suggestions using DataForSEO if available
         all_keywords = list(limited_keywords)
+        
+        # Initialize keyword validator for filtering suggestions
+        # Use global ai_generator if available
+        global ai_generator
+        keyword_validator = KeywordValidator(ai_generator=ai_generator)
+        min_search_volume = 10  # Minimum search volume threshold
+        
         if enhanced_analyzer and enhanced_analyzer._df_client:
             try:
                 tenant_id = os.getenv("TENANT_ID", "default")
@@ -4228,13 +4236,40 @@ async def analyze_keywords_enhanced(
                             limit=max_suggestions
                         )
                         
-                        # Add new keywords that aren't already in the list (apply testing limits)
+                        # Validate and filter suggestions before adding
+                        validated_count = 0
+                        rejected_count = 0
+                        
                         for suggestion in df_suggestions:
                             if len(all_keywords) >= max_total:
                                 break
+                            
                             kw = suggestion.get("keyword", "").strip()
-                            if kw and kw not in all_keywords:
+                            if not kw or kw in all_keywords:
+                                continue
+                            
+                            search_volume = suggestion.get("search_volume", 0)
+                            
+                            # Validate keyword
+                            validation = await keyword_validator.validate_keyword(
+                                keyword=kw,
+                                seed_keyword=seed_keyword,
+                                search_volume=search_volume,
+                                min_search_volume=min_search_volume,
+                                min_semantic_score=0.3
+                            )
+                            
+                            if validation["valid"]:
                                 all_keywords.append(kw)
+                                validated_count += 1
+                                logger.debug(f"✅ Validated keyword: {kw} (volume: {search_volume}, confidence: {validation['confidence']:.2f})")
+                            else:
+                                rejected_count += 1
+                                logger.debug(f"❌ Rejected keyword: {kw} (reason: {validation['reason']}, volume: {search_volume})")
+                        
+                        if validated_count > 0 or rejected_count > 0:
+                            logger.info(f"Keyword validation for '{seed_keyword}': {validated_count} accepted, {rejected_count} rejected")
+                            
                     except Exception as e:
                         logger.warning(f"Failed to get suggestions for {seed_keyword}: {e}")
                         continue

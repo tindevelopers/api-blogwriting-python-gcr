@@ -1884,14 +1884,18 @@ class DataForSEOClient:
     
     def _generate_fallback_suggestions(self, seed_keyword: str, limit: int) -> List[Dict[str, Any]]:
         """Generate fallback keyword suggestions when API fails."""
+        # Removed problematic modifiers that create nonsensical combinations
+        # Removed: "free", "online", "virtual", "digital" - these don't make sense for physical services
         modifiers = [
             "best", "top", "how to", "guide", "tips", "benefits", "reviews",
-            "comparison", "vs", "alternatives", "free", "paid", "online",
-            "2024", "2025", "latest", "new", "popular", "trending"
+            "comparison", "vs", "alternatives", "cost", "price", "near me",
+            "2024", "2025", "latest", "new", "popular", "trending", "professional",
+            "expert", "quality", "affordable", "licensed", "certified"
         ]
         
         suggestions = []
         for i, modifier in enumerate(modifiers[:limit]):
+            # Alternate between prefix and suffix
             keyword = f"{modifier} {seed_keyword}" if i % 2 == 0 else f"{seed_keyword} {modifier}"
             suggestions.append({
                 "keyword": keyword,
