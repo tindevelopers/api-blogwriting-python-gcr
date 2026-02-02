@@ -562,6 +562,7 @@ class HealthResponse(BaseModel):
     status: str
     timestamp: float
     version: str
+    components: Optional[Dict[str, Any]] = None
 
 
 class ErrorResponse(BaseModel):
@@ -766,6 +767,19 @@ async def lifespan(app: FastAPI):
     
     # Load environment variables from mounted secrets
     load_env_from_secrets()
+    
+    # Initialize AI Content Generator (after secrets are loaded)
+    global ai_generator, blog_writer
+    logger.info("Initializing AI Content Generator...")
+    ai_init_success = initialize_ai_generator_with_retry(max_retries=3, retry_delay=1.0)
+    if ai_init_success:
+        print("✅ AI Content Generator initialized successfully")
+    else:
+        if ai_generator_init_error and "No AI provider credentials" not in ai_generator_init_error:
+            print(f"⚠️ AI Content Generator initialization failed: {ai_generator_init_error}")
+            print("⚠️ Service will start but blog generation may be limited")
+        else:
+            print("ℹ️ AI Content Generator not configured (no API keys found)")
     
     # Initialize cache manager
     redis_url = os.getenv("REDIS_URL")
@@ -975,10 +989,12 @@ async def lifespan(app: FastAPI):
     global topic_recommender
     from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
     keyword_clustering = KeywordClustering(knowledge_graph_client=google_knowledge_graph_client)
+    # Use get_ai_generator() to ensure it's initialized
+    ai_gen_for_topic = get_ai_generator()
     topic_recommender = TopicRecommendationEngine(
         dataforseo_client=dataforseo_client_global,
         google_search_client=google_custom_search_client,
-        ai_generator=ai_generator,
+        ai_generator=ai_gen_for_topic,
         keyword_clustering=keyword_clustering
     )
     print("✅ Topic Recommendation Engine initialized.")
@@ -1223,25 +1239,99 @@ def create_ai_content_generator() -> Optional[AIContentGenerator]:
         except Exception as e:
             print(f"⚠️ Failed to initialize AI Content Generator: {e}")
             print("📝 AI-enhanced content generation will be disabled")
+            raise  # Re-raise to allow retry logic
     else:
         print("ℹ️ No AI provider credentials found. AI-enhanced content generation disabled.")
     
     return None
 
 
+def initialize_ai_generator_with_retry(max_retries: int = 3, retry_delay: float = 1.0) -> bool:
+    """
+    Initialize AI Content Generator with retry logic.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        retry_delay: Initial delay between retries (exponential backoff)
+        
+    Returns:
+        True if initialization succeeded, False otherwise
+    """
+    global ai_generator, ai_generator_initialized, ai_generator_init_error
+    
+    # If already initialized, return success
+    if ai_generator_initialized and ai_generator is not None:
+        return True
+    
+    for attempt in range(max_retries):
+        try:
+            ai_generator = create_ai_content_generator()
+            if ai_generator is not None:
+                ai_generator_initialized = True
+                ai_generator_init_error = None
+                
+                # Update blog_writer with initialized generator
+                blog_writer.ai_generator = ai_generator
+                blog_writer.enable_ai_enhancement = True
+                
+                logger.info(f"✅ AI Content Generator initialized successfully (attempt {attempt + 1})")
+                return True
+            else:
+                # No providers configured - this is OK, not an error
+                ai_generator_initialized = True  # Mark as initialized (even if None)
+                ai_generator_init_error = "No AI provider credentials found"
+                logger.info("ℹ️ AI Content Generator not configured (no API keys found)")
+                return False
+                
+        except Exception as e:
+            ai_generator_init_error = str(e)
+            logger.warning(f"⚠️ AI Content Generator initialization attempt {attempt + 1} failed: {e}")
+            
+            if attempt < max_retries - 1:
+                delay = retry_delay * (2 ** attempt)  # Exponential backoff
+                logger.info(f"⏳ Retrying in {delay:.1f} seconds...")
+                time.sleep(delay)
+            else:
+                logger.error(f"❌ All AI Content Generator initialization attempts failed")
+                ai_generator_initialized = True  # Mark as attempted (failed)
+                return False
+    
+    return False
+
+
+def get_ai_generator() -> Optional[AIContentGenerator]:
+    """
+    Get AI Content Generator instance, initialize if needed (lazy initialization).
+    
+    Returns:
+        AIContentGenerator instance or None if initialization failed/not configured
+    """
+    global ai_generator, ai_generator_initialized
+    
+    # If not initialized, try lazy initialization
+    if not ai_generator_initialized:
+        logger.warning("AI Content Generator not initialized, attempting lazy initialization")
+        initialize_ai_generator_with_retry(max_retries=2, retry_delay=0.5)
+    
+    return ai_generator
+
+
 # LiteLLM router removed - using direct AI provider integrations
 
 
-# Global instances
+# Global instances (will be initialized in lifespan after secrets are loaded)
 enhanced_analyzer = create_enhanced_keyword_analyzer()
-ai_generator = create_ai_content_generator()
+ai_generator: Optional[AIContentGenerator] = None  # Will be initialized in lifespan
+ai_generator_initialized = False
+ai_generator_init_error: Optional[str] = None
+
 # LiteLLM router removed
 blog_writer = BlogWriter(
     enable_seo_optimization=True,
     enable_quality_analysis=True,
     enhanced_keyword_analyzer=enhanced_analyzer,
-    ai_content_generator=ai_generator,
-    enable_ai_enhancement=ai_generator is not None,
+    ai_content_generator=None,  # Will be set after initialization
+    enable_ai_enhancement=False,  # Will be updated after initialization
 )
 
 # Phase 1-3 global services (initialized in lifespan)
@@ -1267,11 +1357,49 @@ async def health_check():
     - Liveness probes
     - Readiness probes  
     - Startup probes
+    
+    Verifies critical components are initialized.
     """
-    return HealthResponse(
-        status="healthy",
+    global ai_generator, ai_generator_initialized, ai_generator_init_error
+    
+    # Check component initialization status
+    components_status = {
+        "blog_writer": blog_writer is not None,
+        "enhanced_analyzer": enhanced_analyzer is not None,
+        "ai_content_generator": ai_generator is not None,
+        "ai_generator_initialized": ai_generator_initialized,
+    }
+    
+    # Determine overall health status
+    critical_components_ok = (
+        blog_writer is not None and
+        enhanced_analyzer is not None
+    )
+    
+    # AI generator is optional (service can run without it, but with limited functionality)
+    status = "healthy" if critical_components_ok else "degraded"
+    
+    # If AI generator failed to initialize (and it's not just missing credentials), mark as degraded
+    if ai_generator_initialized and ai_generator is None and ai_generator_init_error:
+        if "No AI provider credentials" not in ai_generator_init_error:
+            status = "degraded"
+            components_status["ai_generator_error"] = ai_generator_init_error
+    
+    # Return 503 if degraded, 200 if healthy
+    status_code = 503 if status == "degraded" else 200
+    
+    # Return HealthResponse model (FastAPI will handle status code via response_model)
+    health_response = HealthResponse(
+        status=status,
         timestamp=time.time(),
-        version=f"{APP_VERSION}-cloudrun"
+        version=f"{APP_VERSION}-cloudrun",
+        components=components_status
+    )
+    
+    # Use JSONResponse to set custom status code
+    return JSONResponse(
+        content=health_response.model_dump(),
+        status_code=status_code
     )
 
 
@@ -1941,10 +2069,15 @@ async def generate_blog_enhanced(
         logger.info("Using multi-stage pipeline for blog generation")
         
         # Check if AI generator is available
-        if ai_generator is None:
+        # Try to get AI generator (with lazy initialization)
+        ai_gen = get_ai_generator()
+        if ai_gen is None:
+            error_detail = "AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
+            if ai_generator_init_error:
+                error_detail += f" Error: {ai_generator_init_error}"
             raise HTTPException(
                 status_code=503,
-                detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
+                detail=error_detail
             )
         
         # Create progress callback for streaming updates
@@ -1975,8 +2108,16 @@ async def generate_blog_enhanced(
             gsc_client = google_search_console_client
         
         # Initialize pipeline with Phase 3 components and additional enhancements
+        # Get AI generator with lazy initialization
+        ai_gen = get_ai_generator()
+        if ai_gen is None:
+            raise HTTPException(
+                status_code=503,
+                detail="AI Content Generator is not initialized. Please configure AI provider credentials (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)"
+            )
+        
         pipeline = MultiStageGenerationPipeline(
-            ai_generator=ai_generator,
+            ai_generator=ai_gen,
             google_search=google_custom_search_client if request.use_google_search else None,
             readability_analyzer=readability_analyzer,
             knowledge_graph=google_knowledge_graph_client if request.use_knowledge_graph else None,
@@ -2758,14 +2899,23 @@ async def blog_generation_worker(request: Dict[str, Any]):
             if not USE_DATAFORSEO:
                 logger.info(f"Worker: Using multi-stage pipeline for blog generation")
                 
-                # Check if AI generator is available
-                if ai_generator is None:
+                # Check if AI generator is available (with lazy initialization)
+                ai_gen = get_ai_generator()
+                if ai_gen is None:
                     job.status = JobStatus.FAILED
-                    job.error_message = "AI Content Generator is not initialized"
+                    error_msg = "AI Content Generator is not initialized"
+                    if ai_generator_init_error:
+                        error_msg += f": {ai_generator_init_error}"
+                    job.error_message = error_msg
                     job.completed_at = datetime.utcnow()
+                    logger.error(f"Job {job_id} failed: {error_msg}")
                     return JSONResponse(
                         status_code=503,
-                        content={"error": "AI Content Generator is not initialized"}
+                        content={
+                            "error": error_msg,
+                            "job_id": job_id,
+                            "status": "failed"
+                        }
                     )
             
             # Handle Google Search Console client (multi-site support)
@@ -2790,8 +2940,9 @@ async def blog_generation_worker(request: Dict[str, Any]):
                 gsc_client_worker = google_search_console_client
             
             # Initialize pipeline (same as synchronous endpoint)
+            # Use ai_gen which was already retrieved with lazy initialization
             pipeline = MultiStageGenerationPipeline(
-                ai_generator=ai_generator,
+                ai_generator=ai_gen,
                 google_search=google_custom_search_client if blog_request.use_google_search else None,
                 readability_analyzer=readability_analyzer,
                 knowledge_graph=google_knowledge_graph_client if blog_request.use_knowledge_graph else None,
