@@ -5281,6 +5281,95 @@ async def analyze_keywords_enhanced(
                                 tenant_id=tenant_id_env
                             )
                             results.update(additional_results)
+                            # Rebuild 'out' dict to include newly analyzed keywords
+                            # This ensures discovery keywords appear in enhanced_analysis
+                            for k, v in additional_results.items():
+                                if k not in out:
+                                    # Build the same structure as other keywords
+                                    parent_topic = clustering._extract_parent_topic_from_keyword(k) if clustering else k
+                                    category_type = clustering._classify_keyword_type(k) if clustering else "topic"
+                                    cluster_score = 0.5
+                                    
+                                    search_volume = v.search_volume if v.search_volume is not None else 0
+                                    cpc_value = v.cpc if v.cpc is not None else 0.0
+                                    competition_value = v.competition if v.competition is not None else 0.0
+                                    trend_score_value = v.trend_score if v.trend_score is not None else 0.0
+                                    
+                                    ai_metrics = ai_optimization_data.get(k, {})
+                                    ai_search_volume = ai_metrics.get("ai_search_volume", 0) or 0
+                                    ai_trend = ai_metrics.get("ai_trend", 0.0) or 0.0
+                                    
+                                    try:
+                                        difficulty_score = getattr(v, 'difficulty_score', None)
+                                    except (AttributeError, ValueError):
+                                        difficulty_score = None
+                                    
+                                    if difficulty_score is None:
+                                        difficulty_enum = v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty)
+                                        enum_to_score = {
+                                            "VERY_EASY": 10.0, "EASY": 30.0, "MEDIUM": 50.0,
+                                            "HARD": 70.0, "VERY_HARD": 90.0
+                                        }
+                                        difficulty_score = enum_to_score.get(difficulty_enum, 50.0)
+                                    
+                                    related_keywords_enhanced = related_keywords_data.get(k, [])
+                                    keyword_ideas_enhanced = keyword_ideas_data.get(k, {
+                                        "all_ideas": [], "questions": [], "topics": []
+                                    })
+                                    
+                                    categorizer = KeywordCategorizer()
+                                    category_assignment = categorizer.categorize_keyword(
+                                        keyword=k,
+                                        search_volume=search_volume,
+                                        difficulty=float(difficulty_score) if difficulty_score is not None else 50.0,
+                                        competition=competition_value,
+                                        cpc=cpc_value,
+                                        trend_score=trend_score_value,
+                                        keyword_ideas_count=len(keyword_ideas_enhanced.get("all_ideas", []))
+                                    )
+                                    
+                                    out[k] = {
+                                        "search_volume": search_volume,
+                                        "global_search_volume": v.global_search_volume or 0,
+                                        "search_volume_by_country": v.search_volume_by_country,
+                                        "monthly_searches": v.monthly_searches,
+                                        "difficulty": v.difficulty.value if hasattr(v.difficulty, "value") else str(v.difficulty),
+                                        "difficulty_score": float(difficulty_score) if difficulty_score is not None else 50.0,
+                                        "competition": competition_value,
+                                        "cpc": cpc_value,
+                                        "cpc_currency": v.cpc_currency,
+                                        "cps": v.cps,
+                                        "clicks": v.clicks,
+                                        "trend_score": trend_score_value,
+                                        "recommended": v.recommended,
+                                        "reason": v.reason,
+                                        "related_keywords": v.related_keywords,
+                                        "related_keywords_enhanced": related_keywords_enhanced,
+                                        "long_tail_keywords": v.long_tail_keywords,
+                                        "questions": keyword_ideas_enhanced.get("questions", []),
+                                        "topics": keyword_ideas_enhanced.get("topics", []),
+                                        "keyword_ideas": keyword_ideas_enhanced.get("all_ideas", []),
+                                        "parent_topic": parent_topic,
+                                        "category_type": category_type,
+                                        "cluster_score": cluster_score,
+                                        "category": category_assignment.category.value,
+                                        "category_confidence": category_assignment.confidence,
+                                        "category_reasoning": category_assignment.reasoning,
+                                        "priority_score": category_assignment.priority_score,
+                                        "ai_search_volume": ai_search_volume,
+                                        "ai_trend": ai_trend,
+                                        "ai_monthly_searches": ai_metrics.get("ai_monthly_searches", []),
+                                        "traffic_potential": v.traffic_potential,
+                                        "serp_features": v.serp_features,
+                                        "serp_feature_counts": v.serp_feature_counts,
+                                        "primary_intent": v.primary_intent,
+                                        "intent_probabilities": v.intent_probabilities,
+                                        "also_rank_for": v.also_rank_for,
+                                        "also_talk_about": v.also_talk_about,
+                                        "top_competitors": v.top_competitors,
+                                        "first_seen": v.first_seen,
+                                        "last_updated": v.last_updated,
+                                    }
             except Exception as e:
                 logger.warning(f"Keyword discovery enrichment failed: {e}", exc_info=True)
         else:
