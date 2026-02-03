@@ -4361,11 +4361,18 @@ async def analyze_keywords_enhanced(
         # Get additional keyword suggestions using DataForSEO if available
         all_keywords = list(limited_keywords)
         
-        # Initialize keyword validator for filtering suggestions
+        # Initialize keyword validator and quality scorer for filtering and ranking
         # Use global ai_generator if available
         global ai_generator
         keyword_validator = KeywordValidator(ai_generator=ai_generator)
-        min_search_volume = 10  # Minimum search volume threshold
+        from src.blog_writer_sdk.seo.keyword_quality_scorer import (
+            calculate_keyword_quality_score,
+            sort_keywords_by_quality
+        )
+        min_search_volume = 0  # Relaxed: Allow low-volume long-tail keywords
+        
+        # Collect all keyword suggestions from multiple sources with types
+        all_keyword_data = []  # Will store dicts with keyword, metrics, type, source
         
         if enhanced_analyzer and enhanced_analyzer._df_client:
             try:
@@ -4387,31 +4394,40 @@ async def analyze_keywords_enhanced(
                             limit=max_suggestions
                         )
                         
-                        # Validate and filter suggestions before adding
+                        # Validate and collect suggestions with type information
                         validated_count = 0
                         rejected_count = 0
                         
                         for suggestion in df_suggestions:
-                            if len(all_keywords) >= max_total:
-                                break
-                            
                             kw = suggestion.get("keyword", "").strip()
-                            if not kw or kw in all_keywords:
+                            if not kw:
                                 continue
                             
                             search_volume = suggestion.get("search_volume", 0)
                             
-                            # Validate keyword
+                            # Validate keyword (relaxed thresholds for better coverage)
                             validation = await keyword_validator.validate_keyword(
                                 keyword=kw,
                                 seed_keyword=seed_keyword,
                                 search_volume=search_volume,
                                 min_search_volume=min_search_volume,
-                                min_semantic_score=0.3
+                                min_semantic_score=0.2  # Relaxed from 0.3 for better coverage
                             )
                             
                             if validation["valid"]:
-                                all_keywords.append(kw)
+                                # Add keyword data with type and source
+                                all_keyword_data.append({
+                                    "keyword": kw,
+                                    "search_volume": search_volume,
+                                    "cpc": suggestion.get("cpc", 0.0),
+                                    "competition": suggestion.get("competition", 0.5),
+                                    "keyword_difficulty": suggestion.get("keyword_difficulty", 50.0),
+                                    "type": "Keyword Suggestion",
+                                    "source": "keyword_suggestions",
+                                    "seed_keyword": seed_keyword,
+                                    "relevance": validation.get("confidence", 1.0),
+                                    "validation": validation
+                                })
                                 validated_count += 1
                                 logger.debug(f"✅ Validated keyword: {kw} (volume: {search_volume}, confidence: {validation['confidence']:.2f})")
                             else:
@@ -4426,6 +4442,47 @@ async def analyze_keywords_enhanced(
                         continue
             except Exception as e:
                 logger.warning(f"DataForSEO suggestions failed: {e}")
+        
+        # Process all collected keywords: deduplicate, calculate quality scores, and sort
+        if all_keyword_data:
+            logger.info(f"Processing {len(all_keyword_data)} keywords from multiple sources")
+            
+            # Deduplicate by keyword text (case-insensitive)
+            seen_keywords = set()
+            deduplicated_keywords = []
+            for kw_data in all_keyword_data:
+                keyword_lower = kw_data["keyword"].lower()
+                if keyword_lower not in seen_keywords:
+                    seen_keywords.add(keyword_lower)
+                    deduplicated_keywords.append(kw_data)
+            
+            logger.info(f"Deduplicated to {len(deduplicated_keywords)} unique keywords")
+            
+            # Calculate quality scores for all keywords
+            for kw_data in deduplicated_keywords:
+                kw_data["quality_score"] = calculate_keyword_quality_score(
+                    search_volume=kw_data.get("search_volume", 0),
+                    difficulty=kw_data.get("keyword_difficulty", 50.0),
+                    cpc=kw_data.get("cpc", 0.0),
+                    competition=kw_data.get("competition", 0.5),
+                    relevance=kw_data.get("relevance", 1.0),
+                    keyword_type=kw_data.get("type")
+                )
+            
+            # Sort by quality score (highest first)
+            deduplicated_keywords = sort_keywords_by_quality(deduplicated_keywords, reverse=True)
+            
+            # Add top keywords to all_keywords list (respecting max_total limit)
+            keywords_added = 0
+            for kw_data in deduplicated_keywords:
+                if len(all_keywords) >= max_total:
+                    break
+                keyword = kw_data["keyword"]
+                if keyword not in all_keywords:
+                    all_keywords.append(keyword)
+                    keywords_added += 1
+            
+            logger.info(f"Added {keywords_added} top-quality keywords from combined sources")
         
         # Analyze all keywords (original + suggestions)
         if len(all_keywords) > len(request.keywords):
@@ -4503,14 +4560,14 @@ async def analyze_keywords_enhanced(
                 max_primary = min(len(limited_keywords), 5)  # Limit to 5 primary keywords to avoid too many API calls
                 for primary_keyword in limited_keywords[:max_primary]:
                     try:
-                        # Get related keywords (graph traversal)
+                        # Get related keywords (graph traversal) - increased limits for better coverage
                         related_response = await enhanced_analyzer._df_client.get_related_keywords(
                             keyword=primary_keyword,
                             location_name=effective_location,
                             language_code=request.language or "en",
                             tenant_id=tenant_id,
-                            depth=1,  # Start with depth 1 for speed
-                            limit=20  # Limit to top 20 related keywords
+                            depth=2,  # Increased from 1 for deeper keyword discovery
+                            limit=100  # Increased from 20 for more keywords
                         )
                         # Parse related keywords response
                         related_keywords_list = []
@@ -4523,7 +4580,7 @@ async def analyze_keywords_enhanced(
                                 if task_status_code == 20000:
                                     result = first_task.get("result")
                                     if result and isinstance(result, list):
-                                        for item in result[:20]:  # Limit to 20
+                                        for item in result[:100]:  # Increased limit to 100
                                             if not isinstance(item, dict):
                                                 continue
                                             # Extract keyword from multiple possible locations
@@ -4537,13 +4594,21 @@ async def analyze_keywords_enhanced(
                                             if not keyword_text:
                                                 continue
                                             
-                                            related_keywords_list.append({
+                                            # Add related keyword with type information
+                                            kw_data = {
                                                 "keyword": keyword_text,
                                                 "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
                                                 "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
                                                 "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                                "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
-                                            })
+                                                "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                                "type": "Related Keyword",
+                                                "source": "related_keywords",
+                                                "seed_keyword": primary_keyword,
+                                                "relevance": 1.0  # Related keywords are highly relevant
+                                            }
+                                            related_keywords_list.append(kw_data)
+                                            # Also add to all_keyword_data for combined processing
+                                            all_keyword_data.append(kw_data)
                                 else:
                                     logger.debug(f"Related keywords task has error status_code: {task_status_code}, message: {first_task.get('status_message')}")
                         related_keywords_data[primary_keyword] = related_keywords_list
@@ -4552,13 +4617,13 @@ async def analyze_keywords_enhanced(
                         related_keywords_data[primary_keyword] = []
                     
                     try:
-                        # Get keyword ideas (includes questions and topics)
+                        # Get keyword ideas (includes questions and topics) - increased limits
                         ideas_response = await enhanced_analyzer._df_client.get_keyword_ideas(
                             keywords=[primary_keyword],
                             location_name=effective_location,
                             language_code=request.language or "en",
                             tenant_id=tenant_id,
-                            limit=50  # Limit to 50 ideas per keyword
+                            limit=200  # Increased from 50 for more keyword ideas
                         )
                         # Parse keyword ideas response (returns list directly)
                         ideas_list = []
@@ -4568,7 +4633,7 @@ async def analyze_keywords_enhanced(
                         # Parse keyword ideas response - handle both list and dict formats
                         if isinstance(ideas_response, list):
                             # Direct list format
-                            for item in ideas_response[:50]:  # Limit to 50
+                            for item in ideas_response[:200]:  # Increased limit to 200
                                 if not isinstance(item, dict):
                                     continue
                                 keyword_text = item.get("keyword", "") or item.get("text", "")
@@ -4586,7 +4651,11 @@ async def analyze_keywords_enhanced(
                                     "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
                                     "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
                                     "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                    "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                    "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                    "type": "KW Idea",
+                                    "source": "keyword_ideas",
+                                    "seed_keyword": primary_keyword,
+                                    "relevance": 0.9  # Ideas are generally relevant
                                 }
                                 ideas_list.append(idea_item)
                                 
@@ -4609,7 +4678,7 @@ async def analyze_keywords_enhanced(
                                 if not result or not isinstance(result, list):
                                     continue
                                 
-                                for item in result[:50]:
+                                for item in result[:200]:  # Increased limit to 200
                                     if not isinstance(item, dict):
                                         continue
                                     keyword_text = item.get("keyword", "") or item.get("text", "")
@@ -4627,7 +4696,11 @@ async def analyze_keywords_enhanced(
                                         "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
                                         "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
                                         "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                        "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                        "type": "KW Idea",
+                                        "source": "keyword_ideas",
+                                        "seed_keyword": primary_keyword,
+                                        "relevance": 0.9  # Ideas are generally relevant
                                     }
                                     ideas_list.append(idea_item)
                                     
@@ -5381,13 +5454,19 @@ async def analyze_keywords_enhanced_stream(
                                                     keyword_text = keyword_info.get("keyword", "")
                                                 
                                                 if keyword_text:
-                                                    related_keywords_list.append({
-                                                        "keyword": keyword_text,
-                                                        "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
-                                                        "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
-                                                        "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                                        "difficulty_score": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
-                                                    })
+                                            # Add related keyword with type information
+                                            kw_data = {
+                                                "keyword": keyword_text,
+                                                "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                                "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                                "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                                "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                                "type": "Related Keyword",
+                                                "source": "related_keywords",
+                                                "seed_keyword": primary_keyword,
+                                                "relevance": 1.0  # Related keywords are highly relevant
+                                            }
+                                            related_keywords_list.append(kw_data)
                             related_keywords_data[primary_keyword] = related_keywords_list
                         except Exception as e:
                             logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
