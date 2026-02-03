@@ -791,6 +791,100 @@ class DataForSEOClient:
         except Exception:
             return 0.0
     
+    @monitor_performance("dataforseo_get_autocomplete")
+    async def get_autocomplete_suggestions(
+        self,
+        keyword: str,
+        location_name: str,
+        language_code: str,
+        tenant_id: str,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get Google Autocomplete suggestions for a keyword.
+        
+        This endpoint provides real user search queries from Google's autocomplete,
+        which is a critical source of keyword discovery that matches actual user behavior.
+        
+        Args:
+            keyword: Seed keyword to get autocomplete suggestions for
+            location_name: Location for autocomplete data
+            language_code: Language code
+            tenant_id: Tenant ID for credentials
+            limit: Maximum number of suggestions to return (default: 100)
+            
+        Returns:
+            List of autocomplete suggestions with keyword text
+        """
+        try:
+            # Check cache first
+            cache_key = f"autocomplete_{keyword}_{location_name}_{language_code}"
+            if cache_key in self._cache:
+                cached_data, timestamp = self._cache[cache_key]
+                if datetime.now().timestamp() - timestamp < self._cache_ttl:
+                    logger.info(f"✅ Cache HIT for autocomplete: {keyword} (saved API call)")
+                    return cached_data
+            logger.debug(f"Cache MISS for autocomplete: {keyword} (making API call)")
+            
+            # Prepare API request
+            payload = [{
+                "keyword": keyword,
+                "location_name": location_name,
+                "language_code": language_code
+            }]
+            
+            data = await self._make_request("serp/google/autocomplete/live/advanced", payload, tenant_id)
+            
+            # Process response
+            suggestions = []
+            if data.get("tasks") and data["tasks"][0].get("result"):
+                result = data["tasks"][0]["result"]
+                if isinstance(result, list) and len(result) > 0:
+                    # Autocomplete API returns items in result[0].items[]
+                    items = result[0].get("items", [])
+                    for item in items[:limit]:
+                        if isinstance(item, dict):
+                            suggestion_text = item.get("suggestion", "") or item.get("keyword", "")
+                            if suggestion_text:
+                                suggestions.append({
+                                    "keyword": suggestion_text,
+                                    "type": "Autocomplete",
+                                    "source": "google_autocomplete",
+                                    "relevance": 0.95,  # Autocomplete is highly relevant (real user queries)
+                                    # Autocomplete doesn't provide metrics, will need to fetch separately
+                                    "search_volume": 0,
+                                    "cpc": 0.0,
+                                    "competition": 0.5,
+                                    "keyword_difficulty": 50.0
+                                })
+                elif isinstance(result, dict):
+                    # Alternative response structure
+                    items = result.get("items", [])
+                    for item in items[:limit]:
+                        if isinstance(item, dict):
+                            suggestion_text = item.get("suggestion", "") or item.get("keyword", "")
+                            if suggestion_text:
+                                suggestions.append({
+                                    "keyword": suggestion_text,
+                                    "type": "Autocomplete",
+                                    "source": "google_autocomplete",
+                                    "relevance": 0.95,
+                                    "search_volume": 0,
+                                    "cpc": 0.0,
+                                    "competition": 0.5,
+                                    "keyword_difficulty": 50.0
+                                })
+            
+            # Cache the results
+            self._cache[cache_key] = (suggestions, datetime.now().timestamp())
+            
+            logger.info(f"✅ Retrieved {len(suggestions)} autocomplete suggestions for '{keyword}'")
+            return suggestions[:limit]
+            
+        except Exception as e:
+            logger.warning(f"Error getting autocomplete suggestions: {e}")
+            return []
+    
     @monitor_performance("dataforseo_get_serp_analysis")
     async def get_serp_analysis(
         self,

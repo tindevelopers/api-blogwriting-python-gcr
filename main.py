@@ -4386,6 +4386,7 @@ async def analyze_keywords_enhanced(
                         break
                     
                     try:
+                        # Get keyword suggestions from DataForSEO Labs
                         df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
                             seed_keyword=seed_keyword,
                             location_name=effective_location,
@@ -4394,11 +4395,79 @@ async def analyze_keywords_enhanced(
                             limit=max_suggestions
                         )
                         
+                        # Get Google Autocomplete suggestions (real user queries)
+                        autocomplete_suggestions = await enhanced_analyzer._df_client.get_autocomplete_suggestions(
+                            keyword=seed_keyword,
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            limit=100  # Get up to 100 autocomplete suggestions
+                        )
+                        
+                        # Get sub-topics for additional keyword discovery
+                        try:
+                            subtopics_response = await enhanced_analyzer._df_client.generate_sub_topics(
+                                text=seed_keyword,
+                                tenant_id=tenant_id
+                            )
+                            subtopics = subtopics_response.get("subtopics", [])
+                            
+                            # Add subtopics as keyword suggestions
+                            for subtopic in subtopics[:20]:  # Limit to top 20 subtopics
+                                if isinstance(subtopic, str) and subtopic.strip():
+                                    autocomplete_suggestions.append({
+                                        "keyword": subtopic.strip(),
+                                        "type": "Sub-topic",
+                                        "source": "generate_sub_topics",
+                                        "relevance": 0.85,
+                                        "search_volume": 0,
+                                        "cpc": 0.0,
+                                        "competition": 0.5,
+                                        "keyword_difficulty": 50.0
+                                    })
+                        except Exception as e:
+                            logger.debug(f"Sub-topics generation failed for {seed_keyword}: {e}")
+                        
+                        # Combine suggestions and autocomplete
+                        all_suggestions = list(df_suggestions) + autocomplete_suggestions
+                        
                         # Validate and collect suggestions with type information
                         validated_count = 0
                         rejected_count = 0
                         
-                        for suggestion in df_suggestions:
+                        # Fetch metrics for autocomplete suggestions (they don't come with metrics)
+                        if autocomplete_suggestions:
+                            try:
+                                # Get search volume and difficulty for autocomplete keywords
+                                autocomplete_keywords = [s.get("keyword") for s in autocomplete_suggestions if s.get("keyword")]
+                                if autocomplete_keywords:
+                                    autocomplete_metrics = await enhanced_analyzer._df_client.get_search_volume_data(
+                                        keywords=autocomplete_keywords[:50],  # Limit to avoid too many API calls
+                                        location_name=effective_location,
+                                        language_code=request.language or "en",
+                                        tenant_id=tenant_id
+                                    )
+                                    autocomplete_difficulty = await enhanced_analyzer._df_client.get_keyword_difficulty(
+                                        keywords=autocomplete_keywords[:50],
+                                        location_name=effective_location,
+                                        language_code=request.language or "en",
+                                        tenant_id=tenant_id
+                                    )
+                                    
+                                    # Update autocomplete suggestions with metrics
+                                    for suggestion in autocomplete_suggestions:
+                                        kw = suggestion.get("keyword", "")
+                                        if kw in autocomplete_metrics:
+                                            metrics = autocomplete_metrics[kw]
+                                            suggestion["search_volume"] = metrics.get("search_volume", 0)
+                                            suggestion["cpc"] = metrics.get("cpc", 0.0)
+                                            suggestion["competition"] = metrics.get("competition", 0.5)
+                                        if kw in autocomplete_difficulty:
+                                            suggestion["keyword_difficulty"] = autocomplete_difficulty[kw]
+                            except Exception as e:
+                                logger.debug(f"Failed to get metrics for autocomplete suggestions: {e}")
+                        
+                        for suggestion in all_suggestions:
                             kw = suggestion.get("keyword", "").strip()
                             if not kw:
                                 continue
@@ -4415,6 +4484,10 @@ async def analyze_keywords_enhanced(
                             )
                             
                             if validation["valid"]:
+                                # Determine type from suggestion data (preserve autocomplete/sub-topic types)
+                                kw_type = suggestion.get("type", "Keyword Suggestion")
+                                kw_source = suggestion.get("source", "keyword_suggestions")
+                                
                                 # Add keyword data with type and source
                                 all_keyword_data.append({
                                     "keyword": kw,
@@ -4422,10 +4495,10 @@ async def analyze_keywords_enhanced(
                                     "cpc": suggestion.get("cpc", 0.0),
                                     "competition": suggestion.get("competition", 0.5),
                                     "keyword_difficulty": suggestion.get("keyword_difficulty", 50.0),
-                                    "type": "Keyword Suggestion",
-                                    "source": "keyword_suggestions",
+                                    "type": kw_type,
+                                    "source": kw_source,
                                     "seed_keyword": seed_keyword,
-                                    "relevance": validation.get("confidence", 1.0),
+                                    "relevance": suggestion.get("relevance", validation.get("confidence", 1.0)),
                                     "validation": validation
                                 })
                                 validated_count += 1
@@ -4548,6 +4621,77 @@ async def analyze_keywords_enhanced(
                 logger.warning(f"Failed to get AI optimization data: {e}")
                 # Continue without AI data
         
+        # Get SERP analysis for primary keywords to extract PAA questions and related searches
+        serp_analysis_data = {}
+        if enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+                
+                # Get SERP analysis for primary keywords (extract PAA questions and related searches)
+                max_primary_serp = min(len(limited_keywords), 3)  # Limit to 3 to avoid too many API calls
+                for primary_keyword in limited_keywords[:max_primary_serp]:
+                    try:
+                        serp_response = await enhanced_analyzer._df_client.get_serp_analysis(
+                            keyword=primary_keyword,
+                            location_name=effective_location,
+                            language_code=request.language or "en",
+                            tenant_id=tenant_id,
+                            depth=10,  # Analyze top 10 results
+                            include_people_also_ask=True,
+                            include_featured_snippets=True
+                        )
+                        
+                        # Extract PAA questions and related searches as keywords
+                        paa_questions = serp_response.get("people_also_ask", [])
+                        related_searches = serp_response.get("related_searches", [])
+                        
+                        # Add PAA questions to keyword ideas
+                        for paa in paa_questions[:20]:  # Limit to top 20
+                            if isinstance(paa, dict):
+                                question = paa.get("question", "") or paa.get("text", "")
+                            else:
+                                question = str(paa)
+                            
+                            if question:
+                                all_keyword_data.append({
+                                    "keyword": question,
+                                    "type": "PAA Question",
+                                    "source": "serp_analysis",
+                                    "seed_keyword": primary_keyword,
+                                    "relevance": 0.9,
+                                    "search_volume": 0,  # Will be fetched later
+                                    "cpc": 0.0,
+                                    "competition": 0.5,
+                                    "keyword_difficulty": 50.0
+                                })
+                        
+                        # Add related searches
+                        for related_search in related_searches[:20]:  # Limit to top 20
+                            if isinstance(related_search, dict):
+                                search_query = related_search.get("query", "") or related_search.get("text", "")
+                            else:
+                                search_query = str(related_search)
+                            
+                            if search_query:
+                                all_keyword_data.append({
+                                    "keyword": search_query,
+                                    "type": "Related Search",
+                                    "source": "serp_analysis",
+                                    "seed_keyword": primary_keyword,
+                                    "relevance": 0.85,
+                                    "search_volume": 0,  # Will be fetched later
+                                    "cpc": 0.0,
+                                    "competition": 0.5,
+                                    "keyword_difficulty": 50.0
+                                })
+                        
+                        serp_analysis_data[primary_keyword] = serp_response
+                    except Exception as e:
+                        logger.debug(f"Failed to get SERP analysis for {primary_keyword}: {e}")
+            except Exception as e:
+                logger.debug(f"SERP analysis failed: {e}")
+        
         # Get related keywords and keyword ideas (questions/topics) for primary keywords
         related_keywords_data = {}
         keyword_ideas_data = {}
@@ -4607,8 +4751,7 @@ async def analyze_keywords_enhanced(
                                                 "relevance": 1.0  # Related keywords are highly relevant
                                             }
                                             related_keywords_list.append(kw_data)
-                                            # Also add to all_keyword_data for combined processing
-                                            all_keyword_data.append(kw_data)
+                                            # Note: Will be added to all_keyword_data later in the flow
                                 else:
                                     logger.debug(f"Related keywords task has error status_code: {task_status_code}, message: {first_task.get('status_message')}")
                         related_keywords_data[primary_keyword] = related_keywords_list
@@ -4724,6 +4867,59 @@ async def analyze_keywords_enhanced(
                         }
             except Exception as e:
                 logger.warning(f"Failed to get related keywords and ideas: {e}")
+            
+            # IMPORTANT: Add related keywords and ideas to all_keyword_data BEFORE processing
+            # This ensures they're included in the main keyword list
+            for primary_keyword, related_list in related_keywords_data.items():
+                for kw_data in related_list:
+                    if kw_data.get("keyword") and kw_data["keyword"].lower() not in [k["keyword"].lower() for k in all_keyword_data]:
+                        all_keyword_data.append(kw_data)
+            
+            for primary_keyword, ideas_dict in keyword_ideas_data.items():
+                for idea_item in ideas_dict.get("all_ideas", []):
+                    if idea_item.get("keyword") and idea_item["keyword"].lower() not in [k["keyword"].lower() for k in all_keyword_data]:
+                        all_keyword_data.append(idea_item)
+            
+            # Process the additional keywords (related + ideas + autocomplete + SERP) if we have them
+            if all_keyword_data:
+                logger.info(f"Processing additional {len(all_keyword_data)} keywords from all sources (suggestions, autocomplete, related, ideas, SERP)")
+                
+                # Deduplicate again (in case we added duplicates)
+                seen_keywords = set()
+                deduplicated_additional = []
+                for kw_data in all_keyword_data:
+                    keyword_lower = kw_data["keyword"].lower()
+                    if keyword_lower not in seen_keywords:
+                        seen_keywords.add(keyword_lower)
+                        deduplicated_additional.append(kw_data)
+                
+                # Calculate quality scores
+                for kw_data in deduplicated_additional:
+                    if "quality_score" not in kw_data:
+                        kw_data["quality_score"] = calculate_keyword_quality_score(
+                            search_volume=kw_data.get("search_volume", 0),
+                            difficulty=kw_data.get("keyword_difficulty", 50.0),
+                            cpc=kw_data.get("cpc", 0.0),
+                            competition=kw_data.get("competition", 0.5),
+                            relevance=kw_data.get("relevance", 1.0),
+                            keyword_type=kw_data.get("type")
+                        )
+                
+                # Sort by quality
+                deduplicated_additional = sort_keywords_by_quality(deduplicated_additional, reverse=True)
+                
+                # Add to all_keywords if not already present
+                additional_added = 0
+                for kw_data in deduplicated_additional:
+                    if len(all_keywords) >= max_total:
+                        break
+                    keyword = kw_data["keyword"]
+                    if keyword not in all_keywords:
+                        all_keywords.append(keyword)
+                        additional_added += 1
+                
+                if additional_added > 0:
+                    logger.info(f"Added {additional_added} additional keywords from all sources (autocomplete, related, ideas, SERP)")
         
         # Shape into a simple dict for API response with parent topics
         out = {}
@@ -5454,19 +5650,19 @@ async def analyze_keywords_enhanced_stream(
                                                     keyword_text = keyword_info.get("keyword", "")
                                                 
                                                 if keyword_text:
-                                            # Add related keyword with type information
-                                            kw_data = {
-                                                "keyword": keyword_text,
-                                                "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
-                                                "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
-                                                "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                                "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
-                                                "type": "Related Keyword",
-                                                "source": "related_keywords",
-                                                "seed_keyword": primary_keyword,
-                                                "relevance": 1.0  # Related keywords are highly relevant
-                                            }
-                                            related_keywords_list.append(kw_data)
+                                                    # Add related keyword with type information
+                                                    kw_data = {
+                                                        "keyword": keyword_text,
+                                                        "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
+                                                        "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
+                                                        "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
+                                                        "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
+                                                        "type": "Related Keyword",
+                                                        "source": "related_keywords",
+                                                        "seed_keyword": primary_keyword,
+                                                        "relevance": 1.0  # Related keywords are highly relevant
+                                                    }
+                                                    related_keywords_list.append(kw_data)
                             related_keywords_data[primary_keyword] = related_keywords_list
                         except Exception as e:
                             logger.warning(f"Failed to get related keywords for {primary_keyword}: {e}")
