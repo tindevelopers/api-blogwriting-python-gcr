@@ -4534,12 +4534,41 @@ async def analyze_keywords_enhanced(
             
             # Calculate quality scores for all keywords
             for kw_data in deduplicated_keywords:
+                # Ensure numeric types (handle string values from API)
+                search_volume = kw_data.get("search_volume", 0)
+                difficulty = kw_data.get("keyword_difficulty", 50.0)
+                cpc = kw_data.get("cpc", 0.0)
+                competition = kw_data.get("competition", 0.5)
+                relevance = kw_data.get("relevance", 1.0)
+                
+                # Type conversion
+                try:
+                    search_volume = int(search_volume) if search_volume else 0
+                except (ValueError, TypeError):
+                    search_volume = 0
+                try:
+                    difficulty = float(difficulty) if difficulty else 50.0
+                except (ValueError, TypeError):
+                    difficulty = 50.0
+                try:
+                    cpc = float(cpc) if cpc else 0.0
+                except (ValueError, TypeError):
+                    cpc = 0.0
+                try:
+                    competition = float(competition) if competition else 0.5
+                except (ValueError, TypeError):
+                    competition = 0.5
+                try:
+                    relevance = float(relevance) if relevance else 1.0
+                except (ValueError, TypeError):
+                    relevance = 1.0
+                
                 kw_data["quality_score"] = calculate_keyword_quality_score(
-                    search_volume=kw_data.get("search_volume", 0),
-                    difficulty=kw_data.get("keyword_difficulty", 50.0),
-                    cpc=kw_data.get("cpc", 0.0),
-                    competition=kw_data.get("competition", 0.5),
-                    relevance=kw_data.get("relevance", 1.0),
+                    search_volume=search_volume,
+                    difficulty=difficulty,
+                    cpc=cpc,
+                    competition=competition,
+                    relevance=relevance,
                     keyword_type=kw_data.get("type")
                 )
             
@@ -4897,12 +4926,41 @@ async def analyze_keywords_enhanced(
                 # Calculate quality scores
                 for kw_data in deduplicated_additional:
                     if "quality_score" not in kw_data:
+                        # Ensure numeric types (handle string values from API)
+                        search_volume = kw_data.get("search_volume", 0)
+                        difficulty = kw_data.get("keyword_difficulty", 50.0)
+                        cpc = kw_data.get("cpc", 0.0)
+                        competition = kw_data.get("competition", 0.5)
+                        relevance = kw_data.get("relevance", 1.0)
+                        
+                        # Type conversion
+                        try:
+                            search_volume = int(search_volume) if search_volume else 0
+                        except (ValueError, TypeError):
+                            search_volume = 0
+                        try:
+                            difficulty = float(difficulty) if difficulty else 50.0
+                        except (ValueError, TypeError):
+                            difficulty = 50.0
+                        try:
+                            cpc = float(cpc) if cpc else 0.0
+                        except (ValueError, TypeError):
+                            cpc = 0.0
+                        try:
+                            competition = float(competition) if competition else 0.5
+                        except (ValueError, TypeError):
+                            competition = 0.5
+                        try:
+                            relevance = float(relevance) if relevance else 1.0
+                        except (ValueError, TypeError):
+                            relevance = 1.0
+                        
                         kw_data["quality_score"] = calculate_keyword_quality_score(
-                            search_volume=kw_data.get("search_volume", 0),
-                            difficulty=kw_data.get("keyword_difficulty", 50.0),
-                            cpc=kw_data.get("cpc", 0.0),
-                            competition=kw_data.get("competition", 0.5),
-                            relevance=kw_data.get("relevance", 1.0),
+                            search_volume=search_volume,
+                            difficulty=difficulty,
+                            cpc=cpc,
+                            competition=competition,
+                            relevance=relevance,
                             keyword_type=kw_data.get("type")
                         )
                 
