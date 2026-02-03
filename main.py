@@ -4387,6 +4387,7 @@ async def analyze_keywords_enhanced(
                     
                     try:
                         # Get keyword suggestions from DataForSEO Labs
+                        # Also includes Google Autocomplete, Sub-topics, and SERP analysis
                         df_suggestions = await enhanced_analyzer._df_client.get_keyword_suggestions(
                             seed_keyword=seed_keyword,
                             location_name=effective_location,
