@@ -39,6 +39,31 @@ def calculate_keyword_quality_score(
     Returns:
         Quality score (0.0-100.0)
     """
+    # Type conversion to ensure numeric types (handle string values from API)
+    try:
+        search_volume = int(search_volume) if search_volume else 0
+    except (ValueError, TypeError):
+        search_volume = 0
+    
+    try:
+        difficulty = float(difficulty) if difficulty else 50.0
+    except (ValueError, TypeError):
+        difficulty = 50.0
+    
+    try:
+        cpc = float(cpc) if cpc else 0.0
+    except (ValueError, TypeError):
+        cpc = 0.0
+    
+    try:
+        competition = float(competition) if competition else 0.5
+    except (ValueError, TypeError):
+        competition = 0.5
+    
+    try:
+        relevance = float(relevance) if relevance else 1.0
+    except (ValueError, TypeError):
+        relevance = 1.0
     # Volume component (0-40 points)
     if search_volume >= 10000:
         volume_score = 40
@@ -141,11 +166,14 @@ def sort_keywords_by_quality(
     """
     def get_quality_score(kw: Dict[str, Any]) -> float:
         """Extract or calculate quality score for a keyword."""
-        # If quality_score already exists, use it
+        # If quality_score already exists, use it (ensure it's numeric)
         if "quality_score" in kw:
-            return kw["quality_score"]
+            try:
+                return float(kw["quality_score"])
+            except (ValueError, TypeError):
+                pass  # Fall through to calculation
         
-        # Otherwise calculate it
+        # Otherwise calculate it (with type conversion)
         return calculate_keyword_quality_score(
             search_volume=kw.get("search_volume", 0),
             difficulty=kw.get("keyword_difficulty", kw.get("difficulty_score", 50.0)),
