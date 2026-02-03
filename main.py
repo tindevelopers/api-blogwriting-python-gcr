@@ -5230,6 +5230,57 @@ async def analyze_keywords_enhanced(
                     serp_analysis_summary = enrichment.pop("serp_analysis", {})
                     discovery_data = enrichment
                     logger.info(f"SERP analysis and discovery data retrieved for keyword: {request.keywords[0]}")
+                    
+                    # IMPORTANT: Add matching terms, questions, and related terms from discovery to all_keywords
+                    # These are discovered but not yet added to the main keyword list for analysis
+                    discovery_keywords_added = 0
+                    
+                    # Add matching terms
+                    matching_terms = discovery_data.get("matching_terms", [])
+                    for term in matching_terms:
+                        if isinstance(term, dict):
+                            kw = term.get("keyword", "")
+                        else:
+                            kw = str(term)
+                        
+                        if kw and kw not in all_keywords and len(all_keywords) < max_total:
+                            all_keywords.append(kw)
+                            discovery_keywords_added += 1
+                    
+                    # Add questions
+                    questions = discovery_data.get("questions", [])
+                    for q in questions:
+                        if isinstance(q, dict):
+                            kw = q.get("keyword", "")
+                        else:
+                            kw = str(q)
+                        
+                        if kw and kw not in all_keywords and len(all_keywords) < max_total:
+                            all_keywords.append(kw)
+                            discovery_keywords_added += 1
+                    
+                    # Add related terms
+                    related_terms = discovery_data.get("related_terms", [])
+                    for term in related_terms:
+                        if isinstance(term, dict):
+                            kw = term.get("keyword", "")
+                        else:
+                            kw = str(term)
+                        
+                        if kw and kw not in all_keywords and len(all_keywords) < max_total:
+                            all_keywords.append(kw)
+                            discovery_keywords_added += 1
+                    
+                    if discovery_keywords_added > 0:
+                        logger.info(f"Added {discovery_keywords_added} keywords from discovery data (matching terms, questions, related terms)")
+                        # Re-analyze the newly added keywords
+                        if len(all_keywords) > len(results):
+                            additional_keywords = all_keywords[len(results):]
+                            additional_results = await enhanced_analyzer.analyze_keywords_comprehensive(
+                                keywords=additional_keywords,
+                                tenant_id=tenant_id_env
+                            )
+                            results.update(additional_results)
             except Exception as e:
                 logger.warning(f"Keyword discovery enrichment failed: {e}", exc_info=True)
         else:
