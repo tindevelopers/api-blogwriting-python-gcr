@@ -95,6 +95,23 @@ def test_keyword_analysis_endpoint():
     assert isinstance(data, dict)
 
 
+@pytest.mark.skip(reason="Requires DataForSEO/LLM providers to be configured")
+def test_premium_ai_keyword_search_endpoint():
+    """Test premium AI keyword search endpoint."""
+    request_data = {
+        "seed_keywords": ["pet care", "dog grooming"],
+        "location": "United States",
+        "language": "en",
+        "max_topics": 5
+    }
+
+    response = client.post("/api/v1/keywords/premium/ai-search", json=request_data)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert "topics" in data
+
+
 @pytest.mark.skip(reason="Endpoint may require API keys or have changed - needs investigation")
 def test_keyword_extraction_endpoint():
     """Test keyword extraction endpoint."""

@@ -9,7 +9,7 @@ import asyncio
 import httpx
 import base64
 import json
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 import os
 import logging
@@ -21,6 +21,8 @@ from src.blog_writer_sdk.monitoring.cloud_logging import get_blog_logger, log_ap
 # DataForSEOCredentialService import removed - service not implemented yet
 
 from ..models.blog_models import KeywordAnalysis, SEODifficulty
+from ..cache.redis_cache import CacheManager, get_cache_manager
+from ..services.cache_settings_service import CacheSettingsService
 
 logger = get_blog_logger()
 
@@ -32,7 +34,16 @@ class DataForSEOClient:
     search volume, keyword difficulty, and competitor analysis.
     """
     
-    def __init__(self, credential_service: Any = None, api_key: Optional[str] = None, api_secret: Optional[str] = None, location: Optional[str] = None, language_code: Optional[str] = None):
+    def __init__(
+        self,
+        credential_service: Any = None,
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        location: Optional[str] = None,
+        language_code: Optional[str] = None,
+        cache_manager: Optional[CacheManager] = None,
+        cache_settings_service: Optional[CacheSettingsService] = None,
+    ):
         """
         Initialize DataForSEO client.
         
@@ -52,12 +63,160 @@ class DataForSEOClient:
         self.location = location or os.getenv("DATAFORSEO_LOCATION", "United States")
         self.language_code = language_code or os.getenv("DATAFORSEO_LANGUAGE", "en")
         self.is_configured = bool(self.api_key and self.api_secret)
-        self._cache = {}
+        self._cache: Dict[str, Tuple[Any, float, int]] = {}
+        self._cache_settings_service = cache_settings_service
+        self._cache_settings_cache: Dict[str, Tuple[Dict[str, Any], float]] = {}
+        self._cache_settings_ttl = 300  # 5 minutes
+        self.cache_manager = cache_manager or get_cache_manager() or CacheManager()
         # Increased cache TTL to reduce API calls:
         # - Keyword data changes slowly, safe to cache for 24 hours
         # - SERP data more dynamic, cached separately with shorter TTL
         self._cache_ttl = 86400  # 24 hours for keyword data (was 1 hour)
         self._serp_cache_ttl = 21600  # 6 hours for SERP data (more dynamic)
+        self._task_id_ttl = 2592000  # 30 days for Standard task_id reuse
+
+    def _local_cache_key(self, prefix: str, tenant_id: str, *parts: Any) -> str:
+        tenant_key = tenant_id or "default"
+        parts_str = "_".join(str(part) for part in parts if part is not None)
+        return f"{prefix}:{tenant_key}:{parts_str}"
+
+    def _local_cache_get(self, cache_key: str, ttl: int) -> Optional[Any]:
+        cached = self._cache.get(cache_key)
+        if not cached:
+            return None
+        value, ts, stored_ttl = cached
+        effective_ttl = stored_ttl or ttl
+        if time.time() - ts < effective_ttl:
+            return value
+        self._cache.pop(cache_key, None)
+        return None
+
+    def _local_cache_set(self, cache_key: str, value: Any, ttl: int) -> None:
+        self._cache[cache_key] = (value, time.time(), ttl)
+
+    def _infer_cache_category(self, endpoint: str) -> str:
+        endpoint_lower = endpoint.lower()
+        if "ai_optimization" in endpoint_lower or "llm_" in endpoint_lower or "ai_summary" in endpoint_lower:
+            return "ai_opt"
+        if endpoint_lower.startswith("serp/"):
+            return "serp_public"
+        if endpoint_lower.startswith("dataforseo_labs/") or endpoint_lower.startswith("keywords_data/"):
+            return "keyword_metrics"
+        return "generic"
+
+    def _is_public_safe_payload(self, endpoint: str, payload: List[Dict[str, Any]]) -> bool:
+        endpoint_lower = endpoint.lower()
+        if "ai_optimization" in endpoint_lower or "llm_" in endpoint_lower or "ai_summary" in endpoint_lower:
+            return False
+
+        deny_keys = {
+            "prompt",
+            "content",
+            "text",
+            "html",
+            "url",
+            "page_url",
+            "target",
+            "targets",
+            "website",
+            "domain",
+            "page",
+            "site",
+            "company",
+            "brand",
+        }
+
+        def has_sensitive_key(value: Any) -> bool:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key.lower() in deny_keys and child:
+                        return True
+                    if has_sensitive_key(child):
+                        return True
+            elif isinstance(value, list):
+                return any(has_sensitive_key(item) for item in value)
+            return False
+
+        return not has_sensitive_key(payload)
+
+    async def _get_cache_settings(self, tenant_id: str) -> Dict[str, Any]:
+        tenant_key = tenant_id or "default"
+        cached = self._cache_settings_cache.get(tenant_key)
+        if cached and (time.time() - cached[1] < self._cache_settings_ttl):
+            return cached[0]
+
+        if not self._cache_settings_service:
+            self._cache_settings_service = CacheSettingsService()
+
+        settings = self._cache_settings_service.get_org_cache_settings(tenant_key)
+        settings_dict = {
+            "shared_cache_enabled": settings.shared_cache_enabled,
+            "shared_cache_categories": settings.shared_cache_categories,
+        }
+        self._cache_settings_cache[tenant_key] = (settings_dict, time.time())
+        return settings_dict
+
+    async def _resolve_cache_scope(
+        self,
+        tenant_id: str,
+        cache_category: str,
+        endpoint: str,
+        payload: List[Dict[str, Any]],
+        allow_shared: bool = True,
+        scope_override: Optional[str] = None
+    ) -> str:
+        if scope_override:
+            return scope_override
+
+        if not tenant_id:
+            return "tenant:default"
+
+        if cache_category == "ai_opt":
+            return f"tenant:{tenant_id}"
+
+        settings = await self._get_cache_settings(tenant_id)
+        shared_enabled = settings.get("shared_cache_enabled", False)
+        shared_categories = settings.get("shared_cache_categories", [])
+
+        if allow_shared and shared_enabled:
+            if cache_category in shared_categories and self._is_public_safe_payload(endpoint, payload):
+                return "shared"
+
+        return f"tenant:{tenant_id}"
+
+    def _normalize_payload(self, payload: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        def normalize(value: Any, key: Optional[str] = None) -> Any:
+            if isinstance(value, dict):
+                return {k: normalize(v, k) for k, v in sorted(value.items())}
+            if isinstance(value, list):
+                if key in {"keywords"} and all(isinstance(item, str) for item in value):
+                    return sorted(value)
+                return [normalize(item) for item in value]
+            return value
+
+        return normalize(payload)
+
+    def _build_cache_key(self, scope: str, endpoint: str, payload: List[Dict[str, Any]]) -> str:
+        key_data = {"endpoint": endpoint, "payload": self._normalize_payload(payload)}
+        return self.cache_manager._generate_cache_key(f"dataforseo:{scope}", key_data)
+
+    def _cache_type_for_category(self, cache_category: str) -> str:
+        mapping = {
+            "keyword_metrics": "dataforseo_keyword",
+            "serp_public": "dataforseo_serp",
+            "ai_opt": "dataforseo_ai_opt",
+            "task_id": "dataforseo_task_id",
+        }
+        return mapping.get(cache_category, "dataforseo_result")
+
+    def _ttl_for_category(self, cache_category: str) -> int:
+        if cache_category == "serp_public":
+            return self._serp_cache_ttl
+        if cache_category == "task_id":
+            return self._task_id_ttl
+        if cache_category == "ai_opt":
+            return 3600
+        return self._cache_ttl
     
     async def initialize_credentials(self, tenant_id: str):
         # If already configured from constructor, skip re-initialization
@@ -91,18 +250,23 @@ class DataForSEOClient:
     async def get_keyword_overview(self, keywords: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, Any]:
         """Keyword overview with rich metrics (intent, monthly searches, SERP features)."""
         try:
-            cache_key = f"kw_overview_{hash(tuple(keywords))}"
-            if cache_key in self._cache:
-                data, ts = self._cache[cache_key]
-                if datetime.now().timestamp() - ts < self._cache_ttl:
-                    return data
+            cache_key = self._local_cache_key(
+                "kw_overview",
+                tenant_id,
+                hash(tuple(keywords)),
+                location_name,
+                language_code
+            )
+            cached = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached is not None:
+                return cached
             payload = [{
                 "keywords": keywords,
                 "location_name": location_name,
                 "language_code": language_code
             }]
             data = await self._make_request("dataforseo_labs/google/keyword_overview/live", payload, tenant_id)
-            self._cache[cache_key] = (data, datetime.now().timestamp())
+            self._local_cache_set(cache_key, data, self._cache_ttl)
             return data
         except Exception as e:
             logger.error(f"Error getting keyword overview: {e}")
@@ -112,11 +276,18 @@ class DataForSEOClient:
     async def get_related_keywords(self, keyword: str, location_name: str, language_code: str, tenant_id: str, depth: int = 2, limit: int = 100) -> Dict[str, Any]:
         """Related keywords (graph/depth-first)."""
         try:
-            cache_key = f"related_{keyword}_{depth}_{limit}"
-            if cache_key in self._cache:
-                data, ts = self._cache[cache_key]
-                if datetime.now().timestamp() - ts < self._cache_ttl:
-                    return data
+            cache_key = self._local_cache_key(
+                "related",
+                tenant_id,
+                keyword,
+                depth,
+                limit,
+                location_name,
+                language_code
+            )
+            cached = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached is not None:
+                return cached
             payload = [{
                 "keyword": keyword,
                 "depth": depth,
@@ -125,7 +296,7 @@ class DataForSEOClient:
                 "limit": limit
             }]
             data = await self._make_request("dataforseo_labs/google/related_keywords/live", payload, tenant_id)
-            self._cache[cache_key] = (data, datetime.now().timestamp())
+            self._local_cache_set(cache_key, data, self._cache_ttl)
             return data
         except Exception as e:
             logger.error(f"Error getting related keywords: {e}")
@@ -135,18 +306,23 @@ class DataForSEOClient:
     async def get_top_searches(self, location_name: str, language_code: str, tenant_id: str, limit: int = 100) -> Dict[str, Any]:
         """Top searches discovery in the target market."""
         try:
-            cache_key = f"top_searches_{location_name}_{language_code}_{limit}"
-            if cache_key in self._cache:
-                data, ts = self._cache[cache_key]
-                if datetime.now().timestamp() - ts < self._cache_ttl:
-                    return data
+            cache_key = self._local_cache_key(
+                "top_searches",
+                tenant_id,
+                location_name,
+                language_code,
+                limit
+            )
+            cached = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached is not None:
+                return cached
             payload = [{
                 "location_name": location_name,
                 "language_code": language_code,
                 "limit": limit
             }]
             data = await self._make_request("dataforseo_labs/google/top_searches/live", payload, tenant_id)
-            self._cache[cache_key] = (data, datetime.now().timestamp())
+            self._local_cache_set(cache_key, data, self._cache_ttl)
             return data
         except Exception as e:
             logger.error(f"Error getting top searches: {e}")
@@ -156,17 +332,21 @@ class DataForSEOClient:
     async def get_search_intent(self, keywords: List[str], language_code: str, tenant_id: str) -> Dict[str, Any]:
         """Search intent probabilities per keyword."""
         try:
-            cache_key = f"intent_{hash(tuple(keywords))}_{language_code}"
-            if cache_key in self._cache:
-                data, ts = self._cache[cache_key]
-                if datetime.now().timestamp() - ts < self._cache_ttl:
-                    return data
+            cache_key = self._local_cache_key(
+                "intent",
+                tenant_id,
+                hash(tuple(keywords)),
+                language_code
+            )
+            cached = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached is not None:
+                return cached
             payload = [{
                 "keywords": keywords,
                 "language_code": language_code
             }]
             data = await self._make_request("dataforseo_labs/search_intent/live", payload, tenant_id)
-            self._cache[cache_key] = (data, datetime.now().timestamp())
+            self._local_cache_set(cache_key, data, self._cache_ttl)
             return data
         except Exception as e:
             logger.error(f"Error getting search intent: {e}")
@@ -208,7 +388,11 @@ class DataForSEOClient:
         endpoint: str,
         payload: List[Dict[str, Any]],
         tenant_id: str,
-        use_ai_format: bool = True
+        use_ai_format: bool = True,
+        cache_category: Optional[str] = None,
+        cache_ttl: Optional[int] = None,
+        skip_cache: bool = False,
+        cache_scope_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Make request to DataForSEO API.
@@ -225,6 +409,30 @@ class DataForSEOClient:
             logger.error(f"DataforSEO API not configured. Returning fallback data for endpoint: {endpoint}")
             log_api_request("dataforseo", endpoint, 0, 0.0, message="API not configured", tenant_id=tenant_id)
             return self._fallback_data(endpoint, payload)
+
+        cache_category = cache_category or self._infer_cache_category(endpoint)
+        cache_ttl = cache_ttl if cache_ttl is not None else self._ttl_for_category(cache_category)
+
+        cache_key = None
+        if not skip_cache and self.cache_manager and cache_ttl > 0:
+            cache_scope = await self._resolve_cache_scope(
+                tenant_id=tenant_id,
+                cache_category=cache_category,
+                endpoint=endpoint,
+                payload=payload,
+                allow_shared=True,
+                scope_override=cache_scope_override
+            )
+            cache_key = self._build_cache_key(cache_scope, endpoint, payload)
+
+            local_hit = self._local_cache_get(cache_key, cache_ttl)
+            if local_hit is not None:
+                return local_hit
+
+            cached = await self.cache_manager.get(cache_key)
+            if cached is not None:
+                self._local_cache_set(cache_key, cached, cache_ttl)
+                return cached
 
         # Append .ai for optimized responses (Priority 3: AI-optimized format)
         if use_ai_format and not endpoint.endswith('.ai') and not endpoint.endswith('/live'):
@@ -268,6 +476,16 @@ class DataForSEOClient:
                         task = json_data["tasks"][0]
                         logger.info(f"Task full structure: {json.dumps(task, default=str)[:1500]}")
                 
+                if not skip_cache and cache_key and cache_ttl > 0:
+                    cache_type = self._cache_type_for_category(cache_category)
+                    await self.cache_manager.set(
+                        cache_key,
+                        json_data,
+                        ttl=cache_ttl,
+                        cache_type=cache_type
+                    )
+                    self._local_cache_set(cache_key, json_data, cache_ttl)
+
                 return json_data
             except Exception as json_error:
                 logger.error(f"Failed to parse JSON response for {endpoint}: {json_error}")
@@ -290,6 +508,94 @@ class DataForSEOClient:
             log_api_request("dataforseo", endpoint, 0, 0.0, message=f"Unexpected Error: {e}", tenant_id=tenant_id)
             return self._fallback_data(endpoint, payload)
 
+    async def _make_get_request(
+        self,
+        endpoint: str,
+        tenant_id: str,
+        cache_category: Optional[str] = None,
+        cache_ttl: Optional[int] = None,
+        skip_cache: bool = False,
+        cache_scope_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Make a GET request to DataForSEO API (used for task_get endpoints).
+        """
+        if not self.is_configured or not self.api_key or not self.api_secret:
+            logger.error(f"DataforSEO API not configured. GET fallback for endpoint: {endpoint}")
+            log_api_request("dataforseo", endpoint, 0, 0.0, message="API not configured", tenant_id=tenant_id)
+            return {}
+
+        cache_category = cache_category or self._infer_cache_category(endpoint)
+        cache_ttl = cache_ttl if cache_ttl is not None else self._ttl_for_category(cache_category)
+
+        cache_key = None
+        payload: List[Dict[str, Any]] = []
+        if not skip_cache and self.cache_manager and cache_ttl > 0:
+            cache_scope = await self._resolve_cache_scope(
+                tenant_id=tenant_id,
+                cache_category=cache_category,
+                endpoint=endpoint,
+                payload=payload,
+                allow_shared=True,
+                scope_override=cache_scope_override
+            )
+            cache_key = self._build_cache_key(cache_scope, endpoint, payload)
+            local_hit = self._local_cache_get(cache_key, cache_ttl)
+            if local_hit is not None:
+                return local_hit
+            cached = await self.cache_manager.get(cache_key)
+            if cached is not None:
+                self._local_cache_set(cache_key, cached, cache_ttl)
+                return cached
+
+        url = f"{self.base_url}/{endpoint}"
+        credentials = f"{self.api_key}:{self.api_secret}"
+        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        headers = {
+            "Authorization": f"Basic {encoded_credentials}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            start_time = time.perf_counter()
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers, timeout=30.0)
+                response.raise_for_status()
+            end_time = time.perf_counter()
+            duration = end_time - start_time
+            log_api_request("dataforseo", endpoint, response.status_code, duration, message="Success", tenant_id=tenant_id)
+
+            json_data = response.json()
+            if not isinstance(json_data, dict):
+                logger.warning(f"DataForSEO GET returned non-dict response for {endpoint}: {type(json_data)}")
+                return {}
+
+            if not skip_cache and cache_key and cache_ttl > 0:
+                cache_type = self._cache_type_for_category(cache_category)
+                await self.cache_manager.set(
+                    cache_key,
+                    json_data,
+                    ttl=cache_ttl,
+                    cache_type=cache_type
+                )
+                self._local_cache_set(cache_key, json_data, cache_ttl)
+
+            return json_data
+
+        except httpx.HTTPStatusError as e:
+            error_text = e.response.text[:500] if e.response.text else "No error text"
+            logger.error(f"DataForSEO GET failed for {endpoint}: {e.response.status_code} - {error_text}")
+            log_api_request("dataforseo", endpoint, e.response.status_code, 0.0, message=f"HTTP Error: {e.response.status_code}", tenant_id=tenant_id)
+            return {}
+        except httpx.RequestError as e:
+            logger.error(f"DataForSEO GET network error for {endpoint}: {e}")
+            log_api_request("dataforseo", endpoint, 0, 0.0, message=f"Network Error: {e}", tenant_id=tenant_id)
+            return {}
+        except Exception as e:
+            logger.error(f"Unexpected DataForSEO GET error for {endpoint}: {e}")
+            log_api_request("dataforseo", endpoint, 0, 0.0, message=f"Unexpected Error: {e}", tenant_id=tenant_id)
+            return {}
+
     @monitor_performance("dataforseo_get_search_volume")
     async def get_search_volume_data(self, keywords: List[str], location_name: str, language_code: str, tenant_id: str) -> Dict[str, Any]:
         """
@@ -303,12 +609,17 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"search_volume_{hash(tuple(keywords))}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    logger.info(f"✅ Cache HIT for search volume: {keywords[:3]} (saved API call)")
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "search_volume",
+                tenant_id,
+                hash(tuple(keywords)),
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                logger.info(f"✅ Cache HIT for search volume: {keywords[:3]} (saved API call)")
+                return cached_data
             logger.debug(f"Cache MISS for search volume: {keywords[:3]} (making API call)")
             
             # Prepare API request
@@ -335,7 +646,7 @@ class DataForSEOClient:
                     }
             
             # Cache the results
-            self._cache[cache_key] = (results, datetime.now().timestamp())
+            self._local_cache_set(cache_key, results, self._cache_ttl)
             
             return results
             
@@ -367,12 +678,17 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"difficulty_{hash(tuple(keywords))}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    logger.info(f"✅ Cache HIT for keyword difficulty: {keywords[:3]} (saved API call)")
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "difficulty",
+                tenant_id,
+                hash(tuple(keywords)),
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                logger.info(f"✅ Cache HIT for keyword difficulty: {keywords[:3]} (saved API call)")
+                return cached_data
             logger.debug(f"Cache MISS for keyword difficulty: {keywords[:3]} (making API call)")
             
             # Prepare API request
@@ -393,7 +709,7 @@ class DataForSEOClient:
                     results[keyword] = difficulty_score
             
             # Cache the results
-            self._cache[cache_key] = (results, datetime.now().timestamp())
+            self._local_cache_set(cache_key, results, self._cache_ttl)
             
             return results
             
@@ -425,11 +741,17 @@ class DataForSEOClient:
             limit = min(limit, 1000)  # DataForSEO API max limit
             
             # Check cache first
-            cache_key = f"suggestions_{seed_keyword}_{limit}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "suggestions",
+                tenant_id,
+                seed_keyword,
+                limit,
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._ttl_for_category("ai_opt"))
+            if cached_data is not None:
+                return cached_data
             
             # Prepare API request
             payload = [{
@@ -464,7 +786,7 @@ class DataForSEOClient:
                     suggestions.append(suggestion)
             
             # Cache the results
-            self._cache[cache_key] = (suggestions, datetime.now().timestamp())
+            self._local_cache_set(cache_key, suggestions, self._cache_ttl)
             
             return suggestions[:limit]  # Ensure we don't exceed limit
             
@@ -494,12 +816,16 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"ai_search_volume_{hash(tuple(keywords))}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    logger.info(f"✅ Cache HIT for AI search volume: {keywords[:3]} (saved API call)")
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "ai_search_volume",
+                tenant_id,
+                hash(tuple(keywords)),
+                location_name
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                logger.info(f"✅ Cache HIT for AI search volume: {keywords[:3]} (saved API call)")
+                return cached_data
             logger.debug(f"Cache MISS for AI search volume: {keywords[:3]} (making API call)")
             
             # Prepare API request for AI optimization endpoint
@@ -751,7 +1077,7 @@ class DataForSEOClient:
                     logger.warning(f"AI search volume API returned no result data. Task result type: {type(task_result)}, value: {task_result}")
             
             # Cache the results
-            self._cache[cache_key] = (results, datetime.now().timestamp())
+            self._local_cache_set(cache_key, results, self._cache_ttl)
             
             return results
             
@@ -818,12 +1144,17 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"autocomplete_{keyword}_{location_name}_{language_code}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    logger.info(f"✅ Cache HIT for autocomplete: {keyword} (saved API call)")
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "autocomplete",
+                tenant_id,
+                keyword,
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                logger.info(f"✅ Cache HIT for autocomplete: {keyword} (saved API call)")
+                return cached_data
             logger.debug(f"Cache MISS for autocomplete: {keyword} (making API call)")
             
             # Prepare API request
@@ -876,7 +1207,7 @@ class DataForSEOClient:
                                 })
             
             # Cache the results
-            self._cache[cache_key] = (suggestions, datetime.now().timestamp())
+            self._local_cache_set(cache_key, suggestions, self._cache_ttl)
             
             logger.info(f"✅ Retrieved {len(suggestions)} autocomplete suggestions for '{keyword}'")
             return suggestions[:limit]
@@ -884,6 +1215,109 @@ class DataForSEOClient:
         except Exception as e:
             logger.warning(f"Error getting autocomplete suggestions: {e}")
             return []
+
+    def _extract_task_id(self, response: Dict[str, Any]) -> Optional[str]:
+        if not response or not isinstance(response, dict):
+            return None
+        tasks = response.get("tasks")
+        if not tasks or not isinstance(tasks, list):
+            return None
+        first_task = tasks[0] if tasks else {}
+        if isinstance(first_task, dict):
+            return first_task.get("id")
+        return None
+
+    def _serp_task_ready(self, response: Dict[str, Any]) -> bool:
+        if not response or not isinstance(response, dict):
+            return False
+        tasks = response.get("tasks")
+        if not tasks or not isinstance(tasks, list):
+            return False
+        first_task = tasks[0] if tasks else {}
+        if not isinstance(first_task, dict):
+            return False
+        if first_task.get("status_code") != 20000:
+            return False
+        result = first_task.get("result")
+        return result is not None and result != []
+
+    async def _get_serp_standard_results(
+        self,
+        payload: List[Dict[str, Any]],
+        tenant_id: str,
+        wait_seconds: int = 20,
+        poll_interval: float = 2.0
+    ) -> Optional[Dict[str, Any]]:
+        cache_category = "serp_public"
+        cache_scope = await self._resolve_cache_scope(
+            tenant_id=tenant_id,
+            cache_category=cache_category,
+            endpoint="serp/google/organic/task_post",
+            payload=payload,
+            allow_shared=True
+        )
+        task_cache_key = self._build_cache_key(
+            f"{cache_scope}:serp_task_id",
+            "serp/google/organic/task_post",
+            payload
+        )
+
+        task_id: Optional[str] = None
+        if self.cache_manager:
+            cached_task = await self.cache_manager.get(task_cache_key)
+            if isinstance(cached_task, dict):
+                task_id = cached_task.get("task_id")
+            elif isinstance(cached_task, str):
+                task_id = cached_task
+
+        if not task_id:
+            post_resp = await self._make_request(
+                "serp/google/organic/task_post",
+                payload,
+                tenant_id,
+                cache_category=cache_category,
+                skip_cache=True
+            )
+            task_id = self._extract_task_id(post_resp)
+            if task_id and self.cache_manager:
+                await self.cache_manager.set(
+                    task_cache_key,
+                    {"task_id": task_id},
+                    ttl=self._task_id_ttl,
+                    cache_type=self._cache_type_for_category("task_id")
+                )
+
+        if not task_id:
+            return None
+
+        endpoint = f"serp/google/organic/task_get/advanced/{task_id}"
+        deadline = time.time() + wait_seconds
+
+        while True:
+            data = await self._make_get_request(
+                endpoint,
+                tenant_id,
+                cache_category=cache_category,
+                skip_cache=True,
+                cache_scope_override=cache_scope
+            )
+            if self._serp_task_ready(data):
+                if self.cache_manager:
+                    cache_key = self._build_cache_key(cache_scope, endpoint, [])
+                    await self.cache_manager.set(
+                        cache_key,
+                        data,
+                        ttl=self._serp_cache_ttl,
+                        cache_type=self._cache_type_for_category(cache_category)
+                    )
+                    self._local_cache_set(cache_key, data, self._serp_cache_ttl)
+                return data
+
+            if time.time() >= deadline:
+                break
+            await asyncio.sleep(poll_interval)
+
+        return None
     
     @monitor_performance("dataforseo_get_serp_analysis")
     async def get_serp_analysis(
@@ -931,12 +1365,18 @@ class DataForSEOClient:
         """
         try:
             # Check cache first (using SERP-specific TTL)
-            cache_key = f"serp_analysis_{keyword}_{depth}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._serp_cache_ttl:
-                    logger.info(f"✅ Cache HIT for SERP analysis: {keyword} depth={depth} (saved API call)")
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "serp_analysis",
+                tenant_id,
+                keyword,
+                depth,
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._serp_cache_ttl)
+            if cached_data is not None:
+                logger.info(f"✅ Cache HIT for SERP analysis: {keyword} depth={depth} (saved API call)")
+                return cached_data
             logger.debug(f"Cache MISS for SERP analysis: {keyword} depth={depth} (making API call)")
             
             depth = min(depth, 700)  # API limit
@@ -951,7 +1391,16 @@ class DataForSEOClient:
                 "people_also_ask_click_depth": 1 if include_people_also_ask else 0
             }]
             
-            data = await self._make_request("serp/google/organic/live/advanced", payload, tenant_id)
+            data = await self._get_serp_standard_results(payload, tenant_id)
+            if not data:
+                logger.info(f"Standard SERP task not ready for '{keyword}', falling back to live endpoint")
+                data = await self._make_request(
+                    "serp/google/organic/live/advanced",
+                    payload,
+                    tenant_id,
+                    cache_category="serp_public",
+                    cache_ttl=self._serp_cache_ttl
+                )
             
             # Debug: Log response structure
             if data and isinstance(data, dict):
@@ -1151,7 +1600,7 @@ class DataForSEOClient:
                     result["content_gaps"].append("Opportunity: Consider adding video content")
             
             # Cache results
-            self._cache[cache_key] = (result, datetime.now().timestamp())
+            self._local_cache_set(cache_key, result, self._serp_cache_ttl)
             
             return result
             
@@ -1215,11 +1664,17 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"serp_ai_summary_{keyword}_{hash(prompt or 'default')}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "serp_ai_summary",
+                tenant_id,
+                keyword,
+                hash(prompt or "default"),
+                depth,
+                include_serp_features
+            )
+            cached_data = self._local_cache_get(cache_key, self._ttl_for_category("ai_opt"))
+            if cached_data is not None:
+                return cached_data
             
             # Default prompt if not provided
             default_prompt = (
@@ -1322,7 +1777,7 @@ class DataForSEOClient:
                     result["recommendations"] = task_result.get("optimization_opportunities", [])
             
             # Cache results
-            self._cache[cache_key] = (result, datetime.now().timestamp())
+            self._local_cache_set(cache_key, result, self._ttl_for_category("ai_opt"))
             
             return result
             
@@ -1376,11 +1831,15 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"llm_responses_{hash(prompt)}_{hash(tuple(llms or []))}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "llm_responses",
+                tenant_id,
+                hash(prompt),
+                hash(tuple(llms or []))
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                return cached_data
             
             # Default LLMs if not specified
             if llms is None:
@@ -1441,7 +1900,7 @@ class DataForSEOClient:
                 result["differences"] = self._calculate_differences(result["responses"])
             
             # Cache results
-            self._cache[cache_key] = (result, datetime.now().timestamp())
+            self._local_cache_set(cache_key, result, self._ttl_for_category("ai_opt"))
             
             return result
             
@@ -1599,11 +2058,17 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"google_trends_{hash(tuple(keywords))}_{time_range}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "google_trends",
+                tenant_id,
+                hash(tuple(keywords)),
+                time_range,
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                return cached_data
             
             # Limit to 5 keywords (API constraint)
             keywords = keywords[:5]
@@ -1658,7 +2123,7 @@ class DataForSEOClient:
                         results["related_queries"][keyword] = queries_list.get(keyword, [])
             
             # Cache results
-            self._cache[cache_key] = (results, datetime.now().timestamp())
+            self._local_cache_set(cache_key, results, self._cache_ttl)
             
             return results
             
@@ -1744,11 +2209,17 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"keyword_ideas_{hash(tuple(keywords))}_{limit}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "keyword_ideas",
+                tenant_id,
+                hash(tuple(keywords)),
+                limit,
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                return cached_data
             
             # Limit keywords (API constraint)
             keywords = keywords[:200]
@@ -1785,7 +2256,7 @@ class DataForSEOClient:
                     })
             
             # Cache results
-            self._cache[cache_key] = (results, datetime.now().timestamp())
+            self._local_cache_set(cache_key, results, self._cache_ttl)
             
             return results
             
@@ -1830,11 +2301,17 @@ class DataForSEOClient:
         """
         try:
             # Check cache first
-            cache_key = f"relevant_pages_{target}_{limit}"
-            if cache_key in self._cache:
-                cached_data, timestamp = self._cache[cache_key]
-                if datetime.now().timestamp() - timestamp < self._cache_ttl:
-                    return cached_data
+            cache_key = self._local_cache_key(
+                "relevant_pages",
+                tenant_id,
+                target,
+                limit,
+                location_name,
+                language_code
+            )
+            cached_data = self._local_cache_get(cache_key, self._cache_ttl)
+            if cached_data is not None:
+                return cached_data
             
             limit = min(limit, 1000)
             
@@ -1875,7 +2352,7 @@ class DataForSEOClient:
                     })
             
             # Cache results
-            self._cache[cache_key] = (results, datetime.now().timestamp())
+            self._local_cache_set(cache_key, results, self._cache_ttl)
             
             return results
             

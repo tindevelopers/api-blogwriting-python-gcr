@@ -431,7 +431,8 @@ See [Enhanced Blog Generation Guide](PHASE1_PHASE2_IMPLEMENTATION.md) for detail
 - `POST /api/v1/keywords/analyze` - Analyze keyword difficulty
 - `POST /api/v1/keywords/extract` - Extract keywords from content (phrase-mode via `max_ngram`, `dedup_lim`)
 - `POST /api/v1/keywords/suggest` - Get keyword suggestions
-- `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis using DataForSEO (intent, volume, difficulty, CPC; graceful fallback)
+- `POST /api/v1/keywords/enhanced` - Enhanced keyword analysis using DataForSEO (intent, volume, difficulty, CPC; graceful fallback). Supports multi-location discovery (`locations`/`countries`), `serp_depth`, and include flags for matching/related/also-rank-for/questions.
+- `POST /api/v1/keywords/premium/ai-search` - Premium AI keyword research (topic map + pillars + DataForSEO enrichment)
 
 ### Topic Recommendations
 - `POST /api/v1/topics/recommend` - **NEW**: Recommend high-ranking blog topics based on seed keywords

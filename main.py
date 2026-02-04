@@ -43,6 +43,7 @@ from src.blog_writer_sdk.models.blog_models import (
 )
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
 from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
+from src.blog_writer_sdk.seo.keyword_intelligence_service import KeywordIntelligenceService
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
 from src.blog_writer_sdk.config.testing_limits import (
     is_testing_mode,
@@ -438,10 +439,20 @@ class EnhancedKeywordAnalysisRequest(BaseModel):
     """Request model for enhanced keyword analysis with DataForSEO."""
     keywords: List[str] = Field(..., max_length=200, description="Keywords to analyze (up to 200 for comprehensive research)")
     location: Optional[str] = Field("United States", description="Location for keyword analysis")
+    locations: Optional[List[str]] = Field(None, description="Optional multi-location discovery list")
+    countries: Optional[List[str]] = Field(None, description="Alias for locations (multi-country discovery)")
     language: Optional[str] = Field("en", description="Language code for analysis")
     search_type: Optional[str] = Field("enhanced_keyword_analysis", description="Keyword search type (e.g., keyword_analysis, competitor, enhanced_keyword_analysis)")
     include_serp: bool = Field(default=False, description="Include SERP scrape preview (slower)")
     max_suggestions_per_keyword: int = Field(default=20, ge=5, le=150, description="Maximum keyword suggestions per seed keyword (up to 150 for comprehensive research)")
+    serp_depth: int = Field(default=10, ge=5, le=700, description="SERP analysis depth (higher = more thorough)")
+    include_matching_terms: bool = Field(default=True, description="Include matching terms from related keywords")
+    include_related_terms: bool = Field(default=True, description="Include related terms from keyword ideas")
+    include_also_rank_for: bool = Field(default=True, description="Include also-rank-for data from keyword overview")
+    include_questions: bool = Field(default=True, description="Include question-form keywords")
+    include_autocomplete: bool = Field(default=True, description="Include Google autocomplete suggestions")
+    include_suggestions: bool = Field(default=True, description="Include keyword suggestions")
+    include_keyword_ideas: bool = Field(default=True, description="Include keyword ideas (broad discovery)")
 
 
 class ContentGoal(str, Enum):
@@ -487,6 +498,19 @@ class AITopicSuggestionsRequest(BaseModel):
     include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data")
     include_llm_responses: bool = Field(default=False, description="Include LLM responses for topic research")
     limit: int = Field(default=50, ge=10, le=200, description="Maximum number of topic suggestions")
+
+
+class PremiumAIKeywordSearchRequest(BaseModel):
+    """Request model for premium AI keyword research."""
+    seed_keywords: List[str] = Field(..., min_items=1, max_length=20, description="Seed keywords to expand")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    max_topics: int = Field(default=20, ge=5, le=50, description="Maximum number of topics to return")
+    serp_depth: int = Field(default=10, ge=5, le=700, description="SERP analysis depth")
+    include_ai_search_volume: bool = Field(default=True, description="Include AI search volume metrics")
+    include_serp: bool = Field(default=True, description="Include SERP analysis")
+    include_discovery: bool = Field(default=True, description="Include keyword discovery enrichment")
+    include_intent: bool = Field(default=True, description="Include search intent analysis")
 
 class TopicRecommendationRequest(BaseModel):
     """Request model for topic recommendations."""
@@ -1736,6 +1760,114 @@ async def generate_blog_enhanced(
         global ai_generator, google_knowledge_graph_client, semantic_integrator, quality_scorer
         global intent_analyzer, few_shot_extractor, length_optimizer, dataforseo_client_global
         global blog_generation_jobs
+
+        # Rankability gate: block blog generation if keywords are unlikely to rank
+        if request.keywords and enhanced_analyzer and enhanced_analyzer._df_client:
+            try:
+                tenant_id_env = os.getenv("TENANT_ID", "default")
+                await enhanced_analyzer._df_client.initialize_credentials(tenant_id_env)
+                if enhanced_analyzer._df_client.is_configured:
+                    location_name = os.getenv("DATAFORSEO_LOCATION", "United States")
+                    language_code = os.getenv("DATAFORSEO_LANGUAGE", "en")
+
+                    keyword_metrics = await enhanced_analyzer.analyze_keywords_comprehensive(
+                        keywords=request.keywords[:5],
+                        tenant_id=tenant_id_env
+                    )
+                    primary_keyword = request.keywords[0]
+                    primary_analysis = keyword_metrics.get(primary_keyword)
+
+                    if primary_analysis:
+                        difficulty_score = _difficulty_score_from_analysis(primary_analysis)
+                        search_volume = primary_analysis.search_volume or 0
+                        competition = primary_analysis.competition or 0.0
+
+                        discovery_data = await _build_keyword_discovery(
+                            seed_keyword=primary_keyword,
+                            location=location_name,
+                            language=language_code,
+                            tenant_id=tenant_id_env,
+                            df_client=enhanced_analyzer._df_client,
+                            serp_depth=20,
+                            include_matching_terms=True,
+                            include_related_terms=True,
+                            include_also_rank_for=True,
+                            include_questions=True,
+                            include_serp=True,
+                            include_autocomplete=True,
+                            include_suggestions=True,
+                            include_keyword_ideas=True,
+                            max_matching_terms=100,
+                            max_related_terms=100,
+                            max_suggestions=100,
+                        )
+                        serp_analysis = discovery_data.get("serp_analysis", {})
+
+                        rankability_score = _compute_rankability_score(
+                            search_volume=search_volume,
+                            difficulty_score=difficulty_score,
+                            competition=competition,
+                            serp_analysis=serp_analysis,
+                        )
+
+                        reasons: List[str] = []
+                        if difficulty_score >= 75:
+                            reasons.append("High keyword difficulty")
+                        if competition >= 0.7:
+                            reasons.append("High competition")
+                        if search_volume < 50:
+                            reasons.append("Low search volume")
+                        if serp_analysis and len(serp_analysis.get("top_domains", []) or []) >= 10:
+                            reasons.append("SERP dominated by authoritative domains")
+
+                        should_block = rankability_score < 45.0 and bool(reasons)
+                        if should_block:
+                            alternatives = _extract_alternative_keywords(discovery_data, limit=20)
+                            clustering = KeywordClustering()
+                            cluster_result = clustering.cluster_keywords(
+                                alternatives[:50],
+                                min_cluster_size=2,
+                                max_clusters=10,
+                                max_keywords_per_cluster=10,
+                            )
+                            pillars = [
+                                {
+                                    "parent_topic": c.parent_topic,
+                                    "subtopics": c.keywords[:10],
+                                    "keyword_count": len(c.keywords),
+                                }
+                                for c in cluster_result.clusters
+                            ]
+                            if not pillars and alternatives:
+                                pillars = [
+                                    {
+                                        "parent_topic": alternatives[0],
+                                        "subtopics": alternatives[1:6],
+                                        "keyword_count": len(alternatives[:6]),
+                                    }
+                                ]
+
+                            raise HTTPException(
+                                status_code=422,
+                                detail={
+                                    "error": "keywords_unlikely_to_rank",
+                                    "message": "Keyword viability is too low for blog generation.",
+                                    "keyword": primary_keyword,
+                                    "rankability_score": round(rankability_score, 2),
+                                    "signals": {
+                                        "search_volume": search_volume,
+                                        "difficulty_score": round(difficulty_score, 2),
+                                        "competition": round(float(competition), 3),
+                                    },
+                                    "reasons": reasons,
+                                    "alternative_keywords": alternatives,
+                                    "suggested_pillars": pillars,
+                                },
+                            )
+            except HTTPException:
+                raise
+            except Exception as rankability_exc:
+                logger.warning(f"Rankability gate skipped due to error: {rankability_exc}")
         
         # Handle async mode FIRST - if async_mode is True, create Cloud Task and return immediately
         # This applies to both DataForSEO and pipeline paths
@@ -4115,7 +4247,19 @@ async def _build_keyword_discovery(
     location: str,
     language: str,
     tenant_id: str,
-    df_client
+    df_client,
+    serp_depth: int = 10,
+    include_matching_terms: bool = True,
+    include_related_terms: bool = True,
+    include_also_rank_for: bool = True,
+    include_questions: bool = True,
+    include_serp: bool = True,
+    include_autocomplete: bool = True,
+    include_suggestions: bool = True,
+    include_keyword_ideas: bool = True,
+    max_matching_terms: int = 200,
+    max_related_terms: int = 200,
+    max_suggestions: int = 150,
 ) -> Dict[str, Any]:
     """
     Build enhanced keyword discovery data (matching/related terms, SERP context).
@@ -4124,62 +4268,99 @@ async def _build_keyword_discovery(
         "matching_terms": [],
         "questions": [],
         "related_terms": [],
+        "suggested_terms": [],
+        "autocomplete_terms": [],
+        "also_rank_for": [],
+        "also_talk_about": [],
+        "serp_analysis": {},
     }
-    
+
+    if not df_client:
+        return discovery
+
     try:
-        tasks = await asyncio.gather(
-            df_client.get_related_keywords(
-                keyword=seed_keyword,
-                location_name=location,
-                language_code=language,
-                tenant_id=tenant_id,
-                depth=2,
-                limit=150
-            ),
-            df_client.get_keyword_ideas(
-                keywords=[seed_keyword],
-                location_name=location,
-                language_code=language,
-                tenant_id=tenant_id,
-                limit=200
-            ),
-            df_client.get_serp_analysis(
-                keyword=seed_keyword,
-                location_name=location,
-                language_code=language,
-                tenant_id=tenant_id,
-                depth=10  # Reduced from 20 to save credits
-            ),
-            return_exceptions=True
+        service = KeywordIntelligenceService(df_client)
+        return await service.build_intelligence(
+            seed_keyword=seed_keyword,
+            location_name=location,
+            language_code=language,
+            tenant_id=tenant_id,
+            serp_depth=serp_depth,
+            include_matching_terms=include_matching_terms,
+            include_related_terms=include_related_terms,
+            include_also_rank_for=include_also_rank_for,
+            include_questions=include_questions,
+            include_serp=include_serp,
+            include_autocomplete=include_autocomplete,
+            include_suggestions=include_suggestions,
+            include_keyword_ideas=include_keyword_ideas,
+            max_matching_terms=max_matching_terms,
+            max_related_terms=max_related_terms,
+            max_suggestions=max_suggestions,
         )
     except Exception as e:
-        logger.warning(f"Keyword discovery tasks failed to start: {e}")
+        logger.warning(f"Keyword discovery enrichment failed: {e}")
         return discovery
-    
-    related_resp, ideas_resp, serp_analysis_raw = tasks
-    
-    if not isinstance(related_resp, Exception):
-        matching_terms = _extract_keywords_from_related_response(related_resp)
-        discovery["matching_terms"] = matching_terms
-        discovery["questions"] = [
-            term for term in matching_terms if _looks_like_question(term.get("keyword", ""))
-        ][:50]
-    else:
-        logger.warning(f"Related keywords task failed: {related_resp}")
-    
-    if not isinstance(ideas_resp, Exception):
-        discovery["related_terms"] = _extract_keywords_from_ideas_response(ideas_resp)
-    else:
-        logger.warning(f"Keyword ideas task failed: {ideas_resp}")
-    
-    if not isinstance(serp_analysis_raw, Exception):
-        discovery["serp_analysis"] = _summarize_serp_analysis(serp_analysis_raw)
-        logger.info(f"SERP analysis completed for keyword: {seed_keyword}")
-    else:
-        logger.warning(f"SERP analysis failed: {serp_analysis_raw}")
-        discovery["serp_analysis"] = {}
-    
-    return discovery
+
+
+def _difficulty_score_from_analysis(analysis: Any) -> float:
+    try:
+        difficulty_score = getattr(analysis, "difficulty_score", None)
+    except Exception:
+        difficulty_score = None
+    if difficulty_score is not None:
+        try:
+            return float(difficulty_score)
+        except (TypeError, ValueError):
+            return 50.0
+
+    difficulty_enum = analysis.difficulty.value if hasattr(analysis.difficulty, "value") else str(analysis.difficulty)
+    enum_to_score = {
+        "VERY_EASY": 10.0,
+        "EASY": 30.0,
+        "MEDIUM": 50.0,
+        "HARD": 70.0,
+        "VERY_HARD": 90.0,
+    }
+    return float(enum_to_score.get(difficulty_enum, 50.0))
+
+
+def _compute_rankability_score(
+    search_volume: int,
+    difficulty_score: float,
+    competition: float,
+    serp_analysis: Optional[Dict[str, Any]] = None,
+) -> float:
+    score = 0.0
+    if search_volume > 0:
+        score += min(40.0, math.log10(search_volume + 1) * 10)
+    score += max(0.0, 30.0 - (difficulty_score / 100.0) * 30.0)
+    score += max(0.0, 20.0 - float(competition) * 20.0)
+
+    if serp_analysis and isinstance(serp_analysis, dict):
+        top_domains = serp_analysis.get("top_domains") or []
+        top_domains_count = len(top_domains) if isinstance(top_domains, list) else 0
+        if top_domains_count <= 5:
+            score += 10.0
+        elif top_domains_count >= 10:
+            score -= 5.0
+    return max(0.0, min(100.0, score))
+
+
+def _extract_alternative_keywords(discovery_data: Dict[str, Any], limit: int = 20) -> List[str]:
+    alternatives: List[str] = []
+    for key in ("matching_terms", "related_terms", "also_rank_for", "also_talk_about", "suggested_terms"):
+        items = discovery_data.get(key, []) or []
+        for item in items:
+            if isinstance(item, dict):
+                keyword = item.get("keyword") or item.get("text")
+            else:
+                keyword = item if isinstance(item, str) else None
+            if keyword and keyword not in alternatives:
+                alternatives.append(keyword)
+            if len(alternatives) >= limit:
+                return alternatives
+    return alternatives
 
 
 def _extract_keywords_from_related_response(response: Any, limit: int = 200) -> List[Dict[str, Any]]:
@@ -5211,6 +5392,20 @@ async def analyze_keywords_enhanced(
         
         discovery_data = {}
         serp_analysis_summary = {}
+        discovery_by_location: Dict[str, Any] = {}
+        serp_analysis_by_location: Dict[str, Any] = {}
+        requested_locations: List[str] = []
+        if request.locations:
+            requested_locations.extend([loc for loc in request.locations if loc])
+        if request.countries:
+            requested_locations.extend([loc for loc in request.countries if loc])
+        if not requested_locations:
+            requested_locations = [effective_location]
+        # Deduplicate while preserving order
+        locations_to_use: List[str] = []
+        for loc in requested_locations:
+            if loc not in locations_to_use:
+                locations_to_use.append(loc)
         if enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
             try:
                 tenant_id_env = os.getenv("TENANT_ID", "default")
@@ -5220,56 +5415,84 @@ async def analyze_keywords_enhanced(
                 if not enhanced_analyzer._df_client.is_configured:
                     logger.warning("DataForSEO credentials not configured, skipping SERP analysis and discovery")
                 else:
-                    enrichment = await _build_keyword_discovery(
-                        seed_keyword=request.keywords[0],
-                        location=effective_location,
-                        language=request.language or "en",
-                        tenant_id=tenant_id_env,
-                        df_client=enhanced_analyzer._df_client
+                    for loc in locations_to_use:
+                        enrichment = await _build_keyword_discovery(
+                            seed_keyword=request.keywords[0],
+                            location=loc,
+                            language=request.language or "en",
+                            tenant_id=tenant_id_env,
+                            df_client=enhanced_analyzer._df_client,
+                            serp_depth=request.serp_depth,
+                            include_matching_terms=request.include_matching_terms,
+                            include_related_terms=request.include_related_terms,
+                            include_also_rank_for=request.include_also_rank_for,
+                            include_questions=request.include_questions,
+                            include_serp=request.include_serp,
+                            include_autocomplete=request.include_autocomplete,
+                            include_suggestions=request.include_suggestions,
+                            include_keyword_ideas=request.include_keyword_ideas,
+                            max_matching_terms=max_suggestions,
+                            max_related_terms=max_suggestions,
+                            max_suggestions=max_suggestions,
+                        )
+                        serp_analysis_by_location[loc] = enrichment.pop("serp_analysis", {})
+                        discovery_by_location[loc] = enrichment
+
+                    primary_location = locations_to_use[0] if locations_to_use else effective_location
+                    discovery_data = discovery_by_location.get(primary_location, {})
+                    serp_analysis_summary = serp_analysis_by_location.get(primary_location, {})
+                    logger.info(
+                        "SERP analysis and discovery data retrieved for keyword '%s' across %d location(s)",
+                        request.keywords[0],
+                        len(discovery_by_location),
                     )
-                    serp_analysis_summary = enrichment.pop("serp_analysis", {})
-                    discovery_data = enrichment
-                    logger.info(f"SERP analysis and discovery data retrieved for keyword: {request.keywords[0]}")
                     
                     # IMPORTANT: Add matching terms, questions, and related terms from discovery to all_keywords
                     # These are discovered but not yet added to the main keyword list for analysis
                     discovery_keywords_added = 0
                     
-                    # Add matching terms
-                    matching_terms = discovery_data.get("matching_terms", [])
-                    for term in matching_terms:
-                        if isinstance(term, dict):
-                            kw = term.get("keyword", "")
-                        else:
-                            kw = str(term)
-                        
-                        if kw and kw not in all_keywords and len(all_keywords) < max_total:
-                            all_keywords.append(kw)
-                            discovery_keywords_added += 1
-                    
-                    # Add questions
-                    questions = discovery_data.get("questions", [])
-                    for q in questions:
-                        if isinstance(q, dict):
-                            kw = q.get("keyword", "")
-                        else:
-                            kw = str(q)
-                        
-                        if kw and kw not in all_keywords and len(all_keywords) < max_total:
-                            all_keywords.append(kw)
-                            discovery_keywords_added += 1
-                    
-                    # Add related terms
-                    related_terms = discovery_data.get("related_terms", [])
-                    for term in related_terms:
-                        if isinstance(term, dict):
-                            kw = term.get("keyword", "")
-                        else:
-                            kw = str(term)
-                        
-                        if kw and kw not in all_keywords and len(all_keywords) < max_total:
-                            all_keywords.append(kw)
-                            discovery_keywords_added += 1
+                    discovery_sources = (
+                        list(discovery_by_location.values())
+                        if discovery_by_location
+                        else [discovery_data]
+                    )
+
+                    for source in discovery_sources:
+                        # Add matching terms
+                        matching_terms = source.get("matching_terms", [])
+                        for term in matching_terms:
+                            if isinstance(term, dict):
+                                kw = term.get("keyword", "")
+                            else:
+                                kw = str(term)
+
+                            if kw and kw not in all_keywords and len(all_keywords) < max_total:
+                                all_keywords.append(kw)
+                                discovery_keywords_added += 1
+
+                        # Add questions
+                        questions = source.get("questions", [])
+                        for q in questions:
+                            if isinstance(q, dict):
+                                kw = q.get("keyword", "")
+                            else:
+                                kw = str(q)
+
+                            if kw and kw not in all_keywords and len(all_keywords) < max_total:
+                                all_keywords.append(kw)
+                                discovery_keywords_added += 1
+
+                        # Add related terms
+                        related_terms = source.get("related_terms", [])
+                        for term in related_terms:
+                            if isinstance(term, dict):
+                                kw = term.get("keyword", "")
+                            else:
+                                kw = str(term)
+
+                            if kw and kw not in all_keywords and len(all_keywords) < max_total:
+                                all_keywords.append(kw)
+                                discovery_keywords_added += 1
                     
                     if discovery_keywords_added > 0:
                         logger.info(f"Added {discovery_keywords_added} keywords from discovery data (matching terms, questions, related terms)")
@@ -5393,11 +5616,14 @@ async def analyze_keywords_enhanced(
             },
             "location": {
                 "used": effective_location,
+                "locations": locations_to_use,
                 "detected_from_ip": detected_location is not None,
                 "specified": request.location is not None and request.location != "United States"
             },
             "discovery": discovery_data,
-            "serp_analysis": serp_analysis_summary
+            "discovery_by_location": discovery_by_location or {effective_location: discovery_data},
+            "serp_analysis": serp_analysis_summary,
+            "serp_analysis_by_location": serp_analysis_by_location or {effective_location: serp_analysis_summary},
         }
         
         return response_payload
@@ -5946,10 +6172,23 @@ async def analyze_keywords_enhanced_stream(
                 except Exception as e:
                     logger.warning(f"Failed to get keyword ideas: {e}")
             
-            # Stage 10: SERP analysis and discovery (ALWAYS build, not conditional on include_serp)
-            # This matches the non-streaming endpoint behavior - always include discovery data
+            # Stage 10: SERP analysis and discovery
             serp_analysis_summary = {}
             discovery_data = {}
+            discovery_by_location: Dict[str, Any] = {}
+            serp_analysis_by_location: Dict[str, Any] = {}
+            requested_locations: List[str] = []
+            if request.locations:
+                requested_locations.extend([loc for loc in request.locations if loc])
+            if request.countries:
+                requested_locations.extend([loc for loc in request.countries if loc])
+            if not requested_locations:
+                requested_locations = [effective_location]
+            locations_to_use: List[str] = []
+            for loc in requested_locations:
+                if loc not in locations_to_use:
+                    locations_to_use.append(loc)
+            discovery_limit = request.max_suggestions_per_keyword or 20
             if enhanced_analyzer and enhanced_analyzer._df_client and request.keywords:
                 yield await stream_stage_update(
                     KeywordSearchStage.ANALYZING_SERP,
@@ -5963,15 +6202,32 @@ async def analyze_keywords_enhanced_stream(
                     await enhanced_analyzer._df_client.initialize_credentials(tenant_id_env)
                     
                     if enhanced_analyzer._df_client.is_configured:
-                        enrichment = await _build_keyword_discovery(
-                            seed_keyword=request.keywords[0],
-                            location=effective_location,
-                            language=request.language or "en",
-                            tenant_id=tenant_id_env,
-                            df_client=enhanced_analyzer._df_client
-                        )
-                        serp_analysis_summary = enrichment.pop("serp_analysis", {})
-                        discovery_data = enrichment
+                        for loc in locations_to_use:
+                            enrichment = await _build_keyword_discovery(
+                                seed_keyword=request.keywords[0],
+                                location=loc,
+                                language=request.language or "en",
+                                tenant_id=tenant_id_env,
+                                df_client=enhanced_analyzer._df_client,
+                                serp_depth=request.serp_depth,
+                                include_matching_terms=request.include_matching_terms,
+                                include_related_terms=request.include_related_terms,
+                                include_also_rank_for=request.include_also_rank_for,
+                                include_questions=request.include_questions,
+                                include_serp=request.include_serp,
+                                include_autocomplete=request.include_autocomplete,
+                                include_suggestions=request.include_suggestions,
+                                include_keyword_ideas=request.include_keyword_ideas,
+                                max_matching_terms=discovery_limit,
+                                max_related_terms=discovery_limit,
+                                max_suggestions=discovery_limit,
+                            )
+                            serp_analysis_by_location[loc] = enrichment.pop("serp_analysis", {})
+                            discovery_by_location[loc] = enrichment
+
+                        primary_location = locations_to_use[0] if locations_to_use else effective_location
+                        serp_analysis_summary = serp_analysis_by_location.get(primary_location, {})
+                        discovery_data = discovery_by_location.get(primary_location, {})
                         
                         # Log what we found
                         matching_terms_count = len(discovery_data.get("matching_terms", []))
@@ -6141,11 +6397,14 @@ async def analyze_keywords_enhanced_stream(
                 },
                 "location": {
                     "used": effective_location,
+                    "locations": locations_to_use,
                     "detected_from_ip": detected_location is not None,
                     "specified": request.location is not None and request.location != "United States"
                 },
                 "discovery": discovery_data,
-                "serp_analysis": serp_analysis_summary
+                "discovery_by_location": discovery_by_location or {effective_location: discovery_data},
+                "serp_analysis": serp_analysis_summary,
+                "serp_analysis_by_location": serp_analysis_by_location or {effective_location: serp_analysis_summary},
             }
             
             # Stage 12: Completed - ALWAYS send final result
@@ -8063,6 +8322,173 @@ async def get_ai_topic_suggestions(
         raise HTTPException(
             status_code=500,
             detail=f"AI topic suggestions failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/premium/ai-search")
+async def premium_ai_keyword_search(
+    request: PremiumAIKeywordSearchRequest
+):
+    """
+    Premium AI keyword research endpoint.
+
+    Uses AI topic expansion + DataForSEO enrichment (volume, difficulty, SERP, AI search volume).
+    """
+    try:
+        global topic_recommender, enhanced_analyzer, intent_analyzer
+
+        if not topic_recommender:
+            raise HTTPException(
+                status_code=503,
+                detail="Topic recommendation engine not available"
+            )
+
+        location = request.location or "United States"
+        language = request.language or "en"
+        tenant_id = os.getenv("TENANT_ID", "default")
+
+        topic_result = await topic_recommender.recommend_topics(
+            seed_keywords=request.seed_keywords,
+            location=location,
+            language=language,
+            max_topics=request.max_topics,
+            min_search_volume=0,
+            max_difficulty=100.0,
+            include_ai_suggestions=True
+        )
+
+        topics = topic_result.recommended_topics[:request.max_topics]
+        topic_keywords = [t.primary_keyword for t in topics if t.primary_keyword]
+
+        metrics: Dict[str, Any] = {}
+        if enhanced_analyzer and topic_keywords:
+            metrics = await enhanced_analyzer.analyze_keywords_comprehensive(
+                keywords=topic_keywords,
+                tenant_id=tenant_id
+            )
+
+        ai_search_volume: Dict[str, Any] = {}
+        if request.include_ai_search_volume and enhanced_analyzer and enhanced_analyzer._df_client and topic_keywords:
+            await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+            if enhanced_analyzer._df_client.is_configured:
+                ai_search_volume = await enhanced_analyzer._df_client.get_ai_search_volume(
+                    keywords=topic_keywords[:50],
+                    location_name=location,
+                    language_code=language,
+                    tenant_id=tenant_id
+                )
+
+        intent_payload = None
+        if request.include_intent and intent_analyzer and topic_keywords:
+            intent_result = await intent_analyzer.analyze_intent(
+                keywords=topic_keywords[:10],
+                language_code=language
+            )
+            intent_payload = {
+                "primary_intent": intent_result.primary_intent.value,
+                "confidence": intent_result.confidence,
+                "intent_probabilities": intent_result.intent_probabilities,
+                "recommendations": intent_result.recommendations,
+            }
+
+        discovery_by_keyword: Dict[str, Any] = {}
+        if request.include_discovery and enhanced_analyzer and enhanced_analyzer._df_client and topic_keywords:
+            await enhanced_analyzer._df_client.initialize_credentials(tenant_id)
+            if enhanced_analyzer._df_client.is_configured:
+                for kw in topic_keywords[:5]:
+                    discovery_by_keyword[kw] = await _build_keyword_discovery(
+                        seed_keyword=kw,
+                        location=location,
+                        language=language,
+                        tenant_id=tenant_id,
+                        df_client=enhanced_analyzer._df_client,
+                        serp_depth=request.serp_depth,
+                        include_matching_terms=True,
+                        include_related_terms=True,
+                        include_also_rank_for=True,
+                        include_questions=True,
+                        include_serp=request.include_serp,
+                        include_autocomplete=True,
+                        include_suggestions=True,
+                        include_keyword_ideas=True,
+                        max_matching_terms=100,
+                        max_related_terms=100,
+                        max_suggestions=100,
+                    )
+
+        clustering = KeywordClustering()
+        cluster_result = clustering.cluster_keywords(
+            topic_keywords,
+            min_cluster_size=2,
+            max_clusters=10,
+            max_keywords_per_cluster=10
+        )
+        pillars = [
+            {
+                "parent_topic": c.parent_topic,
+                "subpillars": c.keywords,
+                "keyword_count": len(c.keywords)
+            }
+            for c in cluster_result.clusters
+        ]
+
+        response_topics = []
+        for t in topics:
+            analysis = metrics.get(t.primary_keyword)
+            if analysis:
+                difficulty_score = _difficulty_score_from_analysis(analysis)
+                search_volume = analysis.search_volume or 0
+                competition = analysis.competition or 0.0
+                cpc = analysis.cpc or 0.0
+            else:
+                difficulty_score = 50.0
+                search_volume = 0
+                competition = 0.0
+                cpc = 0.0
+
+            ai_metrics = ai_search_volume.get(t.primary_keyword, {})
+            response_topics.append(
+                {
+                    "topic": t.topic,
+                    "primary_keyword": t.primary_keyword,
+                    "search_volume": search_volume,
+                    "difficulty_score": difficulty_score,
+                    "competition": competition,
+                    "cpc": cpc,
+                    "ranking_score": t.ranking_score,
+                    "opportunity_score": t.opportunity_score,
+                    "related_keywords": t.related_keywords,
+                    "content_gaps": t.content_gaps,
+                    "estimated_traffic": t.estimated_traffic,
+                    "reason": t.reason,
+                    "ai_search_volume": ai_metrics.get("ai_search_volume", 0),
+                    "ai_trend": ai_metrics.get("ai_trend", 0.0),
+                    "ai_monthly_searches": ai_metrics.get("ai_monthly_searches", []),
+                }
+            )
+
+        return {
+            "topics": response_topics,
+            "pillars": pillars,
+            "intent": intent_payload,
+            "discovery_by_keyword": discovery_by_keyword,
+            "location": {
+                "used": location,
+                "language": language,
+            },
+            "counts": {
+                "topics": len(response_topics),
+                "pillars": len(pillars),
+                "discovery_keywords": len(discovery_by_keyword),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Premium AI keyword search failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Premium AI keyword search failed: {str(e)}"
         )
 
 

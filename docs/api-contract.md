@@ -43,6 +43,7 @@ For the full, machine-readable contract:
   - Content sentiment analysis: `POST /api/v1/content/analyze-sentiment`
   - URL analysis: `POST /api/v1/content/analyze-url`
 - Enhanced keyword analysis: `POST /api/v1/keywords/enhanced`
+- Premium AI keyword research: `POST /api/v1/keywords/premium/ai-search`
 - Field enhancement (SEO title/meta/slug/alt text): `POST /api/v1/content/enhance-fields`
 - Image generation: `POST /api/v1/images/generate`
 - Integrations + recommendations: `POST /api/v1/integrations/connect-and-recommend`

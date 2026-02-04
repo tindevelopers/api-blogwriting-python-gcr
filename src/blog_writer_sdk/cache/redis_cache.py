@@ -72,6 +72,10 @@ class CacheManager:
             'blog_generation': 1800,        # 30 minutes
             'ai_response': 3600,            # 1 hour
             'dataforseo_result': 86400,     # 24 hours
+            'dataforseo_keyword': 86400,    # 24 hours
+            'dataforseo_serp': 21600,       # 6 hours
+            'dataforseo_ai_opt': 3600,      # 1 hour
+            'dataforseo_task_id': 2592000,  # 30 days
         }
         
         if REDIS_AVAILABLE:

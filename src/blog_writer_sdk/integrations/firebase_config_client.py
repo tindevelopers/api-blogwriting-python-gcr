@@ -354,6 +354,83 @@ class FirebaseConfigClient:
         except Exception as e:
             logger.error(f"Error saving org writing config: {e}")
             return False
+
+    # ======================================================================
+    # ORGANIZATION CACHE SETTINGS
+    # ======================================================================
+
+    def get_org_cache_settings(
+        self,
+        org_id: str,
+        config_id: str = "default"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get organization-specific cache sharing settings.
+
+        Args:
+            org_id: Organization ID
+            config_id: Config document ID (default: "default")
+
+        Returns:
+            Config document as dict, or None if not found
+        """
+        try:
+            doc_ref = (self.db.collection('organizations')
+                      .document(org_id)
+                      .collection('cache_settings')
+                      .document(config_id))
+
+            doc = doc_ref.get()
+
+            if doc.exists:
+                data = doc.to_dict()
+                data['id'] = doc.id
+                data['org_id'] = org_id
+                logger.info(f"Retrieved cache settings for org {org_id}")
+                return data
+            logger.info(f"No cache settings found for org {org_id}, config {config_id}")
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving org cache settings: {e}")
+            return None
+
+    def save_org_cache_settings(
+        self,
+        org_id: str,
+        settings: Dict[str, Any],
+        config_id: str = "default",
+        updated_by: str = "system"
+    ) -> bool:
+        """
+        Save organization-specific cache sharing settings.
+
+        Args:
+            org_id: Organization ID
+            settings: Settings data
+            config_id: Config document ID (default: "default")
+            updated_by: User ID who updated the config
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            doc_ref = (self.db.collection('organizations')
+                      .document(org_id)
+                      .collection('cache_settings')
+                      .document(config_id))
+
+            settings_data = {
+                **settings,
+                'updated_at': firestore.SERVER_TIMESTAMP,
+                'updated_by': updated_by
+            }
+
+            doc_ref.set(settings_data, merge=True)
+            logger.info(f"Saved cache settings for org {org_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving org cache settings: {e}")
+            return False
     
     # ======================================================================
     # BLOG GENERATION OVERRIDES

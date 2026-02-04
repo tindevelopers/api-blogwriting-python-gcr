@@ -34,6 +34,8 @@ except ImportError:
 
 from ..services.auth_service import get_auth_service, AuthService
 from ..services.usage_logger import get_usage_logger, UsageLogger
+from ..services.cache_settings_service import CacheSettingsService
+from ..models.cache_settings_models import OrganizationCacheSettingsUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,15 @@ class EnvVarUpdate(BaseModel):
     """Environment variable update request."""
     variables: Dict[str, str]
     remove_keys: List[str] = Field(default_factory=list)
+
+
+class OrgCacheSettingsResponse(BaseModel):
+    """Organization cache settings response."""
+    org_id: str
+    shared_cache_enabled: bool = False
+    shared_cache_categories: List[str] = Field(default_factory=list)
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
 
 
 class LogEntry(BaseModel):
@@ -786,6 +797,66 @@ async def reload_application_config():
     except Exception as e:
         logger.error(f"Error during application config reload: {e}")
         # Don't fail the sync if reload fails
+
+
+# ============================================================================
+# Cache Settings Endpoints
+# ============================================================================
+
+@router.get("/cache-settings/{org_id}", response_model=OrgCacheSettingsResponse)
+async def get_cache_settings(
+    org_id: str,
+    admin: Dict = Depends(require_admin),
+    request: Request = None
+):
+    """Get cache sharing settings for an organization."""
+    service = CacheSettingsService()
+    settings = service.get_org_cache_settings(org_id)
+
+    await log_admin_action(
+        admin["id"], "read", "org_cache_settings", org_id, None, settings.model_dump(), request
+    )
+
+    return OrgCacheSettingsResponse(**settings.model_dump())
+
+
+@router.put("/cache-settings/{org_id}", response_model=OrgCacheSettingsResponse)
+async def update_cache_settings(
+    org_id: str,
+    payload: OrganizationCacheSettingsUpdate,
+    admin: Dict = Depends(require_admin),
+    request: Request = None
+):
+    """Update cache sharing settings for an organization."""
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No cache settings provided")
+
+    service = CacheSettingsService()
+    old_settings = service.get_org_cache_settings(org_id)
+
+    updated_by = admin.get("id") or admin.get("email") or "admin"
+    ok = service.save_org_cache_settings(
+        org_id=org_id,
+        settings=updates,
+        updated_by=updated_by,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to save cache settings")
+
+    new_settings = service.get_org_cache_settings(org_id)
+
+    await log_admin_action(
+        admin["id"],
+        "update",
+        "org_cache_settings",
+        org_id,
+        old_settings.model_dump(),
+        new_settings.model_dump(),
+        request
+    )
+
+    return OrgCacheSettingsResponse(**new_settings.model_dump())
 
 
 # ============================================================================
