@@ -1,0 +1,113 @@
+{
+  "base_url": "https://blog-writer-api-dev-kq42l26tuq-od.a.run.app",
+  "endpoints": {
+    "goal-based-analysis": {
+      "url": "/api/v1/keywords/goal-based-analysis",
+      "method": "POST",
+      "payload": {
+        "keywords": ["python programming", "web development"],
+        "content_goal": "SEO & Rankings",
+        "location": "United States",
+        "language": "en",
+        "include_content_analysis": true,
+        "include_serp": true,
+        "include_llm_mentions": true
+      },
+      "description": "Goal-based keyword analysis (SEO Rankings, Engagement, Conversions, Brand Awareness)"
+    },
+    "goal-based-analysis-stream": {
+      "url": "/api/v1/keywords/goal-based-analysis/stream",
+      "method": "POST",
+      "payload": {
+        "keywords": ["python programming"],
+        "content_goal": "SEO & Rankings",
+        "location": "United States",
+        "language": "en",
+        "include_content_analysis": true,
+        "include_serp": true,
+        "include_llm_mentions": true
+      },
+      "description": "Streaming version with SSE progress updates",
+      "note": "Returns Server-Sent Events (SSE) stream"
+    },
+    "ai-optimization": {
+      "url": "/api/v1/keywords/ai-optimization",
+      "method": "POST",
+      "payload": {
+        "keywords": ["python tutorial", "learn python", "python programming"],
+        "location": "United States",
+        "language": "en"
+      },
+      "description": "AI optimization analysis focusing on AI search volume"
+    },
+    "ai-mentions": {
+      "url": "/api/v1/keywords/ai-mentions",
+      "method": "POST",
+      "payload": {
+        "target": "python programming",
+        "target_type": "keyword",
+        "location": "United States",
+        "language": "en",
+        "platform": "chat_gpt",
+        "limit": 100
+      },
+      "description": "Get LLM mentions data (what AI agents cite)",
+      "note": "target_type can be 'keyword' or 'domain', platform can be 'chat_gpt' or 'google'"
+    },
+    "ai-topic-suggestions": {
+      "url": "/api/v1/keywords/ai-topic-suggestions",
+      "method": "POST",
+      "payload": {
+        "keywords": ["python", "web development"],
+        "content_objective": "I want to write articles about Python programming and web development",
+        "target_audience": "beginner to intermediate developers",
+        "industry": "software development",
+        "content_goals": ["SEO & Rankings", "Engagement"],
+        "location": "United States",
+        "language": "en",
+        "include_ai_search_volume": true,
+        "include_llm_mentions": true,
+        "include_llm_responses": false,
+        "limit": 50
+      },
+      "description": "AI-optimized topic suggestions combining multiple DataForSEO AI endpoints"
+    },
+    "ai-topic-suggestions-stream": {
+      "url": "/api/v1/keywords/ai-topic-suggestions/stream",
+      "method": "POST",
+      "payload": {
+        "keywords": ["python"],
+        "content_objective": "Write articles about Python programming",
+        "location": "United States",
+        "language": "en",
+        "include_ai_search_volume": true,
+        "include_llm_mentions": true,
+        "limit": 20
+      },
+      "description": "Streaming version of AI topic suggestions",
+      "note": "Returns Server-Sent Events (SSE) stream"
+    },
+    "topics-recommend": {
+      "url": "/api/v1/topics/recommend",
+      "method": "POST",
+      "payload": {
+        "seed_keywords": ["python", "web development", "programming"],
+        "location": "United States",
+        "language": "en",
+        "max_topics": 20,
+        "min_search_volume": 100,
+        "max_difficulty": 70.0,
+        "include_ai_suggestions": true
+      },
+      "description": "Recommend high-ranking blog topics based on seed keywords"
+    }
+  },
+  "content_goals": {
+    "options": ["SEO & Rankings", "Engagement", "Conversions", "Brand Awareness"],
+    "description": "Available content goals for goal-based-analysis endpoints"
+  },
+  "usage": {
+    "python_script": "python test_new_endpoints.py [endpoint_name]",
+    "curl_example": "curl -X POST https://blog-writer-api-dev-kq42l26tuq-od.a.run.app/api/v1/keywords/goal-based-analysis -H 'Content-Type: application/json' -d @payload.json"
+  }
+}

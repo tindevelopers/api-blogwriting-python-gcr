@@ -6,6 +6,63 @@ The API supports longtail keyword suggestions (3+ words) through multiple endpoi
 
 ---
 
+## Method 0: Using `/api/v1/keywords/longtail` (Best for clean longtail + intent buckets)
+
+**Best for:** Intent-bucketed longtail keywords from real query sources (autocomplete, PAA, related keywords, keyword ideas)
+
+### Request
+```typescript
+const response = await fetch('/api/v1/keywords/longtail', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    keyword: 'dog groomer',
+    location: 'United States',
+    language: 'en',
+    min_words: 3,
+    include_autocomplete: true,
+    include_paa: true,
+    include_related: true,
+    include_keyword_ideas: true,
+    include_evidence_urls: true,
+    limit: 100
+  })
+});
+
+const data = await response.json();
+```
+
+### Accessing Longtail Keywords
+```typescript
+// All longtail phrases
+const allLongtail = data.items.map((item: any) => item.phrase);
+
+// Buckets by intent
+const localService = data.buckets.local_service;
+const informational = data.buckets.informational;
+const commercial = data.buckets.commercial;
+```
+
+### Example Response Shape
+```typescript
+{
+  seed_keyword: "dog groomer",
+  min_words: 3,
+  total: 42,
+  buckets: {
+    local_service: [{ phrase: "dog groomer near me", source: "google_autocomplete", intent: "local_service" }],
+    informational: [{ phrase: "how to choose a dog groomer", source: "serp_paa", intent: "informational" }],
+    commercial: [{ phrase: "dog groomer prices", source: "related_keywords", intent: "commercial" }],
+    other: []
+  },
+  items: [
+    { phrase: "dog groomer near me", source: "google_autocomplete", intent: "local_service", evidence_urls: [] }
+  ]
+}
+```
+
+---
+
 ## Method 1: Using `/api/v1/keywords/enhanced` (Recommended)
 
 **Best for:** Getting longtail keywords with full SEO metrics

@@ -2237,23 +2237,38 @@ class DataForSEOClient:
             # Process response
             results = []
             if data.get("tasks") and data["tasks"][0].get("result"):
-                for item in data["tasks"][0]["result"]:
-                    keyword_data = item.get("keyword_data", {})
-                    keyword_info = keyword_data.get("keyword_info", {})
-                    
-                    results.append({
-                        "keyword": item.get("keyword", ""),
-                        "search_volume": keyword_info.get("search_volume", 0) or 0,
-                        "cpc": keyword_info.get("cpc", 0.0) or 0.0,
-                        "competition": keyword_info.get("competition", 0.0) or 0.0,
-                        "competition_level": keyword_info.get("competition_level", "MEDIUM"),
-                        "keyword_difficulty": keyword_info.get("keyword_difficulty", 0) or 0,
-                        "monthly_searches": keyword_info.get("monthly_searches", []),
-                        "keyword_info": keyword_info,
-                        "keyword_properties": keyword_data.get("keyword_properties", {}),
-                        "impressions_info": keyword_data.get("impressions_info", {}),
-                        "serp_info": keyword_data.get("serp_info", {})
-                    })
+                raw_result = data["tasks"][0]["result"]
+                for result_entry in raw_result:
+                    # Some DataForSEO responses wrap results as { items: [...] }
+                    items = result_entry.get("items") if isinstance(result_entry, dict) else None
+                    if isinstance(items, list):
+                        iterable = items
+                    else:
+                        iterable = [result_entry]
+
+                    for item in iterable:
+                        if not isinstance(item, dict):
+                            continue
+                        keyword_data = item.get("keyword_data", {})
+                        keyword_info = keyword_data.get("keyword_info", {})
+
+                        keyword_text = item.get("keyword", "") or keyword_info.get("keyword", "")
+                        if not keyword_text:
+                            continue
+
+                        results.append({
+                            "keyword": keyword_text,
+                            "search_volume": keyword_info.get("search_volume", 0) or 0,
+                            "cpc": keyword_info.get("cpc", 0.0) or 0.0,
+                            "competition": keyword_info.get("competition", 0.0) or 0.0,
+                            "competition_level": keyword_info.get("competition_level", "MEDIUM"),
+                            "keyword_difficulty": keyword_info.get("keyword_difficulty", 0) or 0,
+                            "monthly_searches": keyword_info.get("monthly_searches", []),
+                            "keyword_info": keyword_info,
+                            "keyword_properties": keyword_data.get("keyword_properties", {}),
+                            "impressions_info": keyword_data.get("impressions_info", {}),
+                            "serp_info": keyword_data.get("serp_info", {})
+                        })
             
             # Cache results
             self._local_cache_set(cache_key, results, self._cache_ttl)
@@ -3907,14 +3922,9 @@ class EnhancedKeywordAnalyzer:
     
     def _generate_long_tail_keywords(self, keyword: str) -> List[str]:
         """Generate long-tail keyword variations."""
-        variations = [
-            f"how to {keyword}",
-            f"{keyword} for beginners",
-            f"{keyword} guide",
-            f"best {keyword} practices",
-            f"{keyword} tips and tricks"
-        ]
-        return variations[:3]
+        # Deprecated: templated longtail keywords are low quality.
+        # Longtail keywords should come from real query sources (autocomplete, PAA, keyword ideas).
+        return []
     
     def _basic_keyword_analysis(self, keyword: str) -> KeywordAnalysis:
         """Basic keyword analysis without external APIs."""

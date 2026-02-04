@@ -14,7 +14,7 @@ import math
 import json
 import re
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any, Union
 from contextlib import asynccontextmanager
 import jwt
@@ -44,6 +44,10 @@ from src.blog_writer_sdk.models.blog_models import (
 from src.blog_writer_sdk.seo.enhanced_keyword_analyzer import EnhancedKeywordAnalyzer
 from src.blog_writer_sdk.seo.keyword_clustering import KeywordClustering
 from src.blog_writer_sdk.seo.keyword_intelligence_service import KeywordIntelligenceService
+from src.blog_writer_sdk.seo.longtail_extractor import (
+    extract_longtail_candidates,
+    bucket_longtail_candidates,
+)
 from src.blog_writer_sdk.ai.ai_content_generator import AIContentGenerator
 from src.blog_writer_sdk.config.testing_limits import (
     is_testing_mode,
@@ -498,6 +502,20 @@ class AITopicSuggestionsRequest(BaseModel):
     include_llm_mentions: bool = Field(default=True, description="Include LLM mentions data")
     include_llm_responses: bool = Field(default=False, description="Include LLM responses for topic research")
     limit: int = Field(default=50, ge=10, le=200, description="Maximum number of topic suggestions")
+
+
+class LongtailKeywordsRequest(BaseModel):
+    """Request model for longtail keyword extraction."""
+    keyword: str = Field(..., min_length=1, description="Seed keyword to expand")
+    location: Optional[str] = Field("United States", description="Location for analysis")
+    language: Optional[str] = Field("en", description="Language code")
+    min_words: int = Field(default=3, ge=2, le=8, description="Minimum words in a longtail phrase")
+    include_autocomplete: bool = Field(default=True, description="Include Google Autocomplete suggestions")
+    include_paa: bool = Field(default=True, description="Include People Also Ask questions")
+    include_related: bool = Field(default=True, description="Include related keywords")
+    include_keyword_ideas: bool = Field(default=True, description="Include keyword ideas (questions/topics)")
+    include_evidence_urls: bool = Field(default=True, description="Include evidence URLs when available")
+    limit: int = Field(default=100, ge=10, le=300, description="Maximum number of longtail keywords to return")
 
 
 class PremiumAIKeywordSearchRequest(BaseModel):
@@ -4935,34 +4953,38 @@ async def analyze_keywords_enhanced(
                                 if task_status_code == 20000:
                                     result = first_task.get("result")
                                     if result and isinstance(result, list):
-                                        for item in result[:100]:  # Increased limit to 100
-                                            if not isinstance(item, dict):
+                                        for result_entry in result[:5]:
+                                            if not isinstance(result_entry, dict):
                                                 continue
-                                            # Extract keyword from multiple possible locations
-                                            keyword_text = item.get("keyword") or ""
-                                            kw_data = item.get("keyword_data", {})
-                                            keyword_info = kw_data.get("keyword_info", {}) if kw_data else {}
-                                            
-                                            if not keyword_text:
-                                                keyword_text = keyword_info.get("keyword", "")
-                                            
-                                            if not keyword_text:
+                                            items = result_entry.get("items", [])
+                                            if not isinstance(items, list):
                                                 continue
-                                            
-                                            # Add related keyword with type information
-                                            kw_data = {
-                                                "keyword": keyword_text,
-                                                "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0) or 0,
-                                                "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0) or 0.0,
-                                                "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0) or 0.0,
-                                                "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0) or 50.0,
-                                                "type": "Related Keyword",
-                                                "source": "related_keywords",
-                                                "seed_keyword": primary_keyword,
-                                                "relevance": 1.0  # Related keywords are highly relevant
-                                            }
-                                            related_keywords_list.append(kw_data)
-                                            # Note: Will be added to all_keyword_data later in the flow
+                                            for item in items[:200]:
+                                                if not isinstance(item, dict):
+                                                    continue
+                                                related = item.get("related_keywords", [])
+                                                if not isinstance(related, list):
+                                                    continue
+                                                for rel in related[:200]:
+                                                    if not isinstance(rel, dict):
+                                                        continue
+                                                    kw_data_block = rel.get("keyword_data", {}) or {}
+                                                    keyword_info = kw_data_block.get("keyword_info", {}) or {}
+                                                    keyword_text = rel.get("keyword") or keyword_info.get("keyword", "")
+                                                    if not keyword_text:
+                                                        continue
+
+                                                    related_keywords_list.append({
+                                                        "keyword": keyword_text,
+                                                        "search_volume": keyword_info.get("search_volume", 0) or rel.get("search_volume", 0) or 0,
+                                                        "cpc": keyword_info.get("cpc", 0.0) or rel.get("cpc", 0.0) or 0.0,
+                                                        "competition": keyword_info.get("competition", 0.0) or rel.get("competition", 0.0) or 0.0,
+                                                        "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or rel.get("keyword_difficulty", 50.0) or 50.0,
+                                                        "type": "Related Keyword",
+                                                        "source": "related_keywords",
+                                                        "seed_keyword": primary_keyword,
+                                                        "relevance": 1.0,
+                                                    })
                                 else:
                                     logger.debug(f"Related keywords task has error status_code: {task_status_code}, message: {first_task.get('status_message')}")
                         related_keywords_data[primary_keyword] = related_keywords_list
@@ -5232,7 +5254,136 @@ async def analyze_keywords_enhanced(
                 trend_score=trend_score_value,
                 keyword_ideas_count=len(keyword_ideas_enhanced.get("all_ideas", []))
             )
+
+            longtail_candidates = []
+            for item in all_keyword_data:
+                if item.get("seed_keyword") != k:
+                    continue
+                longtail_candidates.append({
+                    "keyword": item.get("keyword"),
+                    "source": item.get("source") or item.get("type") or "unknown",
+                    "type": item.get("type") or "unknown",
+                    "search_volume": item.get("search_volume", 0),
+                    "cpc": item.get("cpc", 0.0),
+                    "competition": item.get("competition", 0.0),
+                    "keyword_difficulty": item.get("keyword_difficulty", 50.0),
+                    "evidence_urls": item.get("evidence_urls", []),
+                })
+
+            for related_item in related_keywords_enhanced:
+                if not isinstance(related_item, dict):
+                    continue
+                longtail_candidates.append({
+                    "keyword": related_item.get("keyword"),
+                    "source": related_item.get("source") or "related_keywords",
+                    "type": related_item.get("type") or "Related Keyword",
+                    "search_volume": related_item.get("search_volume", 0),
+                    "cpc": related_item.get("cpc", 0.0),
+                    "competition": related_item.get("competition", 0.0),
+                    "keyword_difficulty": related_item.get("keyword_difficulty", 50.0),
+                    "evidence_urls": related_item.get("evidence_urls", []),
+                })
+
+            for idea in keyword_ideas_enhanced.get("all_ideas", []):
+                if not isinstance(idea, dict):
+                    continue
+                keyword_text = idea.get("keyword") or idea.get("text")
+                if not keyword_text:
+                    continue
+                keyword_info = idea.get("keyword_info", {}) or idea.get("keyword_data", {}).get("keyword_info", {})
+                longtail_candidates.append({
+                    "keyword": keyword_text,
+                    "source": "keyword_ideas",
+                    "type": idea.get("type") or "Keyword Idea",
+                    "search_volume": keyword_info.get("search_volume", 0) or idea.get("search_volume", 0),
+                    "cpc": keyword_info.get("cpc", 0.0) or idea.get("cpc", 0.0),
+                    "competition": keyword_info.get("competition", 0.0) or idea.get("competition", 0.0),
+                    "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or idea.get("keyword_difficulty", 50.0),
+                    "evidence_urls": [],
+                })
+
+            for question in keyword_ideas_enhanced.get("questions", []):
+                if isinstance(question, dict):
+                    question_text = question.get("keyword") or question.get("text") or question.get("question")
+                else:
+                    question_text = str(question)
+                if question_text:
+                    longtail_candidates.append({
+                        "keyword": question_text,
+                        "source": "keyword_ideas_questions",
+                        "type": "Question",
+                        "search_volume": 0,
+                        "cpc": 0.0,
+                        "competition": 0.0,
+                        "keyword_difficulty": 50.0,
+                        "evidence_urls": [],
+                    })
+
+            for topic in keyword_ideas_enhanced.get("topics", []):
+                if isinstance(topic, dict):
+                    topic_text = topic.get("keyword") or topic.get("text") or topic.get("topic")
+                else:
+                    topic_text = str(topic)
+                if topic_text:
+                    longtail_candidates.append({
+                        "keyword": topic_text,
+                        "source": "keyword_ideas_topics",
+                        "type": "Topic",
+                        "search_volume": 0,
+                        "cpc": 0.0,
+                        "competition": 0.0,
+                        "keyword_difficulty": 50.0,
+                        "evidence_urls": [],
+                    })
+
+            serp_data = serp_analysis_data.get(k, {}) if 'serp_analysis_data' in locals() else {}
+            for paa_item in serp_data.get("people_also_ask", []) if isinstance(serp_data, dict) else []:
+                if not isinstance(paa_item, dict):
+                    continue
+                question_text = paa_item.get("question") or paa_item.get("title")
+                if not question_text:
+                    continue
+                evidence_url = paa_item.get("url")
+                longtail_candidates.append({
+                    "keyword": question_text,
+                    "source": "serp_paa",
+                    "type": "PAA Question",
+                    "search_volume": 0,
+                    "cpc": 0.0,
+                    "competition": 0.0,
+                    "keyword_difficulty": 50.0,
+                    "evidence_urls": [evidence_url] if evidence_url else [],
+                })
+
+            for related_search in serp_data.get("related_searches", []) if isinstance(serp_data, dict) else []:
+                if not isinstance(related_search, dict):
+                    continue
+                search_query = related_search.get("query") or related_search.get("text")
+                if not search_query:
+                    continue
+                longtail_candidates.append({
+                    "keyword": search_query,
+                    "source": "serp_related_searches",
+                    "type": "Related Search",
+                    "search_volume": 0,
+                    "cpc": 0.0,
+                    "competition": 0.0,
+                    "keyword_difficulty": 50.0,
+                    "evidence_urls": [],
+                })
+
+            max_longtail = limits.get("max_long_tail", 50) if is_testing_mode() else None
+            extracted_longtail = extract_longtail_candidates(
+                seed_keyword=k,
+                candidates=longtail_candidates,
+                min_words=3,
+                max_items=max_longtail,
+            )
+            longtail_keywords = [item["phrase"] for item in extracted_longtail]
             
+            use_template_longtail = not (enhanced_analyzer and enhanced_analyzer._df_client)
+            resolved_longtail = longtail_keywords if longtail_keywords else (v.long_tail_keywords if use_template_longtail else [])
+
             out[k] = {
                 "search_volume": search_volume,  # Always numeric
                 "global_search_volume": v.global_search_volume or 0,
@@ -5250,7 +5401,7 @@ async def analyze_keywords_enhanced(
                 "reason": v.reason,
                 "related_keywords": v.related_keywords,  # Basic related keywords from content analysis
                 "related_keywords_enhanced": related_keywords_enhanced,  # Graph-based related keywords from DataForSEO
-                "long_tail_keywords": v.long_tail_keywords,
+                "long_tail_keywords": resolved_longtail,
                 "questions": keyword_ideas_enhanced.get("questions", []),  # Question-type keywords
                 "topics": keyword_ideas_enhanced.get("topics", []),  # Topic-type keywords
                 "keyword_ideas": keyword_ideas_enhanced.get("all_ideas", []),  # All keyword ideas
@@ -5634,6 +5785,204 @@ async def analyze_keywords_enhanced(
         raise HTTPException(
             status_code=500,
             detail=f"Enhanced keyword analysis failed: {str(e)}"
+        )
+
+
+@app.post("/api/v1/keywords/longtail")
+async def get_longtail_keywords(
+    request: LongtailKeywordsRequest,
+    http_request: Request
+):
+    """
+    Extract longtail keywords from real query sources (autocomplete, PAA, related keywords, keyword ideas).
+    Returns intent buckets and source metadata for each phrase.
+    """
+    try:
+        detected_location = None
+        if not request.location and http_request:
+            detected_location = await detect_location_from_ip(http_request)
+            if detected_location:
+                logger.info(f"Detected location from IP: {detected_location}")
+
+        effective_location = request.location or detected_location or "United States"
+        tenant_id = os.getenv("TENANT_ID", "default")
+
+        df_client = enhanced_analyzer._df_client if enhanced_analyzer else None
+        if not df_client:
+            raise HTTPException(status_code=503, detail="DataForSEO client not available")
+
+        await df_client.initialize_credentials(tenant_id)
+        if not df_client.is_configured:
+            raise HTTPException(status_code=503, detail="DataForSEO API not configured")
+
+        candidates = []
+
+        if request.include_autocomplete:
+            autocomplete = await df_client.get_autocomplete_suggestions(
+                keyword=request.keyword,
+                location_name=effective_location,
+                language_code=request.language or "en",
+                tenant_id=tenant_id,
+                limit=min(200, request.limit),
+            )
+            for item in autocomplete:
+                if not isinstance(item, dict):
+                    continue
+                candidates.append({
+                    "keyword": item.get("keyword"),
+                    "source": item.get("source") or "google_autocomplete",
+                    "type": item.get("type") or "Autocomplete",
+                    "search_volume": item.get("search_volume", 0),
+                    "cpc": item.get("cpc", 0.0),
+                    "competition": item.get("competition", 0.5),
+                    "keyword_difficulty": item.get("keyword_difficulty", 50.0),
+                    "evidence_urls": [],
+                })
+
+        if request.include_related:
+            related_response = await df_client.get_related_keywords(
+                keyword=request.keyword,
+                location_name=effective_location,
+                language_code=request.language or "en",
+                tenant_id=tenant_id,
+                depth=2,
+                limit=100,
+            )
+            if isinstance(related_response, dict) and related_response.get("tasks"):
+                tasks_list = related_response.get("tasks", [])
+                if tasks_list:
+                    first_task = tasks_list[0]
+                    if first_task.get("status_code") == 20000:
+                        result = first_task.get("result")
+                        if isinstance(result, list) and result:
+                            for result_entry in result[:3]:
+                                if not isinstance(result_entry, dict):
+                                    continue
+                                items = result_entry.get("items", [])
+                                if not isinstance(items, list):
+                                    continue
+                                for item in items[:50]:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    related = item.get("related_keywords", [])
+                                    if not isinstance(related, list):
+                                        continue
+                                    for rel in related[:100]:
+                                        if not isinstance(rel, dict):
+                                            continue
+                                        kw_data_block = rel.get("keyword_data", {}) or {}
+                                        keyword_info = kw_data_block.get("keyword_info", {}) or {}
+                                        keyword_text = rel.get("keyword") or keyword_info.get("keyword", "")
+                                        if not keyword_text:
+                                            continue
+                                        candidates.append({
+                                            "keyword": keyword_text,
+                                            "source": "related_keywords",
+                                            "type": "Related Keyword",
+                                            "search_volume": keyword_info.get("search_volume", 0) or rel.get("search_volume", 0) or 0,
+                                            "cpc": keyword_info.get("cpc", 0.0) or rel.get("cpc", 0.0) or 0.0,
+                                            "competition": keyword_info.get("competition", 0.0) or rel.get("competition", 0.0) or 0.0,
+                                            "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or rel.get("keyword_difficulty", 50.0) or 50.0,
+                                            "evidence_urls": [],
+                                        })
+
+        if request.include_keyword_ideas:
+            ideas_response = await df_client.get_keyword_ideas(
+                keywords=[request.keyword],
+                location_name=effective_location,
+                language_code=request.language or "en",
+                tenant_id=tenant_id,
+                limit=200,
+            )
+            if isinstance(ideas_response, list):
+                for item in ideas_response:
+                    if not isinstance(item, dict):
+                        continue
+                    keyword_text = item.get("keyword") or item.get("text")
+                    keyword_data = item.get("keyword_data", {})
+                    keyword_info = item.get("keyword_info", {}) or keyword_data.get("keyword_info", {})
+                    if not keyword_text:
+                        continue
+                    candidates.append({
+                        "keyword": keyword_text,
+                        "source": "keyword_ideas",
+                        "type": item.get("type") or "Keyword Idea",
+                        "search_volume": keyword_info.get("search_volume", 0) or item.get("search_volume", 0),
+                        "cpc": keyword_info.get("cpc", 0.0) or item.get("cpc", 0.0),
+                        "competition": keyword_info.get("competition", 0.0) or item.get("competition", 0.0),
+                        "keyword_difficulty": keyword_info.get("keyword_difficulty", 50.0) or item.get("keyword_difficulty", 50.0),
+                        "evidence_urls": [],
+                    })
+
+        if request.include_paa:
+            serp_data = await df_client.get_serp_analysis(
+                keyword=request.keyword,
+                location_name=effective_location,
+                language_code=request.language or "en",
+                tenant_id=tenant_id,
+                depth=10,
+                include_people_also_ask=True,
+            )
+            for paa_item in serp_data.get("people_also_ask", []) if isinstance(serp_data, dict) else []:
+                if not isinstance(paa_item, dict):
+                    continue
+                question_text = paa_item.get("question") or paa_item.get("title")
+                if not question_text:
+                    continue
+                evidence_url = paa_item.get("url") if request.include_evidence_urls else None
+                candidates.append({
+                    "keyword": question_text,
+                    "source": "serp_paa",
+                    "type": "PAA Question",
+                    "search_volume": 0,
+                    "cpc": 0.0,
+                    "competition": 0.0,
+                    "keyword_difficulty": 50.0,
+                    "evidence_urls": [evidence_url] if evidence_url else [],
+                })
+
+            for related_search in serp_data.get("related_searches", []) if isinstance(serp_data, dict) else []:
+                if not isinstance(related_search, dict):
+                    continue
+                search_query = related_search.get("query") or related_search.get("text")
+                if not search_query:
+                    continue
+                candidates.append({
+                    "keyword": search_query,
+                    "source": "serp_related_searches",
+                    "type": "Related Search",
+                    "search_volume": 0,
+                    "cpc": 0.0,
+                    "competition": 0.0,
+                    "keyword_difficulty": 50.0,
+                    "evidence_urls": [],
+                })
+
+        extracted = extract_longtail_candidates(
+            seed_keyword=request.keyword,
+            candidates=candidates,
+            min_words=request.min_words,
+            max_items=request.limit,
+        )
+        buckets = bucket_longtail_candidates(extracted)
+
+        return {
+            "seed_keyword": request.keyword,
+            "location": effective_location,
+            "language": request.language or "en",
+            "min_words": request.min_words,
+            "total": len(extracted),
+            "buckets": buckets,
+            "items": extracted,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Longtail keyword extraction failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Longtail keyword extraction failed: {str(e)}"
         )
 
 
@@ -8290,6 +8639,115 @@ async def get_ai_topic_suggestions(
                     ai_metrics["llm_mentions"] = llm_mentions_data
             except Exception as e:
                 logger.warning(f"Failed to get LLM mentions: {e}")
+
+        if df_client and request.include_llm_responses:
+            def _extract_llm_topics_from_text(text: str) -> List[str]:
+                topics = []
+                if not text:
+                    return topics
+                try:
+                    data = json.loads(text)
+                    if isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, str):
+                                topics.append(item)
+                            elif isinstance(item, dict):
+                                topics.append(
+                                    item.get("topic")
+                                    or item.get("title")
+                                    or item.get("primary_keyword")
+                                    or ""
+                                )
+                except Exception:
+                    pass
+
+                for line in text.splitlines():
+                    cleaned = re.sub(r"^[-*\d\.\)\s]+", "", line.strip())
+                    if 5 <= len(cleaned) <= 140:
+                        topics.append(cleaned)
+
+                return [t for t in topics if t]
+
+            def _collect_llm_text(llm_raw: Dict[str, Any]) -> str:
+                segments = []
+                if not isinstance(llm_raw, dict):
+                    return ""
+                for task in llm_raw.get("tasks", []):
+                    result = task.get("result")
+                    if isinstance(result, list):
+                        for res in result:
+                            if not isinstance(res, dict):
+                                continue
+                            items = res.get("items")
+                            if isinstance(items, list):
+                                for item in items:
+                                    if isinstance(item, dict):
+                                        text = item.get("text") or item.get("message") or item.get("content")
+                                        if text:
+                                            segments.append(text)
+                            text = res.get("text") or res.get("message") or res.get("content")
+                            if text:
+                                segments.append(text)
+                    elif isinstance(result, dict):
+                        text = result.get("text") or result.get("message") or result.get("content")
+                        if text:
+                            segments.append(text)
+                return "\n".join(segments)
+
+            try:
+                await df_client.initialize_credentials(tenant_id)
+                if df_client.is_configured:
+                    prompt = (
+                        "Suggest 10 high-value blog topics based on these seed keywords. "
+                        "Return only the topics as a JSON array of strings:\n"
+                        f"{', '.join(seed_keywords[:5])}"
+                    )
+                    llm_raw = await df_client.llm_responses_live(
+                        platform="perplexity",
+                        prompt=prompt,
+                        tenant_id=tenant_id,
+                    )
+                    llm_text = _collect_llm_text(llm_raw)
+                    llm_topics = _extract_llm_topics_from_text(llm_text)[:10]
+                    if llm_topics:
+                        ai_metrics["llm_response_topics"] = llm_topics
+
+                    existing_keywords = {s.get("source_keyword", "").lower().strip() for s in topic_suggestions}
+                    for topic_text in llm_topics:
+                        if not topic_text:
+                            continue
+                        topic_candidate = await topic_recommender._analyze_topic_potential(
+                            topic_text,
+                            effective_location,
+                            request.language or "en",
+                        )
+                        if not topic_candidate:
+                            continue
+                        if not topic_recommender._meets_criteria(topic_candidate, 10, 80.0):
+                            continue
+                        if topic_candidate.primary_keyword.lower().strip() in existing_keywords:
+                            continue
+                        topic_candidate.topic = topic_text
+                        topic_candidate.reason = "Perplexity topic suggestion (validated by keyword metrics)"
+                        topic_suggestions.append({
+                            "topic": topic_candidate.topic,
+                            "source_keyword": topic_candidate.primary_keyword,
+                            "ai_search_volume": 0,
+                            "mentions": 0,
+                            "search_volume": topic_candidate.search_volume,
+                            "difficulty": topic_candidate.difficulty,
+                            "competition": topic_candidate.competition,
+                            "cpc": topic_candidate.cpc,
+                            "ranking_score": topic_candidate.ranking_score,
+                            "opportunity_score": topic_candidate.opportunity_score,
+                            "estimated_traffic": topic_candidate.estimated_traffic,
+                            "reason": topic_candidate.reason,
+                            "related_keywords": (topic_candidate.related_keywords or [])[:5],
+                            "source": "perplexity_llm"
+                        })
+                        existing_keywords.add(topic_candidate.primary_keyword.lower().strip())
+            except Exception as e:
+                logger.warning(f"Failed to get LLM responses (Perplexity): {e}")
         
         results = {
             "seed_keywords": seed_keywords,
