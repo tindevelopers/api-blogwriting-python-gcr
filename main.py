@@ -8298,7 +8298,8 @@ def _generate_brand_awareness_recommendations(
 @app.post("/api/v1/keywords/ai-mentions")
 async def get_llm_mentions(
     request: LLMMentionsRequest,
-    http_request: Request
+    http_request: Request,
+    debug: bool = Query(False, description="Include raw DataForSEO task status codes/messages for troubleshooting")
 ):
     """
     Get LLM mentions data for a keyword or domain.
@@ -8326,6 +8327,29 @@ async def get_llm_mentions(
             raise HTTPException(status_code=503, detail="DataForSEO API not configured")
         
         df_client = enhanced_analyzer._df_client
+
+        def _target_obj() -> Dict[str, Any]:
+            if request.target_type == "domain":
+                return {"domain": request.target}
+            return {"keyword": request.target}
+
+        def _summarize_raw_task(raw: Dict[str, Any]) -> Dict[str, Any]:
+            tasks = raw.get("tasks") if isinstance(raw, dict) else None
+            task0 = tasks[0] if isinstance(tasks, list) and tasks else {}
+            result = task0.get("result")
+            result0 = result[0] if isinstance(result, list) and result else {}
+            return {
+                "status_code": raw.get("status_code"),
+                "status_message": raw.get("status_message"),
+                "tasks_count": raw.get("tasks_count"),
+                "tasks_error": raw.get("tasks_error"),
+                "task_status_code": task0.get("status_code"),
+                "task_status_message": task0.get("status_message"),
+                "task_cost": task0.get("cost"),
+                "task_result_count": task0.get("result_count"),
+                "task_data": task0.get("data"),
+                "result_keys": list(result0.keys()) if isinstance(result0, dict) else [],
+            }
         
         # Get LLM mentions search
         mentions_data = await df_client.get_llm_mentions_search(
@@ -8368,7 +8392,76 @@ async def get_llm_mentions(
             )
         except Exception as e:
             logger.warning(f"Failed to get top domains: {e}")
-        
+
+        debug_info: Dict[str, Any] = {}
+        if debug:
+            # Run raw DataForSEO calls to expose task status codes/messages.
+            # This helps diagnose: subscription/access required, invalid params, platform/location coverage, etc.
+            platforms_to_try = ["chat_gpt", "google"] if request.platform == "auto" else [request.platform]
+
+            debug_info["mentions_search_live"] = []
+            for p in platforms_to_try:
+                try:
+                    payload = [{
+                        "target": [_target_obj()],
+                        "location_name": request.location,
+                        "platform": p,
+                        "limit": request.limit,
+                    }]
+                    raw = await df_client._make_request(  # type: ignore[attr-defined]
+                        "ai_optimization/llm_mentions/search/live",
+                        payload,
+                        tenant_id,
+                        use_ai_format=False,
+                        cache_category="ai_opt",
+                        skip_cache=True,
+                    )
+                    debug_info["mentions_search_live"].append({"platform": p, "raw_task": _summarize_raw_task(raw)})
+                except Exception as e:
+                    debug_info["mentions_search_live"].append({"platform": p, "error": str(e)})
+
+            # Top pages/top domains raw calls (optional but useful when the wrapper returns empty arrays).
+            if request.target_type == "keyword":
+                try:
+                    payload = [{
+                        "target": [_target_obj()],
+                        "location_name": request.location,
+                        "language_code": request.language,
+                        "platform": platforms_to_try[0],
+                        "items_list_limit": 10,
+                    }]
+                    raw = await df_client._make_request(  # type: ignore[attr-defined]
+                        "ai_optimization/llm_mentions/top_pages/live",
+                        payload,
+                        tenant_id,
+                        use_ai_format=False,
+                        cache_category="ai_opt",
+                        skip_cache=True,
+                    )
+                    debug_info["top_pages_live"] = {"raw_task": _summarize_raw_task(raw)}
+                except Exception as e:
+                    debug_info["top_pages_live"] = {"error": str(e)}
+
+            try:
+                payload = [{
+                    "target": [_target_obj()],
+                    "location_name": request.location,
+                    "language_code": request.language,
+                    "platform": platforms_to_try[0],
+                    "items_list_limit": 10,
+                }]
+                raw = await df_client._make_request(  # type: ignore[attr-defined]
+                    "ai_optimization/llm_mentions/top_domains/live",
+                    payload,
+                    tenant_id,
+                    use_ai_format=False,
+                    cache_category="ai_opt",
+                    skip_cache=True,
+                )
+                debug_info["top_domains_live"] = {"raw_task": _summarize_raw_task(raw)}
+            except Exception as e:
+                debug_info["top_domains_live"] = {"error": str(e)}
+
         return {
             "target": request.target,
             "target_type": request.target_type,
@@ -8376,7 +8469,8 @@ async def get_llm_mentions(
             "llm_mentions": mentions_data,
             "top_pages": top_pages_data,
             "top_domains": top_domains_data,
-            "insights": _generate_llm_mentions_insights(mentions_data, top_pages_data, top_domains_data)
+            "insights": _generate_llm_mentions_insights(mentions_data, top_pages_data, top_domains_data),
+            "debug": debug_info if debug else None,
         }
         
     except HTTPException:
@@ -8411,6 +8505,75 @@ async def get_ai_topic_suggestions(
     - AI search volume and mention metrics
     """
     try:
+        def _clean_seed_keywords(raw_keywords: List[str]) -> List[str]:
+            """
+            Remove low-signal / nonsensical seed keywords extracted from short objective text.
+
+            This endpoint is often called with only `content_objective`, and naive bigram
+            extraction can produce phrases like "website for" or "for business". Those
+            lead to poor downstream recommendations.
+            """
+            import re
+
+            stop_words = {
+                # original stop words
+                "i", "want", "to", "write", "articles", "that", "talk", "about", "or",
+                "the", "a", "an", "and", "is", "are", "was", "were", "be", "been",
+                "being", "have", "has", "had", "do", "does", "did", "will", "would",
+                "should", "could", "may", "might", "must", "can", "create", "review",
+                "each", "my", "competitor",
+                # additional common glue words / prepositions
+                "for", "in", "on", "at", "with", "without", "from", "by", "of", "into",
+                "over", "under", "between", "among", "as", "via", "per", "vs", "versus",
+            }
+
+            # Generic words that frequently show up in objectives but are terrible seeds.
+            generic_noise = {
+                "website", "site", "web", "page", "pages", "blog", "blogs", "post", "posts",
+                "business", "company", "brand", "brands", "customer", "customers",
+                "service", "services", "product", "products", "industry", "audience",
+                "content", "contents", "marketing", "seo", "ranking", "rankings",
+            }
+
+            # Exact bad phrases we’ve observed in outputs / screenshots.
+            banned_phrases = {
+                "website for",
+                "for business",
+                "business for",
+                "for website",
+            }
+
+            cleaned: List[str] = []
+            seen = set()
+
+            for kw in raw_keywords or []:
+                if not kw:
+                    continue
+                kw_norm = re.sub(r"\s+", " ", str(kw).strip().lower())
+                if not kw_norm or len(kw_norm) < 3:
+                    continue
+                if kw_norm in banned_phrases:
+                    continue
+
+                tokens = re.findall(r"\b[\w']+\b", kw_norm)
+                if not tokens:
+                    continue
+
+                # Avoid seeds that start/end with glue words ("for business", "website for")
+                if tokens[0] in stop_words or tokens[-1] in stop_words:
+                    continue
+
+                # Require at least one meaningful token.
+                meaningful = [t for t in tokens if t not in stop_words and t not in generic_noise and len(t) > 2]
+                if not meaningful:
+                    continue
+
+                if kw_norm not in seen:
+                    seen.add(kw_norm)
+                    cleaned.append(kw_norm)
+
+            return cleaned
+
         # Extract keywords from content objective if not provided
         seed_keywords = request.keywords or []
         if not seed_keywords and request.content_objective:
@@ -8421,8 +8584,26 @@ async def get_ai_topic_suggestions(
             # Extract 2-4 word phrases that are likely keywords
             words = re.findall(r'\b\w+\b', objective_text)
             # Filter out common stop words
-            stop_words = {'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the', 'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'must', 'can', 'create', 'review', 'each', 'could', 'my', 'competitor'}
-            meaningful_words = [w for w in words if w not in stop_words and len(w) > 2]  # Lowered from 3 to 2 to catch "miami"
+            stop_words = {
+                'i', 'want', 'to', 'write', 'articles', 'that', 'talk', 'about', 'or', 'the',
+                'a', 'an', 'and', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have',
+                'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may',
+                'might', 'must', 'can', 'create', 'review', 'each', 'my', 'competitor',
+                # extra glue words that produce garbage bigrams like "website for"
+                'for', 'in', 'on', 'at', 'with', 'without', 'from', 'by', 'of'
+            }
+            # Exclude ultra-generic objective words that should never become seed keywords.
+            generic_noise = {
+                "website", "site", "web", "page", "pages", "blog", "blogs", "post", "posts",
+                "business", "company", "brand", "brands", "customer", "customers",
+                "service", "services", "product", "products", "industry", "audience",
+                "content", "contents", "marketing",
+            }
+
+            meaningful_words = [
+                w for w in words
+                if w not in stop_words and w not in generic_noise and len(w) > 2
+            ]  # keep >2 to allow locations like "miami"
             
             # Create keyword phrases (2-3 words) - prioritize location + service combinations
             seed_keywords = []
@@ -8462,6 +8643,9 @@ async def get_ai_topic_suggestions(
             seed_keywords = seed_keywords[:5]
             
             logger.info(f"Extracted keywords from content objective: {seed_keywords}")
+
+        # Final cleanup: remove nonsense seeds like "website for"
+        seed_keywords = _clean_seed_keywords(seed_keywords)[:5]
         
         if not seed_keywords:
             raise HTTPException(

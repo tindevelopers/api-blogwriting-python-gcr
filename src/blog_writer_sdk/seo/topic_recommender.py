@@ -492,6 +492,16 @@ class TopicRecommendationEngine:
                     query=keyword,
                     num_results=10
                 )
+
+                # If Google Custom Search is not configured (or returns nothing),
+                # do NOT treat this as a "content gap" opportunity. Otherwise we
+                # end up generating junk recommendations with default metrics like
+                # volume=500 and "0% competitor coverage".
+                if not results:
+                    logger.info(
+                        f"Skipping content gap analysis for '{keyword}' (no search results returned)"
+                    )
+                    continue
                 
                 # Analyze competitor coverage
                 competitor_coverage = {}
